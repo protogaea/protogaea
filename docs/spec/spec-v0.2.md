@@ -2,7 +2,7 @@
 
 **Version:** 0.2, revision of 2026-09-25. Supersedes v0.1; changes are listed in §0. The working name changed from "Pangea" to "Protogaea" (§26); Pangea is now the supercontinent of Season 1.  
 **Language:** this English version is canonical. A Russian translation is maintained in [`translations/ru/spec-v0.2.ru.md`](translations/ru/spec-v0.2.ru.md); if the two differ, this version prevails.  
-**Repository:** [github.com/danifest751/protogaea](https://github.com/danifest751/protogaea), public since 2026-09-24.  
+**Repository:** [github.com/protogaea/protogaea](https://github.com/protogaea/protogaea), public since 2026-09-24.  
 **Status:** design specification for the first public prototype and Season 1, "The Breaking of Pangea". Numbers marked "candidate" are tuned with the balance harness (§28) and frozen before the season starts.  
 **Structure:** five parts, each of which can become a separate document. Part I — product and game design; II — world rules (`ruleset` v0); III — the spark protocol; IV — architecture, operations and openness; V — acceptance and stages. Terms are collected in Appendix A; comparable projects are reviewed in Appendix E.
 
@@ -714,7 +714,7 @@ v0 runs **a single authoritative world server**. Everything it publishes can be 
 - code signing: Authenticode on Windows, Apple notarization;
 - builds are sent to antivirus vendors for review in advance;
 - file and process names never contain the word "miner";
-- official builds are published only through the repository's [GitHub Releases](https://github.com/danifest751/protogaea/releases), with checksums and signatures. Builds from any other source are unofficial.
+- official builds are published only through the repository's [GitHub Releases](https://github.com/protogaea/protogaea/releases), with checksums and signatures. Builds from any other source are unofficial.
 
 ## 25. Operations, load, abuse
 
@@ -764,7 +764,7 @@ v0 runs **a single authoritative world server**. Everything it publishes can be 
 **Contribution rules:**
 - External PRs are not accepted until the core stabilizes. The README says plainly: "pre-alpha, everything will break". Bug reports and discussions are welcome.
 - A CLA or DCO is chosen before the first external contribution. Without a CLA, the license of code already accepted from others cannot be changed later.
-- The code and the specification live in the public repository [github.com/danifest751/protogaea](https://github.com/danifest751/protogaea); the specification is in `docs/spec/`.
+- The code and the specification live in the public repository [github.com/protogaea/protogaea](https://github.com/protogaea/protogaea); the specification is in `docs/spec/`.
 
 **Publicity timeline:**
 
@@ -777,10 +777,10 @@ v0 runs **a single authoritative world server**. Everything it publishes can be 
 | C | Open; reproducible signed builds | Closed test with sparks | — |
 | D | Open | Public Season 1 | Public launch |
 
-**The repository.** The public repository [github.com/danifest751/protogaea](https://github.com/danifest751/protogaea) was created on 2026-09-24 under the author's account, and its About description is set. Because the repository is already public, anything pushed to it is published immediately. It can later be transferred to a `protogaea` organization; GitHub redirects the old address.
+**The repository.** The public repository [github.com/protogaea/protogaea](https://github.com/protogaea/protogaea) was created on 2026-09-24 under the author's account and moved to the `protogaea` GitHub organization on 2026-09-25; the old address, github.com/danifest751/protogaea, redirects to it. Its About description and topics are set. Because the repository is already public, anything pushed to it is published immediately.
 
 **As soon as possible**, since the repository is already public:
-- reserve the name: the `protogaea` GitHub organization, the domain protogaea.com with its main spelling variants, and package names on crates.io and npm;
+- reserve the rest of the name: the domain protogaea.com with its main spelling variants, and package names on crates.io and npm (the `protogaea` GitHub organization is already reserved);
 - have a lawyer check the final name — the public repository already ties it to the project;
 - fill in the contacts in the Code of Conduct, SECURITY and TRADEMARKS files, and enable private vulnerability reporting in the repository settings.
 
@@ -898,7 +898,7 @@ The spark source is a separate module. The stage B′ stub can be replaced with 
 6. **Price of a miracle.** A description of the reference core and the value of `P_min` in work units.
 7. **Metrics.** Target values of the product metrics for stages B′ and D are fixed before the tests begin.
 8. **Legal.** A legal review of the wording and of distributing the spark client in the target countries, of app store rules, and of user consent requirements.
-9. **Name.** A preliminary check has been done (§26): "Pangea" is high-risk, and the working name "Protogaea" («Протогея») was chosen. The public repository [danifest751/protogaea](https://github.com/danifest751/protogaea) has existed since 2026-09-24, so the remaining steps are urgent: a lawyer's check, and registering the domains and namespaces together with spelling variants. If the check finds a conflict, the name changes or gets a distinguishing addition.
+9. **Name.** A preliminary check has been done (§26): "Pangea" is high-risk, and the working name "Protogaea" («Протогея») was chosen. The public repository [protogaea/protogaea](https://github.com/protogaea/protogaea) has existed since 2026-09-24, so the remaining steps are urgent: a lawyer's check, and registering the domains and namespaces together with spelling variants. If the check finds a conflict, the name changes or gets a distinguishing addition.
 10. **Licenses and contributions.** The final data license (CC0 or CC BY 4.0); the choice between a CLA and a DCO before the first external contribution; the trademark usage rules.
 11. **English version.** Done on 2026-09-25: this document is the canonical English version, and the Russian text is its translation. Native speakers still review the English world terms before stage B.
 

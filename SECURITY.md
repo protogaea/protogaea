@@ -5,7 +5,7 @@ Protogaea is at the specification stage: there is no running service and no rele
 ## Reporting a vulnerability
 
 - Please **do not** open a public issue.
-- Report privately through GitHub's private vulnerability reporting: the repository's **Security** tab → **Report a vulnerability**, or directly at [github.com/danifest751/protogaea/security/advisories/new](https://github.com/danifest751/protogaea/security/advisories/new).
+- Report privately through GitHub's private vulnerability reporting: the repository's **Security** tab → **Report a vulnerability**, or directly at [github.com/protogaea/protogaea/security/advisories/new](https://github.com/protogaea/protogaea/security/advisories/new).
 - Include what is affected (a specification section or document now; a component later), how it could be exploited, and the impact.
 - We aim to acknowledge reports within 7 days (candidate) and will keep you informed. We credit reporters unless they prefer otherwise.
 

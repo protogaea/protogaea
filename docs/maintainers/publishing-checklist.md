@@ -1,14 +1,14 @@
 # Publishing checklist
 
-The repository [github.com/danifest751/protogaea](https://github.com/danifest751/protogaea) has been public since 2026-09-24, so anything pushed to it is published immediately. This list tracks what remains; it comes from [spec §26](../spec/spec-v0.2.md#26-openness-licenses-and-language) and [§31](../spec/spec-v0.2.md#31-decisions-to-make-before-writing-code).
+The repository [github.com/protogaea/protogaea](https://github.com/protogaea/protogaea) has been public since 2026-09-24, so anything pushed to it is published immediately. This list tracks what remains; it comes from [spec §26](../spec/spec-v0.2.md#26-openness-licenses-and-language) and [§31](../spec/spec-v0.2.md#31-decisions-to-make-before-writing-code).
 
 ## Name and namespaces
 
 - [ ] A lawyer checks "Protogaea" in classes 9, 41 and 42 (and 28, if there will be merchandise) in the US, the EU, the UK and Russia.
 - [ ] Register the domain `protogaea.com`, and ideally `.org`, `.game` and `.world`.
 - [ ] Register common misspellings as budget allows (for example `protogea`, `protogaia`).
-- [x] Create the public repository: [danifest751/protogaea](https://github.com/danifest751/protogaea) (2026-09-24).
-- [ ] Reserve the GitHub organization name `protogaea`. The repository can be transferred to it later; GitHub redirects the old address.
+- [x] Create the public repository (2026-09-24, under `danifest751`).
+- [x] Reserve the GitHub organization `protogaea` and move the repository to it: [protogaea/protogaea](https://github.com/protogaea/protogaea) (2026-09-25). The old address redirects.
 - [ ] Reserve package names: `protogaea` on crates.io and npm.
 
 ## Placeholders to fill in
@@ -16,7 +16,7 @@ The repository [github.com/danifest751/protogaea](https://github.com/danifest751
 - [ ] The conduct contact in [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md).
 - [ ] The security contact in [SECURITY.md](../../SECURITY.md).
 - [ ] The contact in [TRADEMARKS.md](../../TRADEMARKS.md).
-- [x] The repository URL in [.github/ISSUE_TEMPLATE/config.yml](../../.github/ISSUE_TEMPLATE/config.yml) points to `danifest751/protogaea`. Update it if the repository is transferred.
+- [x] The repository URL in [.github/ISSUE_TEMPLATE/config.yml](../../.github/ISSUE_TEMPLATE/config.yml) points to `protogaea/protogaea`.
 
 ## Policies
 

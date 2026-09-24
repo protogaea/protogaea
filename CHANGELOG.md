@@ -20,4 +20,4 @@ All notable changes to this project are documented in this file. The format foll
 
 - The original draft, in Russian: [docs/spec/archive/spec-v0.1.ru.md](docs/spec/archive/spec-v0.1.ru.md).
 
-[Unreleased]: https://github.com/danifest751/protogaea/commits/main
+[Unreleased]: https://github.com/protogaea/protogaea/commits/main
