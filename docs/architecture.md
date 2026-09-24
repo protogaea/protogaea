@@ -142,4 +142,4 @@ protogaea/
 └── docs/          documentation and specification         Apache-2.0
 ```
 
-Each directory will get its own `LICENSE` file when it is created; see [LICENSING.md](../LICENSING.md).
+Apache-2.0 directories use the root license; AGPL-3.0 directories carry their own `LICENSE` file. See [LICENSING.md](../LICENSING.md).

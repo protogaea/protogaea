@@ -18,7 +18,7 @@ These follow [spec §26](docs/spec/spec-v0.2.md#26-openness-licenses-and-languag
 | Root dictionary, text templates, artwork | CC BY-SA 4.0 (candidate) | Reusable with attribution |
 | Name and logo | Not licensed | See the [trademark policy](TRADEMARKS.md) |
 
-Each component will carry its own `LICENSE` file in its directory when it is added. Where a directory has no `LICENSE` file, the root Apache-2.0 license applies.
+Components under Apache-2.0, such as `core/` and `harness/`, use the root `LICENSE` and declare `license = "Apache-2.0"` in their manifests. AGPL-3.0 components will carry their own `LICENSE` file. Where a directory has no `LICENSE` file, the root Apache-2.0 license applies.
 
 ## Contributions
 

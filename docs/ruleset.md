@@ -2,6 +2,8 @@
 
 > **Status: Draft.** The rules themselves are defined in [Part II of the specification](spec/spec-v0.2.md#part-ii-world-rules-ruleset-v0). This document describes the structure of the season rules file and lists every parameter with its candidate value, or **TBD** where the balance harness will set it (stage A).
 
+**Stage A1 implementation.** [core/src/ruleset.rs](../core/src/ruleset.rs) holds the parameters the core uses, with untuned default values; `protogaea-harness ruleset` prints them as JSON. Two additions are not yet in the specification: satiation (`hunt_hunger_pct`) and experimental cover (`cover`, off by default). See [core/README.md](../core/README.md#differences-from-the-specification).
+
 ## 1. Principles
 
 - One file per season. `ruleset_id` is the BLAKE3 hash of the file's canonical encoding. The canonicalization is TBD; candidate: the JSON Canonicalization Scheme (RFC 8785).

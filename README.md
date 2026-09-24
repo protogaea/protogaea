@@ -74,6 +74,21 @@ Details and exit criteria are in the [roadmap](docs/roadmap.md).
 
 The full index is in [docs/README.md](docs/README.md).
 
+## Development
+
+The first code is stage A1: the deterministic core and the balance harness. You need stable Rust.
+
+```sh
+cargo test --workspace
+cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # writes runs/seed-1/report.html
+cargo run --release -p protogaea-harness -- sweep --seeds 1..17 --days 2
+```
+
+- [core/](core/README.md) — the deterministic simulation core, with its status against the specification.
+- [harness/](harness/README.md) — the balance harness and the first findings.
+
+CI checks formatting, lints and tests, and compares state hashes across x86-64, ARM64, Windows, macOS and WASM.
+
 ## Principles
 
 - Watching requires nothing: no registration and no sparks.

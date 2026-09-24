@@ -1,0 +1,283 @@
+//! Terrain generation and genesis.
+//!
+//! Stage A1 generates a single continent surrounded by water, with coastal shallows. Rifts
+//! and the Season 1 schedule arrive in stage A2.
+
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
+
+use crate::genome::Genome;
+use crate::rng::{derive, Purpose, Rng};
+use crate::ruleset::Ruleset;
+use crate::state::{Biome, Cell, Clade, Organism, World};
+
+/// Founder archetypes and the biome each one starts in (spec §9).
+const ARCHETYPES: [(Genome, Biome); 6] = [
+    // Grazer: eats well, breeds fast, easy prey.
+    (genome([2, 3, 8, 0, 4, 7], 0, 1, 1, 120), Biome::Forest),
+    // Hunter.
+    (genome([6, 6, 0, 8, 2, 2], 1, 2, 3, 0), Biome::Steppe),
+    // Armored: too hard for hunters, but a slower grazer.
+    (genome([1, 2, 6, 0, 8, 7], 3, 0, 2, 215), Biome::Mountains),
+    // Forager: quick and sharp-eyed.
+    (genome([5, 5, 6, 0, 3, 5], 2, 2, 1, 40), Biome::Desert),
+    // Breeder.
+    (genome([3, 3, 7, 0, 3, 8], 4, 1, 0, 285), Biome::Swamp),
+    // Generalist omnivore.
+    (genome([4, 4, 4, 4, 4, 4], 5, 1, 2, 170), Biome::Forest),
+];
+
+const fn genome(traits: [u8; 6], habitat: u8, dispersal: u8, boldness: u8, hue: u16) -> Genome {
+    Genome {
+        traits,
+        habitat,
+        dispersal,
+        boldness,
+        hue,
+    }
+}
+
+/// Creates the world at epoch 0.
+pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> World {
+    let rng = Rng::new(&derive(b"PROTOGAEA/GENESIS/V0", &[genesis_seed]));
+    let biomes = generate_terrain(rules, &rng);
+    let cells = biomes
+        .iter()
+        .map(|&biome| Cell {
+            biome,
+            food: rules.biomes[biome as usize].food_max,
+            detritus: 0,
+        })
+        .collect();
+    let mut world = World {
+        world_id,
+        ruleset_id: rules.ruleset_id(),
+        width: rules.width,
+        height: rules.height,
+        epoch: 0,
+        cells,
+        organisms: Vec::new(),
+        clades: BTreeMap::new(),
+        next_organism_id: 1,
+        next_clade_id: 1,
+    };
+    let per_cell_at_genesis = rules.max_per_cell.min(2);
+    let mut occupancy = vec![0u8; world.cells.len()];
+    for lineage in 0..rules.founder_lineages {
+        let (founder, preferred) = ARCHETYPES[lineage as usize % ARCHETYPES.len()];
+        let mut sites: Vec<usize> = (0..world.cells.len())
+            .filter(|&i| world.cells[i].biome == preferred)
+            .collect();
+        if sites.is_empty() {
+            sites = (0..world.cells.len())
+                .filter(|&i| world.cells[i].biome.is_land())
+                .collect();
+        }
+        if sites.is_empty() {
+            break;
+        }
+        let pick = rng.below(
+            0,
+            Purpose::GenesisSite,
+            u64::from(lineage),
+            sites.len() as u64,
+        );
+        let (sx, sy) = world.coords(sites[pick as usize]);
+        let clade_id = world.next_clade_id;
+        world.next_clade_id += 1;
+        let mut placed = 0u32;
+        // Fill rings around the site, at most two founders per cell.
+        'rings: for radius in 0..=16i32 {
+            for dy in -radius..=radius {
+                for dx in -radius..=radius {
+                    if dx.abs().max(dy.abs()) != radius {
+                        continue;
+                    }
+                    let Some(c) = world.index(sx + dx, sy + dy) else {
+                        continue;
+                    };
+                    if !world.cells[c].biome.is_land() {
+                        continue;
+                    }
+                    while occupancy[c] < per_cell_at_genesis && placed < rules.organisms_per_lineage
+                    {
+                        let id = world.next_organism_id;
+                        world.next_organism_id += 1;
+                        let age = rng.below(
+                            0,
+                            Purpose::GenesisAge,
+                            id,
+                            u64::from(rules.senescence_start),
+                        );
+                        world.organisms.push(Organism {
+                            id,
+                            parent_id: 0,
+                            lineage_id: lineage + 1,
+                            clade_id,
+                            cell: c as u16,
+                            age: age as u32,
+                            energy: rules.genesis_energy,
+                            genome: founder,
+                        });
+                        occupancy[c] += 1;
+                        placed += 1;
+                    }
+                    if placed == rules.organisms_per_lineage {
+                        break 'rings;
+                    }
+                }
+            }
+        }
+        if placed > 0 {
+            world.clades.insert(
+                clade_id,
+                Clade {
+                    id: clade_id,
+                    parent_id: 0,
+                    reference: founder,
+                    founded_epoch: 0,
+                    living: placed,
+                    peak_living: placed,
+                },
+            );
+        }
+    }
+    world
+}
+
+/// Generates one continent: value noise for height and moisture, a radial falloff towards
+/// the edges, then biomes by percentiles so that the proportions are stable across seeds.
+pub fn generate_terrain(rules: &Ruleset, rng: &Rng) -> Vec<Biome> {
+    let (w, h) = (i64::from(rules.width), i64::from(rules.height));
+    let n = (w * h) as usize;
+    let height = value_noise(rules, rng, Purpose::MapHeight, &[(16, 4), (8, 2), (4, 1)]);
+    let moisture = value_noise(rules, rng, Purpose::MapMoisture, &[(16, 2), (8, 1)]);
+
+    // A continent: height minus a radial falloff that sinks the edges.
+    let (cx, cy) = (w / 2, h / 2);
+    let radius2 = (cx * cx).max(1);
+    let adjusted: Vec<i64> = (0..n)
+        .map(|i| {
+            let (x, y) = (i as i64 % w, i as i64 / w);
+            let d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            height[i] - d2 * 7000 / radius2
+        })
+        .collect();
+
+    // Land: the highest land_share_pct of cells by adjusted height.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| (Reverse(adjusted[i]), i));
+    let land_count = n * rules.land_share_pct as usize / 100;
+    let mut biomes = vec![Biome::DeepWater; n];
+    let mut land: Vec<usize> = order[..land_count].to_vec();
+
+    // Mountains: the highest 12% of land by raw height.
+    land.sort_by_key(|&i| (Reverse(height[i]), i));
+    let mountains = land.len() * 12 / 100;
+    for &i in &land[..mountains] {
+        biomes[i] = Biome::Mountains;
+    }
+
+    // The rest of the land by moisture: 20% desert, 30% steppe, 35% forest, 15% swamp.
+    let mut rest = land[mountains..].to_vec();
+    rest.sort_by_key(|&i| (moisture[i], i));
+    let total = rest.len().max(1);
+    for (k, &i) in rest.iter().enumerate() {
+        biomes[i] = match k * 100 / total {
+            0..=19 => Biome::Desert,
+            20..=49 => Biome::Steppe,
+            50..=84 => Biome::Forest,
+            _ => Biome::Swamp,
+        };
+    }
+
+    // Shallows: water next to land.
+    let with_land = biomes.clone();
+    for i in 0..n {
+        if with_land[i] != Biome::DeepWater {
+            continue;
+        }
+        let (x, y) = (i as i64 % w, i as i64 / w);
+        let coastal = (-1..=1).any(|dy| {
+            (-1..=1).any(|dx| {
+                let (nx, ny) = (x + dx, y + dy);
+                nx >= 0
+                    && ny >= 0
+                    && nx < w
+                    && ny < h
+                    && with_land[(ny * w + nx) as usize].is_land()
+            })
+        });
+        if coastal {
+            biomes[i] = Biome::Shallows;
+        }
+    }
+    biomes
+}
+
+/// Integer value noise: for each octave `(cell_size, amplitude)`, random lattice values in
+/// `0..1024` interpolated bilinearly.
+fn value_noise(rules: &Ruleset, rng: &Rng, purpose: Purpose, octaves: &[(i64, i64)]) -> Vec<i64> {
+    let (w, h) = (i64::from(rules.width), i64::from(rules.height));
+    let mut out = vec![0i64; (w * h) as usize];
+    for (octave, &(size, amplitude)) in octaves.iter().enumerate() {
+        let lattice = |gx: i64, gy: i64| -> i64 {
+            let subject = ((octave as u64) << 48) | ((gx as u64) << 24) | gy as u64;
+            (rng.raw(0, purpose, subject, 0) % 1024) as i64
+        };
+        for y in 0..h {
+            for x in 0..w {
+                let (gx, gy, fx, fy) = (x / size, y / size, x % size, y % size);
+                let v = lattice(gx, gy) * (size - fx) * (size - fy)
+                    + lattice(gx + 1, gy) * fx * (size - fy)
+                    + lattice(gx, gy + 1) * (size - fx) * fy
+                    + lattice(gx + 1, gy + 1) * fx * fy;
+                out[(y * w + x) as usize] += amplitude * v / (size * size);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archetypes_are_valid() {
+        for (g, biome) in ARCHETYPES {
+            assert!(g.is_valid(), "{g:?}");
+            assert!(biome.is_land());
+        }
+    }
+
+    #[test]
+    fn terrain_has_the_requested_land_share() {
+        let rules = Ruleset::default();
+        let biomes = generate_terrain(&rules, &Rng::new(&[7; 32]));
+        let land = biomes.iter().filter(|b| b.is_land()).count();
+        assert_eq!(land, biomes.len() * rules.land_share_pct as usize / 100);
+        for biome in [
+            Biome::Forest,
+            Biome::Steppe,
+            Biome::Desert,
+            Biome::Mountains,
+            Biome::Swamp,
+            Biome::Shallows,
+        ] {
+            assert!(biomes.contains(&biome), "missing {biome:?}");
+        }
+    }
+
+    #[test]
+    fn genesis_places_every_founder() {
+        let rules = Ruleset::default();
+        let world = genesis(&rules, &[1; 32], [2; 16]);
+        world.check_invariants(&rules).unwrap();
+        assert_eq!(
+            world.organisms.len() as u32,
+            rules.founder_lineages * rules.organisms_per_lineage
+        );
+        assert_eq!(world.clades.len() as u32, rules.founder_lineages);
+    }
+}

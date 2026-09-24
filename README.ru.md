@@ -68,6 +68,21 @@
 - [Исходный черновик v0.1](docs/spec/archive/spec-v0.1.ru.md)
 - [Обзор](docs/overview.md) и [FAQ](docs/faq.md) — на английском
 
+## Разработка
+
+Первый код — этап A1: детерминированное ядро и стенд баланса. Нужен стабильный Rust.
+
+```sh
+cargo test --workspace
+cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # пишет runs/seed-1/report.html
+cargo run --release -p protogaea-harness -- sweep --seeds 1..17 --days 2
+```
+
+- [core/](core/README.md) — детерминированное ядро и его статус относительно спецификации.
+- [harness/](harness/README.md) — стенд баланса и первые результаты.
+
+CI проверяет форматирование, линтер и тесты, а также сравнивает хеши состояний на x86-64, ARM64, Windows, macOS и в WASM.
+
 ## Принципы
 
 - Чтобы наблюдать, ничего не нужно: ни регистрации, ни искр.

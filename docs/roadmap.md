@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete. Stage A — the simulation core and the balance harness — comes next.
+**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestone A1 is done: a deterministic core and a balance harness. The world lives, but predators still die out by default — see the [harness findings](../harness/README.md#findings-stage-a1).
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -8,7 +8,7 @@ The riskiest question is not technical: *will people come back to watch?* The st
 
 | Stage | Deliverables | Exit criteria | Status |
 |---|---|---|---|
-| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | Next |
+| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 done |
 | B. Observation | Map, Muller plot, clade tree, cards, the WASM time machine, story detectors, museum, automatic names, "While you were away", subscriptions | In a usability test, 5–8 people explain the consequences of a mutation or an event without looking at server logs | Planned |
 | B′. Closed observation test | 2–3 weeks, 30–100 invited participants; the full wish mechanic with a daily allowance of work units instead of PoW | The product metrics declared before the test are reached. If viewers do not come back, we improve the world, not the sparks | Planned |
 | C. Sparks | yespower; the desktop app for Windows, Linux, macOS arm64 and Linux ARM64; the WASM spark client; the spark log with STHs and receipts; the ledger; the beacon; the watcher; load tests; signed builds | Sparks and miracle selection are verified independently; the engineering checks ([spec §29](spec/spec-v0.2.md#29-engineering-and-product-checks)) pass | Planned |
@@ -34,6 +34,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 11 | English version of the specification | Done |
 
 ## Stage A in detail
+
+**A1 — "Is the world alive?" (done, 2026-09-25):** items 1, 2 (without times of year, rifts, natural events, the museum and the spore bank), 4 (in CI) and 5 (the harness with the first checks) below. Next: the predator–prey balance (A1.1), then the rest of items 2–3 and 6–7 (A2), then tuning (A3).
 
 1. **Repository skeleton.** A Rust workspace (core, replay command line, harness) and a CI matrix: x86-64 Linux and Windows, ARM64 Linux and macOS, WASM.
 2. **Deterministic core.** State and tick order, counter-based randomness, genome and mutation, energy, hunting, movement choice, reproduction, death and decomposition, clades, museum and spore bank, times of year, natural events, rifts.

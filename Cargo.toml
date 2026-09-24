@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["core", "harness"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/protogaea/protogaea"
+
+[workspace.dependencies]
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+protogaea-core = { path = "core" }
+
+# Overflow checks stay on in every profile: overflow must never wrap silently in consensus
+# code, and debug and release builds must behave the same (spec §14).
+[profile.release]
+overflow-checks = true
+
+[profile.test]
+opt-level = 2

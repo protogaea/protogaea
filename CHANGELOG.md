@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Stage A1 code:
+  - `protogaea-core`, the deterministic simulation core;
+  - `protogaea-harness`, the balance harness with HTML reports;
+  - CI that checks formatting, lints and tests and compares state hashes across x86-64, ARM64, Windows, macOS and WASM.
 - Specification v0.2 in English (canonical), with a Russian translation.
 - Repository documentation: README in English and Russian, overview, FAQ, architecture, the spark protocol (draft), world rules (draft), glossary, roadmap, privacy, translations, decision records 0001–0013 and a publishing checklist.
 - Policies: CONTRIBUTING, Code of Conduct (Contributor Covenant 2.1), SECURITY, LICENSING and TRADEMARKS (draft).

@@ -1,0 +1,109 @@
+{
+  "version": 0,
+  "width": 64,
+  "height": 64,
+  "ticks_per_epoch": 12,
+  "epochs_per_day": 288,
+  "max_organisms": 6000,
+  "max_per_cell": 4,
+  "founder_lineages": 6,
+  "organisms_per_lineage": 50,
+  "genesis_energy": 8000,
+  "land_share_pct": 60,
+  "biomes": [
+    {
+      "passable": false,
+      "base_regen": 0,
+      "food_max": 0,
+      "move_cost": 0,
+      "cover": 0
+    },
+    {
+      "passable": true,
+      "base_regen": 0,
+      "food_max": 0,
+      "move_cost": 90,
+      "cover": 0
+    },
+    {
+      "passable": true,
+      "base_regen": 12,
+      "food_max": 60,
+      "move_cost": 30,
+      "cover": 12
+    },
+    {
+      "passable": true,
+      "base_regen": 9,
+      "food_max": 45,
+      "move_cost": 20,
+      "cover": 0
+    },
+    {
+      "passable": true,
+      "base_regen": 3,
+      "food_max": 15,
+      "move_cost": 30,
+      "cover": 0
+    },
+    {
+      "passable": true,
+      "base_regen": 4,
+      "food_max": 20,
+      "move_cost": 80,
+      "cover": 14
+    },
+    {
+      "passable": true,
+      "base_regen": 10,
+      "food_max": 50,
+      "move_cost": 60,
+      "cover": 10
+    }
+  ],
+  "energy_max": 20000,
+  "base_metabolism": 100,
+  "trait_upkeep": [
+    15,
+    10,
+    8,
+    15,
+    12,
+    8
+  ],
+  "habitat_modifier_pct": 10,
+  "shallow_drain": 200,
+  "bite_per_point": 3,
+  "plant_efficiency": 50,
+  "attack_weight": 3,
+  "defense_weight": 4,
+  "roll_span": 8,
+  "attack_cost": 150,
+  "hunt_hunger_pct": 60,
+  "predation_efficiency_pct": 60,
+  "body_value": 2000,
+  "kin_distance": 2,
+  "repro_base": 12000,
+  "repro_per_fertility": 600,
+  "child_base": 5000,
+  "child_per_fertility": 300,
+  "birth_cost": 500,
+  "senescence_start": 150,
+  "max_age": 300,
+  "body_detritus": 10,
+  "remains_detritus": 3,
+  "decomposition_pct": 5,
+  "mutation_ppm": 100000,
+  "behavior_mutation_ppm": 50000,
+  "hue_mutation_ppm": 500000,
+  "clade_split_distance": 3,
+  "clade_name_threshold": 20,
+  "weights": {
+    "food_pct": 100,
+    "hunt_per_point": 100,
+    "danger_per_point": 100,
+    "habitat_bonus": 200,
+    "crowd_per_neighbor": 150,
+    "dispersal_per_step": 10
+  }
+}
