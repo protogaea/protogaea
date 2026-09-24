@@ -29,7 +29,7 @@ The repository [github.com/danifest751/protogaea](https://github.com/danifest751
 
 - [x] The About description is set (see below).
 - [x] Add the topics (see below).
-- [ ] Enable private vulnerability reporting: Settings → Code security → Private vulnerability reporting.
+- [x] Enable private vulnerability reporting (2026-09-25).
 - [ ] Protect the `main` branch.
 - [ ] Decide whether to enable GitHub Discussions.
 - [ ] Add a social preview image.
