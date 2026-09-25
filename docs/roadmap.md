@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestone A1 is done: a deterministic core and a balance harness. The world lives, but predators still die out by default — see the [harness findings](../harness/README.md#findings-stage-a1).
+**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestone A1 (a deterministic core and a balance harness) and part 1 of A2 (times of year and natural events) are done. The world lives through the seasons, predators survive on all tested seeds, and a live preview runs in real time. Still open: the dominant clade changes too rarely on about a third of the seeds — see the [harness findings](../harness/README.md#findings-stage-a2-part-1-times-of-year-and-natural-events). Next: A2 part 2 (rifts, floods, the museum and the spore bank), then tuning (A3).
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -8,7 +8,7 @@ The riskiest question is not technical: *will people come back to watch?* The st
 
 | Stage | Deliverables | Exit criteria | Status |
 |---|---|---|---|
-| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 done |
+| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 and A2 part 1 done |
 | B. Observation | Map, Muller plot, clade tree, cards, the WASM time machine, story detectors, museum, automatic names, "While you were away", subscriptions | In a usability test, 5–8 people explain the consequences of a mutation or an event without looking at server logs | Planned |
 | B′. Closed observation test | 2–3 weeks, 30–100 invited participants; the full wish mechanic with a daily allowance of work units instead of PoW | The product metrics declared before the test are reached. If viewers do not come back, we improve the world, not the sparks | Planned |
 | C. Sparks | yespower; the desktop app for Windows, Linux, macOS arm64 and Linux ARM64; the WASM spark client; the spark log with STHs and receipts; the ledger; the beacon; the watcher; load tests; signed builds | Sparks and miracle selection are verified independently; the engineering checks ([spec §29](spec/spec-v0.2.md#29-engineering-and-product-checks)) pass | Planned |

@@ -10,7 +10,7 @@ The deterministic simulation core of Protogaea — consensus code. The same inpu
 
 CI builds the crate for `wasm32-unknown-unknown` and compares state hashes across x86-64, ARM64, Windows, macOS and WASM on every push.
 
-## Status against the specification (stage A1)
+## Status against the specification (stages A1 and A2, part 1)
 
 | Area | Status |
 |---|---|
@@ -40,8 +40,7 @@ To be resolved in the next version of the specification.
    - `threat(c)` uses the strongest hunter in the 3 × 3 area around the cell;
    - the kin check in both uses the clade instead of the genome distance. The attack itself uses the exact genome distance (`kin_distance`).
 2. **Dispersal** is approximated as a bonus per step of distance (`dispersal_per_step`), not as distance from relatives.
-3. **Seasonal moisture** (`season_moisture_delta`): the base moisture shifts with the time of year (drier in summer), so that summer wildfires are possible.
-4. **Food units** are tenths of a unit, so that integer multipliers do not round slow growth down to zero.
+3. **Food units** are tenths of a unit, so that integer multipliers do not round slow growth down to zero.
 
 ## Layout
 

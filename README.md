@@ -76,7 +76,7 @@ The full index is in [docs/README.md](docs/README.md).
 
 ## Development
 
-The first code is stage A1: the deterministic core and the balance harness. You need stable Rust.
+The code covers stage A1 and part of A2: the deterministic core with times of year and natural events, and the balance harness with a live mode. You need stable Rust.
 
 ```sh
 cargo test --workspace

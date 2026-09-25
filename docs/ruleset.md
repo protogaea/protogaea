@@ -2,7 +2,7 @@
 
 > **Status: Draft.** The rules themselves are defined in [Part II of the specification](spec/spec-v0.2.md#part-ii-world-rules-ruleset-v0). This document describes the structure of the season rules file and lists every parameter with its candidate value, or **TBD** where the balance harness will set it (stage A).
 
-**Stage A1 implementation.** [core/src/ruleset.rs](../core/src/ruleset.rs) holds the parameters the core uses, with untuned default values; `protogaea-harness ruleset` prints them as JSON. Satiation (`hunt_hunger_pct`) and cover (`cover`) were added to spec §11.3 during stage A1. The remaining differences from the specification are listed in [core/README.md](../core/README.md#differences-from-the-specification).
+**Stage A implementation.** [core/src/ruleset.rs](../core/src/ruleset.rs) holds the parameters the core uses, with untuned default values; `protogaea-harness ruleset` prints them as JSON. Satiation (`hunt_hunger_pct`) and cover (`cover`) were added to spec §11.3 during stage A1. The remaining differences from the specification are listed in [core/README.md](../core/README.md#differences-from-the-specification).
 
 ## 1. Principles
 
