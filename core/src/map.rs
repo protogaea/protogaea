@@ -1,41 +1,15 @@
 //! Terrain generation and genesis.
 //!
-//! Stage A1 generates a single continent surrounded by water, with coastal shallows. Rifts
-//! and the Season 1 schedule arrive in stage A2.
+//! A single continent surrounded by water, with coastal shallows. Rifts and the Season 1
+//! schedule arrive later in stage A2.
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
-use crate::genome::Genome;
+use crate::climate;
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
 use crate::state::{Biome, Cell, Clade, Organism, World};
-
-/// Founder archetypes and the biome each one starts in (spec §9).
-const ARCHETYPES: [(Genome, Biome); 6] = [
-    // Grazer: eats well, breeds fast, easy prey.
-    (genome([2, 3, 8, 0, 4, 7], 0, 1, 1, 120), Biome::Forest),
-    // Hunter.
-    (genome([6, 6, 0, 8, 2, 2], 1, 2, 3, 0), Biome::Steppe),
-    // Armored: too hard for hunters, but a slower grazer.
-    (genome([1, 2, 6, 0, 8, 7], 3, 0, 2, 215), Biome::Mountains),
-    // Forager: quick and sharp-eyed.
-    (genome([5, 5, 6, 0, 3, 5], 2, 2, 1, 40), Biome::Desert),
-    // Breeder.
-    (genome([3, 3, 7, 0, 3, 8], 4, 1, 0, 285), Biome::Swamp),
-    // Generalist omnivore.
-    (genome([4, 4, 4, 4, 4, 4], 5, 1, 2, 170), Biome::Forest),
-];
-
-const fn genome(traits: [u8; 6], habitat: u8, dispersal: u8, boldness: u8, hue: u16) -> Genome {
-    Genome {
-        traits,
-        habitat,
-        dispersal,
-        boldness,
-        hue,
-    }
-}
 
 /// Creates the world at epoch 0.
 pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> World {
@@ -47,6 +21,7 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
             biome,
             food: rules.biomes[biome as usize].food_max,
             detritus: 0,
+            moisture: climate::target_moisture(rules, biome, 0),
         })
         .collect();
     let mut world = World {
@@ -58,13 +33,15 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
         cells,
         organisms: Vec::new(),
         clades: BTreeMap::new(),
+        effects: Vec::new(),
         next_organism_id: 1,
         next_clade_id: 1,
     };
     let per_cell_at_genesis = rules.max_per_cell.min(2);
     let mut occupancy = vec![0u8; world.cells.len()];
-    for lineage in 0..rules.founder_lineages {
-        let (founder, preferred) = ARCHETYPES[lineage as usize % ARCHETYPES.len()];
+    for (lineage, founder) in (0u32..).zip(&rules.founders) {
+        let preferred = founder.biome;
+        let founder = founder.genome;
         let mut sites: Vec<usize> = (0..world.cells.len())
             .filter(|&i| world.cells[i].biome == preferred)
             .collect();
@@ -244,10 +221,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn archetypes_are_valid() {
-        for (g, biome) in ARCHETYPES {
-            assert!(g.is_valid(), "{g:?}");
-            assert!(biome.is_land());
+    fn founders_start_on_land() {
+        for founder in Ruleset::default().founders {
+            assert!(founder.genome.is_valid(), "{founder:?}");
+            assert!(founder.biome.is_land());
         }
     }
 
@@ -276,8 +253,8 @@ mod tests {
         world.check_invariants(&rules).unwrap();
         assert_eq!(
             world.organisms.len() as u32,
-            rules.founder_lineages * rules.organisms_per_lineage
+            rules.founders.len() as u32 * rules.organisms_per_lineage
         );
-        assert_eq!(world.clades.len() as u32, rules.founder_lineages);
+        assert_eq!(world.clades.len(), rules.founders.len());
     }
 }

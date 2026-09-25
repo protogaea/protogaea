@@ -1,12 +1,15 @@
 //! One epoch of the world (spec §13): the epoch boundary, then twelve ticks.
 //!
-//! Stage A1 has no epoch-boundary steps yet: rifts, natural events, miracles and natural
-//! revival arrive in stage A2, so an epoch is simply twelve ticks.
+//! The epoch boundary currently draws natural events (wildfires, great droughts, plague).
+//! Rifts, miracles and natural revival arrive later in stage A2.
 
+use std::cmp::Reverse;
+
+use crate::climate::{self, SUMMER};
 use crate::genome::{mutate, FERTILITY, HUNTING, PLANT};
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
-use crate::state::{Biome, Clade, Organism, World};
+use crate::state::{Biome, Clade, Effect, EffectKind, Organism, World};
 
 /// Why an organism died.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14,6 +17,7 @@ pub enum DeathCause {
     Starvation,
     OldAge,
     Predation,
+    Plague,
 }
 
 /// What happened during one epoch. Not part of consensus: it is derived from the run and
@@ -24,11 +28,15 @@ pub struct EpochReport {
     pub deaths_starvation: u32,
     pub deaths_old_age: u32,
     pub deaths_predation: u32,
+    pub deaths_plague: u32,
     pub attacks: u32,
     pub births_blocked_space: u32,
     pub births_blocked_cap: u32,
     /// Ticks in which at least one birth was blocked by the global limit.
     pub ticks_at_cap: u32,
+    pub wildfires: u32,
+    pub droughts: u32,
+    pub plagues: u32,
     /// `(parent_id, child_id)`, in the order the births happened.
     pub births_list: Vec<(u64, u64)>,
     pub clades_founded: Vec<u32>,
@@ -53,6 +61,7 @@ pub fn epoch_seed(
 pub fn step_epoch(world: &mut World, rules: &Ruleset, epoch_seed: &[u8; 32]) -> EpochReport {
     let rng = Rng::new(epoch_seed);
     let mut report = EpochReport::default();
+    epoch_boundary(world, rules, &rng, &mut report);
     let mut scratch = Scratch::default();
     for tick in 0..rules.ticks_per_epoch {
         run_tick(world, rules, &rng, tick, &mut report, &mut scratch);
@@ -75,6 +84,193 @@ const NEIGHBORS: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
+// ---------------------------------------------------------------------------------------
+// The epoch boundary: natural events (spec §10).
+// ---------------------------------------------------------------------------------------
+
+fn epoch_boundary(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let global_tick = world.epoch * u64::from(rules.ticks_per_epoch);
+    if climate::season(rules, global_tick) == SUMMER {
+        wildfire(world, rules, rng, report);
+        drought(world, rules, rng, report);
+    }
+    plague(world, rules, rng, report);
+}
+
+fn active(world: &World, kind: EffectKind) -> u32 {
+    world.effects.iter().filter(|e| e.kind == kind).count() as u32
+}
+
+/// The cells an effect covers, as a mask.
+fn mask(world: &World, effect: &Effect) -> Vec<bool> {
+    (0..world.cells.len())
+        .map(|i| effect.covers(world, i))
+        .collect()
+}
+
+fn wildfire(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let ev = &rules.events;
+    let subject = world.epoch;
+    if active(world, EffectKind::Ash) >= ev.max_active_per_kind
+        || !rng.chance_ppm(0, Purpose::WildfireChance, subject, ev.wildfire_ppm)
+    {
+        return;
+    }
+    let sites: Vec<usize> = (0..world.cells.len())
+        .filter(|&i| {
+            let c = world.cells[i];
+            matches!(c.biome, Biome::Forest | Biome::Steppe)
+                && c.moisture < ev.wildfire_max_moisture
+        })
+        .collect();
+    if sites.is_empty() {
+        return;
+    }
+    let center = sites[rng.below(0, Purpose::WildfireSite, subject, sites.len() as u64) as usize];
+    let span = u64::from(ev.wildfire_radius_max - ev.wildfire_radius_min) + 1;
+    let radius =
+        ev.wildfire_radius_min + rng.below(0, Purpose::WildfireRadius, subject, span) as u8;
+    let fire = Effect {
+        kind: EffectKind::Ash,
+        center: center as u16,
+        radius,
+        remaining_ticks: ev.ash_ticks,
+    };
+    let burned = mask(world, &fire);
+    for (cell, &hit) in world.cells.iter_mut().zip(&burned) {
+        if hit {
+            cell.food = 0;
+            cell.detritus = 0;
+        }
+    }
+    for o in &mut world.organisms {
+        if burned[usize::from(o.cell)] {
+            o.energy = (o.energy * (100 - ev.wildfire_energy_loss_pct) / 100).max(1);
+        }
+    }
+    if ev.ash_ticks > 0 {
+        world.effects.push(fire);
+    }
+    report.wildfires += 1;
+}
+
+fn drought(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let ev = &rules.events;
+    let subject = world.epoch;
+    if active(world, EffectKind::Drought) >= ev.max_active_per_kind
+        || !rng.chance_ppm(0, Purpose::DroughtChance, subject, ev.drought_ppm)
+    {
+        return;
+    }
+    let sites: Vec<usize> = (0..world.cells.len())
+        .filter(|&i| matches!(world.cells[i].biome, Biome::Steppe | Biome::Desert))
+        .collect();
+    if sites.is_empty() {
+        return;
+    }
+    let center = sites[rng.below(0, Purpose::DroughtSite, subject, sites.len() as u64) as usize];
+    let drought = Effect {
+        kind: EffectKind::Drought,
+        center: center as u16,
+        radius: ev.drought_radius,
+        remaining_ticks: ev.drought_ticks,
+    };
+    let dried = mask(world, &drought);
+    for (cell, &hit) in world.cells.iter_mut().zip(&dried) {
+        if hit {
+            cell.moisture = cell.moisture.saturating_sub(ev.drought_moisture_drop);
+        }
+    }
+    if ev.drought_ticks > 0 {
+        world.effects.push(drought);
+    }
+    report.droughts += 1;
+}
+
+/// "Kill the winner": the more the largest clade dominates, the likelier a plague strikes it.
+fn plague(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let ev = &rules.events;
+    let population = world.organisms.len() as u64;
+    if population == 0 {
+        return;
+    }
+    let Some(dominant) = world
+        .clades
+        .values()
+        .max_by_key(|c| (c.living, Reverse(c.id)))
+        .copied()
+    else {
+        return;
+    };
+    let share = u64::from(dominant.living) * 1000 / population;
+    let min = u64::from(ev.plague_min_share_permille);
+    if share <= min {
+        return;
+    }
+    let ppm = (u64::from(ev.plague_max_ppm) * (share - min) / (1000 - min)) as u32;
+    let subject = world.epoch;
+    if !rng.chance_ppm(0, Purpose::PlagueChance, subject, ppm) {
+        return;
+    }
+    let members: Vec<usize> = (0..world.organisms.len())
+        .filter(|&i| world.organisms[i].clade_id == dominant.id)
+        .collect();
+    let pick = rng.below(0, Purpose::PlagueSite, subject, members.len() as u64) as usize;
+    let (cx, cy) = world.coords(usize::from(world.organisms[members[pick]].cell));
+    let r = i32::from(ev.plague_radius);
+    let reached: Vec<usize> = members
+        .into_iter()
+        .filter(|&i| {
+            let (x, y) = world.coords(usize::from(world.organisms[i].cell));
+            (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r
+        })
+        .collect();
+    if (reached.len() as u32) < ev.plague_min_members {
+        return;
+    }
+    report.plagues += 1;
+    let mut dead = vec![false; world.organisms.len()];
+    for i in reached {
+        let o = world.organisms[i];
+        if rng.chance_ppm(0, Purpose::PlagueDeath, o.id, ev.plague_mortality_ppm) {
+            dead[i] = true;
+            world
+                .clades
+                .get_mut(&o.clade_id)
+                .expect("every organism has a clade")
+                .living -= 1;
+            let cell = &mut world.cells[usize::from(o.cell)];
+            cell.detritus = cell.detritus.saturating_add(rules.body_detritus);
+            report.deaths_plague += 1;
+        }
+    }
+    let mut k = 0;
+    world.organisms.retain(|_| {
+        let keep = !dead[k];
+        k += 1;
+        keep
+    });
+    close_extinct_clades(world, report);
+}
+
+fn close_extinct_clades(world: &mut World, report: &mut EpochReport) {
+    let extinct: Vec<u32> = world
+        .clades
+        .values()
+        .filter(|c| c.living == 0)
+        .map(|c| c.id)
+        .collect();
+    for id in extinct {
+        if let Some(clade) = world.clades.remove(&id) {
+            report.clades_extinct.push(clade);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// Ticks.
+// ---------------------------------------------------------------------------------------
+
 /// Working memory of one tick. Not part of the state.
 #[derive(Default)]
 struct Scratch {
@@ -84,7 +280,7 @@ struct Scratch {
     members: Vec<[u32; 4]>,
     /// The strongest hunter in each cell at the start of the tick: (attack, clade).
     hunter: Vec<(i32, u32)>,
-    /// The weakest organism in each cell at the start of the tick: (defense, clade).
+    /// The weakest organism in each cell at the start of the tick: (defense with cover, clade).
     prey: Vec<(i32, u32)>,
     /// (queue key, organism id, organism index).
     queue: Vec<(u64, u64, u32)>,
@@ -92,6 +288,8 @@ struct Scratch {
     /// Energy spent on movement and attacks during the tick.
     spent: Vec<i32>,
     alive_count: usize,
+    /// Food growth multiplier from active effects, per cell, in percent.
+    effect_pct: Vec<u64>,
 }
 
 impl Scratch {
@@ -140,21 +338,8 @@ fn run_tick(
     report: &mut EpochReport,
     s: &mut Scratch,
 ) {
-    // 1. Environment: decomposition and food growth.
-    for cell in &mut world.cells {
-        let p = rules.biomes[cell.biome as usize];
-        if !p.passable {
-            continue;
-        }
-        let decomposed =
-            (u64::from(cell.detritus) * u64::from(rules.decomposition_pct) / 100) as u32;
-        cell.detritus -= decomposed;
-        cell.food = cell
-            .food
-            .saturating_add(decomposed)
-            .saturating_add(p.base_regen)
-            .min(p.food_max);
-    }
+    // 1. Environment.
+    environment(world, rules, tick, s);
 
     // Index organisms by cell, and note what each cell looks like to its neighbors.
     s.reset(world.cells.len(), world.organisms.len());
@@ -237,17 +422,68 @@ fn run_tick(
         k += 1;
         keep
     });
-    let extinct: Vec<u32> = world
-        .clades
-        .values()
-        .filter(|c| c.living == 0)
-        .map(|c| c.id)
-        .collect();
-    for id in extinct {
-        if let Some(clade) = world.clades.remove(&id) {
-            report.clades_extinct.push(clade);
+    close_extinct_clades(world, report);
+}
+
+/// Step 1 of a tick: moisture, decomposition and food growth under the time of year and the
+/// active effects; then the effects count down (spec §10).
+fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
+    let global_tick = world.epoch * u64::from(rules.ticks_per_epoch) + u64::from(tick);
+    let growth = Biome::ALL.map(|b| climate::growth_pct(rules, b, global_tick));
+    let target = Biome::ALL.map(|b| climate::target_moisture(rules, b, global_tick));
+
+    s.effect_pct.clear();
+    s.effect_pct.resize(world.cells.len(), 100);
+    for effect in &world.effects {
+        let pct = u64::from(match effect.kind {
+            EffectKind::Ash => rules.events.ash_growth_pct,
+            EffectKind::Drought => rules.events.drought_growth_pct,
+        });
+        let (cx, cy) = world.coords(usize::from(effect.center));
+        let r = i32::from(effect.radius);
+        for y in cy - r..=cy + r {
+            for x in cx - r..=cx + r {
+                if let Some(c) = world.index(x, y) {
+                    if effect.covers(world, c) {
+                        s.effect_pct[c] = s.effect_pct[c] * pct / 100;
+                    }
+                }
+            }
         }
     }
+
+    let relax = rules.climate.moisture_relax;
+    for (i, cell) in world.cells.iter_mut().enumerate() {
+        let p = rules.biomes[cell.biome as usize];
+        if !p.passable {
+            continue;
+        }
+        let t = target[cell.biome as usize];
+        cell.moisture = if cell.moisture < t {
+            cell.moisture.saturating_add(relax).min(t)
+        } else {
+            cell.moisture.saturating_sub(relax).max(t)
+        };
+        let decomposed =
+            (u64::from(cell.detritus) * u64::from(rules.decomposition_pct) / 100) as u32;
+        cell.detritus -= decomposed;
+        let regen = u64::from(p.base_regen)
+            * growth[cell.biome as usize]
+            * climate::moisture_pct(rules, cell.moisture)
+            * s.effect_pct[i]
+            / 1_000_000;
+        let regen = u32::try_from(regen).unwrap_or(u32::MAX);
+        cell.food = cell
+            .food
+            .saturating_add(decomposed)
+            .saturating_add(regen)
+            .min(p.food_max);
+    }
+
+    world.effects.retain_mut(|e| {
+        e.remaining_ticks -= 1;
+        e.remaining_ticks > 0
+    });
 }
 
 /// Movement, then an attack or a meal (spec §11.2–11.4).
@@ -386,7 +622,8 @@ fn cover(rules: &Ruleset, biome: Biome) -> i32 {
     rules.biomes[biome as usize].cover
 }
 
-/// Hunters hunt only while hungry (satiation), which keeps them from wiping out their prey.
+/// Hunters hunt only while hungry (satiation, spec §11.3), which keeps them from wiping out
+/// their prey.
 fn is_hungry_hunter(me: &Organism, rules: &Ruleset) -> bool {
     me.genome.traits[HUNTING] > 0 && me.energy < rules.energy_max * rules.hunt_hunger_pct / 100
 }
@@ -520,13 +757,14 @@ fn kill(
         .living -= 1;
     let detritus = match cause {
         DeathCause::Predation => rules.remains_detritus,
-        DeathCause::Starvation | DeathCause::OldAge => rules.body_detritus,
+        DeathCause::Starvation | DeathCause::OldAge | DeathCause::Plague => rules.body_detritus,
     };
     world.cells[cell].detritus = world.cells[cell].detritus.saturating_add(detritus);
     match cause {
         DeathCause::Starvation => report.deaths_starvation += 1,
         DeathCause::OldAge => report.deaths_old_age += 1,
         DeathCause::Predation => report.deaths_predation += 1,
+        DeathCause::Plague => report.deaths_plague += 1,
     }
 }
 

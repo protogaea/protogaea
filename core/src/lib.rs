@@ -9,6 +9,7 @@
 //! implemented, what is simplified and what is still missing compared with the specification.
 #![forbid(unsafe_code)]
 
+pub mod climate;
 pub mod genome;
 pub mod map;
 pub mod rng;
@@ -20,4 +21,4 @@ pub use genome::Genome;
 pub use map::genesis;
 pub use ruleset::Ruleset;
 pub use sim::{epoch_seed, step_epoch, DeathCause, EpochReport};
-pub use state::{Biome, Cell, Clade, Organism, World};
+pub use state::{Biome, Cell, Clade, Effect, EffectKind, Organism, World};

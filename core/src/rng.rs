@@ -48,6 +48,22 @@ pub enum Purpose {
     MapHeight = 16,
     /// Terrain moisture noise; the subject encodes the lattice point.
     MapMoisture = 17,
+    /// Whether a wildfire starts this epoch; the subject is the epoch.
+    WildfireChance = 18,
+    /// Where it starts.
+    WildfireSite = 19,
+    /// How far it spreads.
+    WildfireRadius = 20,
+    /// Whether a great drought starts this epoch; the subject is the epoch.
+    DroughtChance = 21,
+    /// Where it starts.
+    DroughtSite = 22,
+    /// Whether a plague strikes this epoch; the subject is the epoch.
+    PlagueChance = 23,
+    /// Which member of the clade is at its center.
+    PlagueSite = 24,
+    /// Whether a member within reach dies; the subject is the organism.
+    PlagueDeath = 25,
 }
 
 /// A stateless source of randomness bound to one seed.

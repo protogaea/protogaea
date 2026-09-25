@@ -299,7 +299,7 @@ fn passed(summary: &Summary) -> usize {
 }
 
 fn print_checks(summary: &Summary) {
-    println!("ecosystem health (spec §28, stage A1 subset):");
+    println!("ecosystem health (spec §28, the checks measured so far):");
     for check in summary.checks() {
         let mark = match check.pass {
             Some(true) => "pass",
@@ -330,12 +330,12 @@ fn load_rules(opts: &Options) -> Result<Ruleset, String> {
 fn write_metrics_csv(path: &std::path::Path, tracker: &Tracker) -> Result<(), String> {
     let mut csv = String::from(
         "epoch,population,grazers,armored,hunters,clades,clades_20,dominant_clade,dominant_permille,\
-         births,deaths,kills,ticks_at_cap,movement_x10,perception_x10,plants_x10,hunting_x10,defense_x10,fertility_x10\n",
+         births,deaths,kills,plague_deaths,wildfires,droughts,plagues,ticks_at_cap,movement_x10,perception_x10,plants_x10,hunting_x10,defense_x10,fertility_x10\n",
     );
     for s in &tracker.series {
         let traits: Vec<String> = s.trait_means_x10.iter().map(u32::to_string).collect();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             s.epoch,
             s.population,
             s.grazers,
@@ -348,6 +348,10 @@ fn write_metrics_csv(path: &std::path::Path, tracker: &Tracker) -> Result<(), St
             s.births,
             s.deaths,
             s.kills,
+            s.plague_deaths,
+            s.wildfires,
+            s.droughts,
+            s.plagues,
             s.ticks_at_cap,
             traits.join(","),
         ));

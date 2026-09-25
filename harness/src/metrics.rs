@@ -27,6 +27,10 @@ pub struct EpochStats {
     pub births: u32,
     pub deaths: u32,
     pub kills: u32,
+    pub plague_deaths: u32,
+    pub wildfires: u32,
+    pub droughts: u32,
+    pub plagues: u32,
     pub ticks_at_cap: u32,
     /// The mean of each trait, ×10.
     pub trait_means_x10: [u32; TRAIT_COUNT],
@@ -45,8 +49,15 @@ pub fn epoch_stats(world: &World, report: &EpochReport) -> EpochStats {
         dominant_clade: 0,
         dominant_permille: 0,
         births: report.births,
-        deaths: report.deaths_starvation + report.deaths_old_age + report.deaths_predation,
+        deaths: report.deaths_starvation
+            + report.deaths_old_age
+            + report.deaths_predation
+            + report.deaths_plague,
         kills: report.deaths_predation,
+        plague_deaths: report.deaths_plague,
+        wildfires: report.wildfires,
+        droughts: report.droughts,
+        plagues: report.plagues,
         ticks_at_cap: report.ticks_at_cap,
         trait_means_x10: [0; TRAIT_COUNT],
     };
@@ -220,7 +231,7 @@ pub struct Check {
 }
 
 impl Summary {
-    /// Pass conditions from spec §28 that stage A1 can measure. The thresholds are candidates.
+    /// Pass conditions from spec §28 measured so far. The thresholds are candidates.
     pub fn checks(&self) -> Vec<Check> {
         let check = |name, pass| Check { name, pass };
         vec![

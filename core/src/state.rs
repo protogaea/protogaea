@@ -3,10 +3,12 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::genome::Genome;
 use crate::ruleset::Ruleset;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum Biome {
     DeepWater = 0,
@@ -20,6 +22,15 @@ pub enum Biome {
 
 impl Biome {
     pub const COUNT: usize = 7;
+    pub const ALL: [Biome; Biome::COUNT] = [
+        Biome::DeepWater,
+        Biome::Shallows,
+        Biome::Forest,
+        Biome::Steppe,
+        Biome::Desert,
+        Biome::Mountains,
+        Biome::Swamp,
+    ];
 
     /// The land biome a `habitat` gene value refers to; `None` for a generalist.
     pub fn from_habitat(habitat: u8) -> Option<Biome> {
@@ -41,10 +52,43 @@ impl Biome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cell {
     pub biome: Biome,
-    /// Food units.
+    /// Tenths of a food unit.
     pub food: u32,
     /// Food units that turn into food over time.
     pub detritus: u32,
+    /// 0–100 (spec §10).
+    pub moisture: u8,
+}
+
+/// A temporary effect of a natural event on an area (spec §10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum EffectKind {
+    /// After a wildfire: food grows faster.
+    Ash = 1,
+    /// A great drought: food grows slower.
+    Drought = 2,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Effect {
+    pub kind: EffectKind,
+    pub center: u16,
+    pub radius: u8,
+    pub remaining_ticks: u32,
+}
+
+impl Effect {
+    /// Whether the effect covers a cell. Ash covers a disc; a drought covers a square.
+    pub fn covers(&self, world: &World, cell: usize) -> bool {
+        let (cx, cy) = world.coords(usize::from(self.center));
+        let (x, y) = world.coords(cell);
+        let (dx, dy, r) = ((x - cx).abs(), (y - cy).abs(), i32::from(self.radius));
+        match self.kind {
+            EffectKind::Ash => dx * dx + dy * dy <= r * r,
+            EffectKind::Drought => dx <= r && dy <= r,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +130,8 @@ pub struct World {
     pub organisms: Vec<Organism>,
     /// Clades with living members, by id.
     pub clades: BTreeMap<u32, Clade>,
+    /// Active effects of natural events, in the order they started.
+    pub effects: Vec<Effect>,
     pub next_organism_id: u64,
     pub next_clade_id: u32,
 }
@@ -109,7 +155,7 @@ impl World {
     /// The canonical encoding of the state.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64 + self.cells.len() * 9 + self.organisms.len() * 50);
-        out.extend_from_slice(b"PROTOGAEA/STATE/A1");
+        out.extend_from_slice(b"PROTOGAEA/STATE/A2");
         out.extend_from_slice(&self.world_id);
         out.extend_from_slice(&self.ruleset_id);
         out.extend_from_slice(&self.width.to_le_bytes());
@@ -121,6 +167,14 @@ impl World {
             out.push(c.biome as u8);
             out.extend_from_slice(&c.food.to_le_bytes());
             out.extend_from_slice(&c.detritus.to_le_bytes());
+            out.push(c.moisture);
+        }
+        out.extend_from_slice(&(self.effects.len() as u64).to_le_bytes());
+        for e in &self.effects {
+            out.push(e.kind as u8);
+            out.extend_from_slice(&e.center.to_le_bytes());
+            out.push(e.radius);
+            out.extend_from_slice(&e.remaining_ticks.to_le_bytes());
         }
         out.extend_from_slice(&(self.organisms.len() as u64).to_le_bytes());
         for o in &self.organisms {
@@ -162,6 +216,9 @@ impl World {
         for (i, c) in self.cells.iter().enumerate() {
             if c.food > rules.biomes[c.biome as usize].food_max {
                 return Err(format!("cell {i} has more food than its biome allows"));
+            }
+            if c.moisture > 100 {
+                return Err(format!("cell {i} has moisture above 100"));
             }
         }
         if self.organisms.len() > rules.max_organisms as usize {

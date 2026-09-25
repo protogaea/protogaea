@@ -24,7 +24,7 @@ The beacon is replaced by a value derived from the run seed, so every run is rep
 
 ## Checks
 
-These are the stage A1 subset of spec §28. The thresholds are candidates.
+These are the checks of spec §28 measured so far. The thresholds are candidates.
 
 - no total extinction;
 - predators survive to the end;
@@ -47,3 +47,15 @@ Measured on 2026-09-25 with 16 seeds.
 - **Still open:** in most seeds a single clade holds more than 60% of the population for almost the whole three days.
 
 Satiation and cover were adopted into the specification (§11.3) on 2026-09-25. The default ruleset now includes cover and the dispersal bonus of 10.
+
+## Findings (stage A2, part 1: times of year and natural events)
+
+Measured on 2026-09-25 with 16 seeds.
+
+- **Seasons drive the population:** about 4,200 organisms in spring, 1,800–2,100 in winter. Dominance shifts over the year: armored organisms give way to grazers.
+- **Diversity improved:** at least 6 clades of 20+ after day 3 on 87% of seeds (4 days), and no clade above 60% for more than 3 days on 81%.
+- **Winter killed the predators** on about half of the seeds: pure carnivores starve when prey is scarce and hides in cover.
+- **Cheaper hunting upkeep fixed it** (10 instead of 15 per point): predators survive on 16 of 16 seeds over 4 days. An omnivorous founder hunter did not help.
+- **Wildfires were too rare:** they need dry steppe or forest late in summer, so the chance per summer epoch was raised from 5,556 to 9,000 ppm.
+
+With these defaults, over 8 world days: no extinction and predators alive on 16 of 16 seeds; at least 6 clades of 20+ after day 3 and a change of the dominant clade at least once per 3 days on 68%; no clade above 60% for more than 3 days on 87%; all 8 checks pass on 9 of 16 seeds. Next: more turnover of the dominant clade (stage A3 tuning).

@@ -1,18 +1,19 @@
 //! Season rules (spec Part II, `docs/ruleset.md`).
 //!
-//! Stage A1 holds the parameters the core uses. The default values are untuned candidates;
-//! the balance harness exists to replace them.
+//! The default values are untuned candidates; the balance harness exists to replace them.
+//! Food is counted in tenths of a unit, so that integer multipliers do not round slow growth
+//! down to zero.
 
 use serde::{Deserialize, Serialize};
 
-use crate::genome::TRAIT_MAX;
+use crate::genome::{Genome, TRAIT_MAX};
 use crate::rng::derive;
 use crate::state::Biome;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BiomeParams {
     pub passable: bool,
-    /// Food growth per tick, in food units.
+    /// Food growth per tick before multipliers, in tenths of a food unit.
     pub base_regen: u32,
     pub food_max: u32,
     /// The energy cost of stepping into a cell of this biome, in hundredths.
@@ -38,6 +39,92 @@ pub struct MoveWeights {
     pub dispersal_per_step: i32,
 }
 
+/// A founder lineage (spec §9).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Founder {
+    pub genome: Genome,
+    pub biome: Biome,
+}
+
+/// Six archetypes in different biomes.
+fn default_founders() -> Vec<Founder> {
+    let founder = |traits, habitat, dispersal, boldness, hue, biome| Founder {
+        genome: Genome {
+            traits,
+            habitat,
+            dispersal,
+            boldness,
+            hue,
+        },
+        biome,
+    };
+    vec![
+        // Grazer: eats well, breeds fast, easy prey.
+        founder([2, 3, 8, 0, 4, 7], 0, 1, 1, 120, Biome::Forest),
+        // Hunter.
+        founder([6, 6, 0, 8, 2, 2], 1, 2, 3, 0, Biome::Steppe),
+        // Armored: too hard for hunters, but a slower grazer.
+        founder([1, 2, 6, 0, 8, 7], 3, 0, 2, 215, Biome::Mountains),
+        // Forager: quick and sharp-eyed.
+        founder([5, 5, 6, 0, 3, 5], 2, 2, 1, 40, Biome::Desert),
+        // Breeder.
+        founder([3, 3, 7, 0, 3, 8], 4, 1, 0, 285, Biome::Swamp),
+        // Generalist omnivore.
+        founder([4, 4, 4, 4, 4, 4], 5, 1, 2, 170, Biome::Forest),
+    ]
+}
+
+/// Times of year and moisture (spec §10). Times of year are, in order: spring, summer,
+/// autumn, winter.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Climate {
+    /// Epochs in a world year, divisible by 4. It should not be a multiple of a world day.
+    pub epochs_per_year: u32,
+    /// Food growth multiplier per biome and time of year, in percent.
+    pub season_mult: [[u32; 4]; Biome::COUNT],
+    /// Base moisture of each biome, 0–100.
+    pub moisture_base: [u8; Biome::COUNT],
+    /// Seasonal shift of the base moisture. Stage A2 addition, not yet in the specification.
+    pub season_moisture_delta: [i32; 4],
+    /// How far moisture moves toward its base per tick.
+    pub moisture_relax: u8,
+    /// Food growth at zero moisture and at full moisture, in percent; linear in between.
+    pub moisture_mult_min_pct: u32,
+    pub moisture_mult_max_pct: u32,
+}
+
+/// Natural events, drawn at the epoch boundary from the epoch seed (spec §10).
+/// Probabilities are in parts per million per epoch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Events {
+    /// At most this many active effects of each kind.
+    pub max_active_per_kind: u32,
+    /// Wildfire: forest or steppe, in summer, where moisture is below `wildfire_max_moisture`.
+    pub wildfire_ppm: u32,
+    pub wildfire_max_moisture: u8,
+    pub wildfire_radius_min: u8,
+    pub wildfire_radius_max: u8,
+    pub wildfire_energy_loss_pct: i32,
+    /// After a wildfire, ash raises food growth for a while.
+    pub ash_growth_pct: u32,
+    pub ash_ticks: u32,
+    /// Great drought: steppe or desert, in summer; a square of side `2 × radius + 1`.
+    pub drought_ppm: u32,
+    pub drought_radius: u8,
+    pub drought_growth_pct: u32,
+    pub drought_moisture_drop: u8,
+    pub drought_ticks: u32,
+    /// Plague ("kill the winner"): strikes the most numerous clade once its share of the
+    /// population exceeds `plague_min_share_permille`. The chance grows linearly with the
+    /// share, up to `plague_max_ppm` at 100%.
+    pub plague_min_share_permille: u32,
+    pub plague_max_ppm: u32,
+    pub plague_radius: u8,
+    /// No plague unless at least this many members of the clade are within the radius.
+    pub plague_min_members: u32,
+    pub plague_mortality_ppm: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ruleset {
     pub version: u32,
@@ -47,21 +134,25 @@ pub struct Ruleset {
     pub epochs_per_day: u32,
     pub max_organisms: u32,
     pub max_per_cell: u8,
-    pub founder_lineages: u32,
+    /// Founder lineages: a genome and the biome it starts in (spec §9).
+    pub founders: Vec<Founder>,
     pub organisms_per_lineage: u32,
     /// The founders' energy, in hundredths.
     pub genesis_energy: i32,
     pub land_share_pct: u32,
     /// Indexed by `Biome as usize`.
     pub biomes: [BiomeParams; Biome::COUNT],
+    pub climate: Climate,
+    pub events: Events,
     /// Energy values are in hundredths of a unit.
     pub energy_max: i32,
     pub base_metabolism: i32,
     pub trait_upkeep: [i32; 6],
     pub habitat_modifier_pct: i32,
     pub shallow_drain: i32,
+    /// Food (tenths) eaten per point of plant eating, per tick.
     pub bite_per_point: u32,
-    /// Energy (hundredths) gained per food unit eaten.
+    /// Energy (hundredths) gained per tenth of a food unit eaten.
     pub plant_efficiency: i32,
     pub attack_weight: i32,
     pub defense_weight: i32,
@@ -80,9 +171,9 @@ pub struct Ruleset {
     pub birth_cost: i32,
     pub senescence_start: u32,
     pub max_age: u32,
-    /// Detritus left by a body, in food units.
+    /// Detritus left by a body, in tenths of a food unit.
     pub body_detritus: u32,
-    /// Detritus left by a predator's kill, in food units.
+    /// Detritus left by a predator's kill, in tenths of a food unit.
     pub remains_detritus: u32,
     pub decomposition_pct: u32,
     /// Mutation probabilities per birth, in parts per million.
@@ -111,26 +202,63 @@ impl Default for Ruleset {
             epochs_per_day: 288,
             max_organisms: 6000,
             max_per_cell: 4,
-            founder_lineages: 6,
+            founders: default_founders(),
             organisms_per_lineage: 50,
             genesis_energy: 8000,
             land_share_pct: 60,
             biomes: [
-                biome(false, 0, 0, 0, 0),    // deep water
-                biome(true, 0, 0, 90, 0),    // shallows
-                biome(true, 12, 60, 30, 12), // forest
-                biome(true, 9, 45, 20, 0),   // steppe
-                biome(true, 3, 15, 30, 0),   // desert
-                biome(true, 4, 20, 80, 14),  // mountains
-                biome(true, 10, 50, 60, 10), // swamp
+                biome(false, 0, 0, 0, 0),      // deep water
+                biome(true, 0, 0, 90, 0),      // shallows
+                biome(true, 170, 600, 30, 12), // forest
+                biome(true, 130, 450, 20, 0),  // steppe
+                biome(true, 45, 150, 30, 0),   // desert
+                biome(true, 60, 200, 80, 14),  // mountains
+                biome(true, 140, 500, 60, 10), // swamp
             ],
+            climate: Climate {
+                epochs_per_year: 372,
+                season_mult: [
+                    [100, 100, 100, 100], // deep water
+                    [100, 100, 100, 100], // shallows
+                    [110, 120, 90, 40],   // forest
+                    [120, 90, 80, 30],    // steppe
+                    [80, 40, 70, 60],     // desert
+                    [70, 100, 60, 20],    // mountains
+                    [120, 110, 100, 50],  // swamp
+                ],
+                moisture_base: [100, 100, 70, 45, 15, 50, 90],
+                season_moisture_delta: [10, -20, 0, 10],
+                moisture_relax: 1,
+                moisture_mult_min_pct: 50,
+                moisture_mult_max_pct: 110,
+            },
+            events: Events {
+                max_active_per_kind: 2,
+                wildfire_ppm: 9000,
+                wildfire_max_moisture: 30,
+                wildfire_radius_min: 2,
+                wildfire_radius_max: 4,
+                wildfire_energy_loss_pct: 50,
+                ash_growth_pct: 150,
+                ash_ticks: 72,
+                drought_ppm: 4630,
+                drought_radius: 4,
+                drought_growth_pct: 50,
+                drought_moisture_drop: 30,
+                drought_ticks: 72,
+                plague_min_share_permille: 300,
+                plague_max_ppm: 150_000,
+                plague_radius: 3,
+                plague_min_members: 8,
+                plague_mortality_ppm: 500_000,
+            },
             energy_max: 20_000,
             base_metabolism: 100,
-            trait_upkeep: [15, 10, 8, 15, 12, 8],
+            trait_upkeep: [15, 10, 8, 10, 12, 8],
             habitat_modifier_pct: 10,
             shallow_drain: 200,
-            bite_per_point: 3,
-            plant_efficiency: 50,
+            bite_per_point: 30,
+            plant_efficiency: 5,
             attack_weight: 3,
             defense_weight: 4,
             roll_span: 8,
@@ -146,8 +274,8 @@ impl Default for Ruleset {
             birth_cost: 500,
             senescence_start: 150,
             max_age: 300,
-            body_detritus: 10,
-            remains_detritus: 3,
+            body_detritus: 100,
+            remains_detritus: 30,
             decomposition_pct: 5,
             mutation_ppm: 100_000,
             behavior_mutation_ppm: 50_000,
@@ -167,11 +295,16 @@ impl Default for Ruleset {
 }
 
 impl Ruleset {
-    /// `BLAKE3("PROTOGAEA/RULESET/V0" ‖ JSON)`. Stage A1 uses serde's field order as the
-    /// canonical encoding; the final canonicalization is TBD (`docs/ruleset.md`).
+    /// `BLAKE3("PROTOGAEA/RULESET/V0" ‖ JSON)`. The canonical encoding is serde's field order
+    /// for now; the final canonicalization is TBD (`docs/ruleset.md`).
     pub fn ruleset_id(&self) -> [u8; 32] {
         let json = serde_json::to_vec(self).expect("a ruleset always serializes");
         derive(b"PROTOGAEA/RULESET/V0", &[&json])
+    }
+
+    /// Ticks in a world year.
+    pub fn year_ticks(&self) -> u64 {
+        u64::from(self.climate.epochs_per_year) * u64::from(self.ticks_per_epoch)
     }
 
     /// Rejects parameter sets the core cannot run safely.
@@ -186,11 +319,22 @@ impl Ruleset {
         if self.ticks_per_epoch == 0 || self.epochs_per_day == 0 {
             return Err("ticks_per_epoch and epochs_per_day must be positive".into());
         }
+        if self.climate.epochs_per_year == 0 || !self.climate.epochs_per_year.is_multiple_of(4) {
+            return Err("epochs_per_year must be a positive multiple of 4".into());
+        }
         if self.max_age <= self.senescence_start {
             return Err("max_age must be greater than senescence_start".into());
         }
         if self.land_share_pct == 0 || self.land_share_pct > 100 {
             return Err("land_share_pct must be between 1 and 100".into());
+        }
+        if self.founders.is_empty()
+            || self
+                .founders
+                .iter()
+                .any(|f| !f.genome.is_valid() || !f.biome.is_land())
+        {
+            return Err("founders must be valid genomes on land biomes".into());
         }
         if self.biomes.iter().any(|b| b.cover < 0) {
             return Err("cover must not be negative".into());
@@ -202,8 +346,23 @@ impl Ruleset {
         if self.decomposition_pct > 100
             || !(0..=100).contains(&self.habitat_modifier_pct)
             || !(0..=100).contains(&self.hunt_hunger_pct)
+            || !(0..=100).contains(&self.events.wildfire_energy_loss_pct)
         {
             return Err("percentages must be between 0 and 100".into());
+        }
+        let c = &self.climate;
+        if c.moisture_base.iter().any(|&m| m > 100)
+            || c.moisture_mult_min_pct > c.moisture_mult_max_pct
+            || c.season_mult.iter().flatten().any(|&m| m > 1000)
+        {
+            return Err("climate parameters are out of range".into());
+        }
+        let e = &self.events;
+        if e.wildfire_radius_min > e.wildfire_radius_max
+            || e.plague_min_share_permille >= 1000
+            || e.plague_mortality_ppm > 1_000_000
+        {
+            return Err("event parameters are out of range".into());
         }
         for fertility in 0..=i32::from(TRAIT_MAX) {
             let threshold = self.repro_base - fertility * self.repro_per_fertility;
@@ -244,5 +403,11 @@ mod tests {
         let rules = Ruleset::default();
         let json = serde_json::to_string(&rules).unwrap();
         assert_eq!(serde_json::from_str::<Ruleset>(&json).unwrap(), rules);
+    }
+
+    #[test]
+    fn a_year_is_not_a_multiple_of_a_day() {
+        let rules = Ruleset::default();
+        assert_ne!(rules.climate.epochs_per_year % rules.epochs_per_day, 0);
     }
 }
