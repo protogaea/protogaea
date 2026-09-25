@@ -12,6 +12,9 @@ use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::{BiomeMix, Ruleset};
 use crate::state::{Biome, Cell, Clade, Organism, RiftPhase, World};
 
+/// Founder sites prefer cells with no other plate within this many cells.
+const FOUNDER_INLAND: i32 = 4;
+
 fn genesis_rng(genesis_seed: &[u8; 32]) -> Rng {
     Rng::new(&derive(b"PROTOGAEA/GENESIS/V0", &[genesis_seed]))
 }
@@ -62,20 +65,46 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
     };
     let per_cell_at_genesis = rules.max_per_cell.min(2);
     let mut occupancy = vec![0u8; world.cells.len()];
+    // Lineages go to the plates in turn, so that every future continent starts with founders
+    // (spec §4), and settle away from the future rifts.
+    let inland: Vec<bool> = (0..world.cells.len())
+        .map(|i| {
+            let (x, y) = world.coords(i);
+            (-FOUNDER_INLAND..=FOUNDER_INLAND).all(|dy| {
+                (-FOUNDER_INLAND..=FOUNDER_INLAND).all(|dx| {
+                    world
+                        .index(x + dx, y + dy)
+                        .is_none_or(|j| plan.plates[j] == plan.plates[i])
+                })
+            })
+        })
+        .collect();
     for (lineage, founder) in (0u32..).zip(&rules.founders) {
         let preferred = founder.biome;
         let founder = founder.genome;
-        let mut sites: Vec<usize> = (0..world.cells.len())
-            .filter(|&i| world.cells[i].biome == preferred)
-            .collect();
-        if sites.is_empty() {
-            sites = (0..world.cells.len())
-                .filter(|&i| world.cells[i].biome.is_land())
-                .collect();
-        }
-        if sites.is_empty() {
+        let plate = (lineage % u32::from(plan.plate_count)) as u8;
+        let land = |i: usize| world.cells[i].biome.is_land();
+        let biome = |i: usize| world.cells[i].biome == preferred;
+        let home = |i: usize| plan.plates[i] == plate;
+        let choices: [&dyn Fn(usize) -> bool; 6] = [
+            &|i| biome(i) && home(i) && inland[i],
+            &|i| biome(i) && home(i),
+            &|i| land(i) && home(i) && inland[i],
+            &|i| land(i) && home(i),
+            &biome,
+            &land,
+        ];
+        let Some(sites) = choices
+            .iter()
+            .map(|ok| {
+                (0..world.cells.len())
+                    .filter(|&i| ok(i))
+                    .collect::<Vec<_>>()
+            })
+            .find(|sites| !sites.is_empty())
+        else {
             break;
-        }
+        };
         let pick = rng.below(
             0,
             Purpose::GenesisSite,
@@ -346,6 +375,23 @@ mod tests {
             // The two mixes alternate, so the plates differ in their mountains.
             assert!(mountain_shares.iter().any(|&s| s <= 10));
             assert!(mountain_shares.iter().any(|&s| s >= 29));
+        }
+    }
+
+    #[test]
+    fn every_plate_starts_with_founders() {
+        let rules = Ruleset::default();
+        for seed in 1..13u8 {
+            let world = genesis(&rules, &[seed; 32], [0; 16]);
+            let (_, plan) = world_plan(&rules, &[seed; 32]);
+            let mut per_plate = vec![0u32; usize::from(plan.plate_count)];
+            for o in &world.organisms {
+                per_plate[usize::from(plan.plates[usize::from(o.cell)])] += 1;
+            }
+            assert!(
+                per_plate.iter().all(|&n| n >= 40),
+                "seed {seed}: founders per plate {per_plate:?}"
+            );
         }
     }
 

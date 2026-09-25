@@ -50,6 +50,27 @@ fn default_trait_budget() -> u32 {
     24
 }
 
+/// Four characters for the future continents: every one keeps all five land biomes, but the
+/// proportions differ, which gives more niches and more clades (harness findings, stage A3).
+fn default_plate_mixes() -> Vec<BiomeMix> {
+    let mix = |mountains_pct, desert_pct, steppe_pct, forest_pct| BiomeMix {
+        mountains_pct,
+        desert_pct,
+        steppe_pct,
+        forest_pct,
+    };
+    vec![
+        // Arid steppe: open land, sparse food.
+        mix(10, 32, 44, 16),
+        // Forest: cover everywhere.
+        mix(10, 6, 18, 56),
+        // Highland.
+        mix(28, 16, 30, 36),
+        // Wetland.
+        mix(8, 8, 22, 34),
+    ]
+}
+
 /// Six archetypes in different biomes.
 fn default_founders() -> Vec<Founder> {
     let founder = |traits, habitat, dispersal, boldness, hue, biome| Founder {
@@ -168,7 +189,7 @@ pub struct Rifts {
     pub rescue_radius: u8,
     /// Biome mixes of the future continents, so that their ecologies differ. At genesis the
     /// plates take them in turn from a random starting point. Empty: every plate uses
-    /// `Ruleset::biome_mix`.
+    /// `Ruleset::biome_mix`. A ruleset file without this field keeps the empty list.
     #[serde(default)]
     pub plate_mixes: Vec<BiomeMix>,
 }
@@ -385,7 +406,7 @@ impl Default for Ruleset {
                 fault_move_pct: 200,
                 bridge_radius: 2,
                 rescue_radius: 8,
-                plate_mixes: Vec::new(),
+                plate_mixes: default_plate_mixes(),
             },
             energy_max: 20_000,
             base_metabolism: 100,

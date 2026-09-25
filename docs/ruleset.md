@@ -56,7 +56,7 @@ The top-level sections, with a few representative values. The layout is illustra
 | Epochs per world year | 372 (4,464 ticks, 31 hours); four times of year of 93 epochs each |
 | Season 1 length | 12,096 epochs (42 world days) |
 | Capacity | 6,000 organisms; 4 per cell |
-| Start | 6 founder lineages × 50 organisms, different archetypes, different biomes |
+| Start | 6 founder lineages × 50 organisms, different archetypes, different biomes; the lineages go to the plates in turn and settle away from the future rifts, so every future continent starts with founders |
 
 ### Biomes and food
 
@@ -120,7 +120,7 @@ The schedule by world day: unity 0–6, cracks 7–13, shallows 14–23, straits
 | `fault_growth_pct`, `fault_move_pct` | 50, 200 |
 | `bridge_radius` | 2 — a bridge is the rift cells within this distance of its center |
 | `rescue_radius` | 8 — organisms on a sinking cell move to the nearest free land within this distance, or drown |
-| `plate_mixes` | empty — optional biome mixes, one per plate in turn from a random start, so that the future continents differ; each mix keeps all five land biomes. Empty means `biome_mix` everywhere |
+| `plate_mixes` | four biome mixes, one per plate in turn from a random start, so that the future continents differ; each keeps all five land biomes (mountains % of the land; desert / steppe / forest % of the rest, swamp the remainder): arid steppe 10; 32/44/16, forest 10; 6/18/56, highland 28; 16/30/36, wetland 8; 8/22/34. An empty list means `biome_mix` everywhere |
 
 ### Natural events
 
