@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::genome::Genome;
+use crate::merkle::{self, Hash};
 use crate::ruleset::{Founder, Ruleset};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -233,12 +234,10 @@ impl World {
                 && (self.spore_bank.is_empty() || rules.revival.per_genome == 0))
     }
 
-    /// The canonical encoding of the state.
-    pub fn canonical_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(
-            128 + self.cells.len() * 10 + self.organisms.len() * 50 + self.rifts.len() * 27,
-        );
-        out.extend_from_slice(b"PROTOGAEA/STATE/A2.2");
+    /// The global fields, with the length of every list, so that the shape of each subtree is
+    /// fixed by the state itself.
+    fn globals_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(128);
         out.extend_from_slice(&self.world_id);
         out.extend_from_slice(&self.ruleset_id);
         out.extend_from_slice(&self.width.to_le_bytes());
@@ -246,74 +245,116 @@ impl World {
         out.extend_from_slice(&self.epoch.to_le_bytes());
         out.extend_from_slice(&self.next_organism_id.to_le_bytes());
         out.extend_from_slice(&self.next_clade_id.to_le_bytes());
-        for c in &self.cells {
-            out.push(c.biome as u8);
-            out.extend_from_slice(&c.food.to_le_bytes());
-            out.extend_from_slice(&c.detritus.to_le_bytes());
-            out.push(c.moisture);
-            out.push(c.rift as u8);
-        }
-        out.extend_from_slice(&(self.effects.len() as u64).to_le_bytes());
-        for e in &self.effects {
-            out.push(e.kind as u8);
-            out.extend_from_slice(&e.center.to_le_bytes());
-            out.push(e.radius);
-            out.extend_from_slice(&e.remaining_ticks.to_le_bytes());
-        }
-        out.extend_from_slice(&(self.organisms.len() as u64).to_le_bytes());
-        for o in &self.organisms {
-            out.extend_from_slice(&o.id.to_le_bytes());
-            out.extend_from_slice(&o.parent_id.to_le_bytes());
-            out.extend_from_slice(&o.lineage_id.to_le_bytes());
-            out.extend_from_slice(&o.clade_id.to_le_bytes());
-            out.extend_from_slice(&o.cell.to_le_bytes());
-            out.extend_from_slice(&o.age.to_le_bytes());
-            out.extend_from_slice(&o.energy.to_le_bytes());
-            push_genome(&mut out, &o.genome);
-        }
-        out.extend_from_slice(&(self.clades.len() as u64).to_le_bytes());
-        for c in self.clades.values() {
-            out.extend_from_slice(&c.id.to_le_bytes());
-            out.extend_from_slice(&c.parent_id.to_le_bytes());
-            push_genome(&mut out, &c.reference);
-            out.extend_from_slice(&c.founded_epoch.to_le_bytes());
-            out.extend_from_slice(&c.living.to_le_bytes());
-            out.extend_from_slice(&c.peak_living.to_le_bytes());
-        }
-        out.extend_from_slice(&(self.rifts.len() as u64).to_le_bytes());
-        for r in &self.rifts {
-            out.extend_from_slice(&r.cell.to_le_bytes());
-            out.push(r.bridge);
-            out.extend_from_slice(&r.fault_epoch.to_le_bytes());
-            out.extend_from_slice(&r.shallows_epoch.to_le_bytes());
-            out.extend_from_slice(&r.deep_epoch.to_le_bytes());
-        }
-        out.extend_from_slice(&(self.museum.len() as u64).to_le_bytes());
-        for m in &self.museum {
-            out.extend_from_slice(&m.clade_id.to_le_bytes());
-            out.extend_from_slice(&m.parent_id.to_le_bytes());
-            push_genome(&mut out, &m.reference);
-            out.extend_from_slice(&m.founded_epoch.to_le_bytes());
-            out.extend_from_slice(&m.extinct_epoch.to_le_bytes());
-            out.extend_from_slice(&m.peak_living.to_le_bytes());
-        }
-        out.extend_from_slice(&(self.spore_bank.len() as u64).to_le_bytes());
-        for s in &self.spore_bank {
-            push_genome(&mut out, &s.genome);
-            out.push(s.biome as u8);
-        }
-        out.extend_from_slice(&(self.revivals.len() as u64).to_le_bytes());
-        for e in &self.revivals {
-            out.extend_from_slice(&e.to_le_bytes());
-        }
         out.push(u8::from(self.ended));
+        for len in [
+            self.cells.len(),
+            self.organisms.len(),
+            self.clades.len(),
+            self.museum.len(),
+            self.effects.len(),
+            self.rifts.len(),
+            self.spore_bank.len(),
+            self.revivals.len(),
+        ] {
+            out.extend_from_slice(&(len as u64).to_le_bytes());
+        }
         out
     }
 
-    /// Stage A2: a flat BLAKE3 hash of the canonical encoding. The Merkle `state_root` of
-    /// spec §15 replaces it later in stage A.
-    pub fn state_hash(&self) -> [u8; 32] {
-        *blake3::hash(&self.canonical_bytes()).as_bytes()
+    /// The canonical encoding of the whole state in one piece: the global fields, then every
+    /// leaf of every subtree in the order of `StateRoots`.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            128 + self.cells.len() * 14 + self.organisms.len() * 50 + self.rifts.len() * 27,
+        );
+        out.extend_from_slice(STATE_TAG);
+        out.extend_from_slice(&self.globals_bytes());
+        for (i, c) in self.cells.iter().enumerate() {
+            out.extend_from_slice(&cell_bytes(i, c));
+        }
+        for o in &self.organisms {
+            out.extend_from_slice(&organism_bytes(o));
+        }
+        for c in self.clades.values() {
+            out.extend_from_slice(&clade_bytes(c));
+        }
+        for m in &self.museum {
+            out.extend_from_slice(&museum_bytes(m));
+        }
+        for e in &self.effects {
+            out.extend_from_slice(&effect_bytes(e));
+        }
+        for r in &self.rifts {
+            out.extend_from_slice(&rift_bytes(r));
+        }
+        for s in &self.spore_bank {
+            out.extend_from_slice(&spore_bytes(s));
+        }
+        for e in &self.revivals {
+            out.extend_from_slice(&e.to_le_bytes());
+        }
+        out
+    }
+
+    fn organism_leaves(&self) -> Vec<Hash> {
+        self.organisms
+            .iter()
+            .map(|o| merkle::leaf_hash(ORGANISM, &organism_bytes(o)))
+            .collect()
+    }
+
+    /// The roots of the state's subtrees (spec §15).
+    pub fn state_roots(&self) -> StateRoots {
+        let tree = |domain: &[u8], leaves: Vec<Vec<u8>>| {
+            let hashes: Vec<Hash> = leaves
+                .iter()
+                .map(|l| merkle::leaf_hash(domain, l))
+                .collect();
+            merkle::root(&hashes, domain)
+        };
+        StateRoots {
+            globals: merkle::leaf_hash(GLOBALS, &self.globals_bytes()),
+            cells: tree(
+                CELL,
+                self.cells
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| cell_bytes(i, c))
+                    .collect(),
+            ),
+            organisms: merkle::root(&self.organism_leaves(), ORGANISM),
+            clades: tree(CLADE, self.clades.values().map(clade_bytes).collect()),
+            museum: tree(MUSEUM, self.museum.iter().map(museum_bytes).collect()),
+            effects: tree(EFFECT, self.effects.iter().map(effect_bytes).collect()),
+            rifts: tree(RIFT, self.rifts.iter().map(rift_bytes).collect()),
+            spore_bank: tree(SPORE, self.spore_bank.iter().map(spore_bytes).collect()),
+            revivals: tree(
+                REVIVAL,
+                self.revivals
+                    .iter()
+                    .map(|e| e.to_le_bytes().to_vec())
+                    .collect(),
+            ),
+        }
+    }
+
+    /// `state_root` (spec §15): the root of the Merkle trees over the state. It is also the
+    /// previous state that each epoch seed commits to.
+    pub fn state_root(&self) -> Hash {
+        self.state_roots().root()
+    }
+
+    /// A proof that an organism is part of this state, checkable against `state_root` without
+    /// the rest of the state.
+    pub fn prove_organism(&self, id: u64) -> Option<OrganismProof> {
+        let index = self.organisms.binary_search_by_key(&id, |o| o.id).ok()?;
+        Some(OrganismProof {
+            organism: self.organisms[index],
+            index: index as u64,
+            size: self.organisms.len() as u64,
+            path: merkle::proof(&self.organism_leaves(), index),
+            roots: self.state_roots(),
+        })
     }
 
     /// Checks the invariants the core must maintain (`docs/ruleset.md`, §4).
@@ -408,6 +449,161 @@ impl World {
         }
         Ok(())
     }
+}
+
+/// Versions the encoding of the state and of its leaves.
+const STATE_TAG: &[u8] = b"PROTOGAEA/STATE/A3";
+const GLOBALS: &[u8] = b"PROTOGAEA/STATE/A3/GLOBALS";
+const CELL: &[u8] = b"PROTOGAEA/STATE/A3/CELL";
+const ORGANISM: &[u8] = b"PROTOGAEA/STATE/A3/ORGANISM";
+const CLADE: &[u8] = b"PROTOGAEA/STATE/A3/CLADE";
+const MUSEUM: &[u8] = b"PROTOGAEA/STATE/A3/MUSEUM";
+const EFFECT: &[u8] = b"PROTOGAEA/STATE/A3/EFFECT";
+const RIFT: &[u8] = b"PROTOGAEA/STATE/A3/RIFT";
+const SPORE: &[u8] = b"PROTOGAEA/STATE/A3/SPORE";
+const REVIVAL: &[u8] = b"PROTOGAEA/STATE/A3/REVIVAL";
+
+/// The roots of the state's subtrees, in the order they enter `state_root`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateRoots {
+    /// The leaf of the global fields.
+    pub globals: Hash,
+    /// Cells by index.
+    pub cells: Hash,
+    /// Living organisms by id.
+    pub organisms: Hash,
+    /// Living clades by id.
+    pub clades: Hash,
+    /// The museum, oldest first.
+    pub museum: Hash,
+    /// Active effects, in the order they started.
+    pub effects: Hash,
+    /// The rift schedule by cell.
+    pub rifts: Hash,
+    pub spore_bank: Hash,
+    /// The epochs of natural revivals.
+    pub revivals: Hash,
+}
+
+impl StateRoots {
+    /// `state_root = BLAKE3("PROTOGAEA/STATE_ROOT/A3" ‖ globals ‖ cells ‖ organisms ‖ clades ‖
+    /// museum ‖ effects ‖ rifts ‖ spore_bank ‖ revivals)`.
+    pub fn root(&self) -> Hash {
+        let mut h = blake3::Hasher::new();
+        h.update(b"PROTOGAEA/STATE_ROOT/A3");
+        for part in [
+            &self.globals,
+            &self.cells,
+            &self.organisms,
+            &self.clades,
+            &self.museum,
+            &self.effects,
+            &self.rifts,
+            &self.spore_bank,
+            &self.revivals,
+        ] {
+            h.update(part);
+        }
+        *h.finalize().as_bytes()
+    }
+}
+
+/// An organism, its place among the living and the audit path up to `state_root`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrganismProof {
+    pub organism: Organism,
+    pub index: u64,
+    /// The number of living organisms.
+    pub size: u64,
+    pub path: Vec<Hash>,
+    /// The roots of all subtrees; `organisms` among them is what the path must reach.
+    pub roots: StateRoots,
+}
+
+impl OrganismProof {
+    /// Checks the proof against a published `state_root`.
+    pub fn verify(&self, state_root: &Hash) -> bool {
+        let leaf = merkle::leaf_hash(ORGANISM, &organism_bytes(&self.organism));
+        merkle::verify(
+            &leaf,
+            self.index,
+            self.size,
+            &self.path,
+            &self.roots.organisms,
+        ) && self.roots.root() == *state_root
+    }
+}
+
+fn cell_bytes(index: usize, c: &Cell) -> Vec<u8> {
+    let mut out = Vec::with_capacity(15);
+    out.extend_from_slice(&(index as u32).to_le_bytes());
+    out.push(c.biome as u8);
+    out.extend_from_slice(&c.food.to_le_bytes());
+    out.extend_from_slice(&c.detritus.to_le_bytes());
+    out.push(c.moisture);
+    out.push(c.rift as u8);
+    out
+}
+
+fn organism_bytes(o: &Organism) -> Vec<u8> {
+    let mut out = Vec::with_capacity(46);
+    out.extend_from_slice(&o.id.to_le_bytes());
+    out.extend_from_slice(&o.parent_id.to_le_bytes());
+    out.extend_from_slice(&o.lineage_id.to_le_bytes());
+    out.extend_from_slice(&o.clade_id.to_le_bytes());
+    out.extend_from_slice(&o.cell.to_le_bytes());
+    out.extend_from_slice(&o.age.to_le_bytes());
+    out.extend_from_slice(&o.energy.to_le_bytes());
+    push_genome(&mut out, &o.genome);
+    out
+}
+
+fn clade_bytes(c: &Clade) -> Vec<u8> {
+    let mut out = Vec::with_capacity(40);
+    out.extend_from_slice(&c.id.to_le_bytes());
+    out.extend_from_slice(&c.parent_id.to_le_bytes());
+    push_genome(&mut out, &c.reference);
+    out.extend_from_slice(&c.founded_epoch.to_le_bytes());
+    out.extend_from_slice(&c.living.to_le_bytes());
+    out.extend_from_slice(&c.peak_living.to_le_bytes());
+    out
+}
+
+fn museum_bytes(m: &MuseumEntry) -> Vec<u8> {
+    let mut out = Vec::with_capacity(40);
+    out.extend_from_slice(&m.clade_id.to_le_bytes());
+    out.extend_from_slice(&m.parent_id.to_le_bytes());
+    push_genome(&mut out, &m.reference);
+    out.extend_from_slice(&m.founded_epoch.to_le_bytes());
+    out.extend_from_slice(&m.extinct_epoch.to_le_bytes());
+    out.extend_from_slice(&m.peak_living.to_le_bytes());
+    out
+}
+
+fn effect_bytes(e: &Effect) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8);
+    out.push(e.kind as u8);
+    out.extend_from_slice(&e.center.to_le_bytes());
+    out.push(e.radius);
+    out.extend_from_slice(&e.remaining_ticks.to_le_bytes());
+    out
+}
+
+fn rift_bytes(r: &Rift) -> Vec<u8> {
+    let mut out = Vec::with_capacity(27);
+    out.extend_from_slice(&r.cell.to_le_bytes());
+    out.push(r.bridge);
+    out.extend_from_slice(&r.fault_epoch.to_le_bytes());
+    out.extend_from_slice(&r.shallows_epoch.to_le_bytes());
+    out.extend_from_slice(&r.deep_epoch.to_le_bytes());
+    out
+}
+
+fn spore_bytes(s: &Founder) -> Vec<u8> {
+    let mut out = Vec::with_capacity(12);
+    push_genome(&mut out, &s.genome);
+    out.push(s.biome as u8);
+    out
 }
 
 fn push_genome(out: &mut Vec<u8>, g: &Genome) {

@@ -13,16 +13,16 @@ fn start(seed: u64) -> (World, Ruleset) {
     (world, rules)
 }
 
-/// Runs `epochs` epochs with a stand-in beacon and returns the state hash after each.
+/// Runs `epochs` epochs with a stand-in beacon and returns the state root after each.
 fn advance(world: &mut World, rules: &Ruleset, epochs: u64) -> Vec<[u8; 32]> {
     let mut hashes = Vec::new();
-    let mut prev = world.state_hash();
+    let mut prev = world.state_root();
     for _ in 0..epochs {
         let beacon = derive(b"test-beacon", &[&world.epoch.to_le_bytes()]);
         let seed = epoch_seed(&world.world_id, world.epoch, &beacon, &prev);
         step_epoch(world, rules, &seed);
         world.check_invariants(rules).unwrap();
-        prev = world.state_hash();
+        prev = world.state_root();
         hashes.push(prev);
     }
     hashes

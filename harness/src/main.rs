@@ -32,7 +32,7 @@ USAGE:
       The Season 1 map criteria of spec §4 for candidate seeds, without running them.
   protogaea-harness bench   [--seed N] [--warmup D] [--days D] [--ruleset FILE]
       Performance on one thread (spec §29): after D world days of warm-up, the time of each epoch
-      (the step and the state hash) over the next D days, against the targets of a world day
+      (the step and the state root) over the next D days, against the targets of a world day
       under 30 s and an epoch under 100 ms at the 95th percentile.
   protogaea-harness ruleset
       Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
@@ -158,8 +158,8 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("cannot write {}: {e}", report_path.display()))?;
 
     println!(
-        "\nfinished in {elapsed:.1} s; state hash {}",
-        hex(&run.state_hash())
+        "\nfinished in {elapsed:.1} s; state root {}",
+        hex(&run.state_root())
     );
     print_checks(&summary);
     println!("\nreport: {}", report_path.display());
@@ -399,7 +399,7 @@ fn cmd_bench(args: &[String]) -> Result<(), String> {
         "world day: {day_seconds:.1} s (target: under 30 s) — {}",
         if day_seconds < 30.0 { "pass" } else { "FAIL" }
     );
-    println!("state hash {}", hex(&run.state_hash()));
+    println!("state root {}", hex(&run.state_root()));
     Ok(())
 }
 
@@ -414,12 +414,12 @@ fn cmd_hash(args: &[String]) -> Result<(), String> {
     let rules = load_rules(&opts)?;
     for seed in seeds {
         let mut run = Run::new(seed, rules.clone());
-        println!("seed {seed} epoch 0 {}", hex(&run.state_hash()));
+        println!("seed {seed} epoch 0 {}", hex(&run.state_root()));
         for _ in 0..epochs {
             run.step();
             let epoch = run.world.epoch;
             if epoch.is_multiple_of(every) || epoch == epochs {
-                println!("seed {seed} epoch {epoch} {}", hex(&run.state_hash()));
+                println!("seed {seed} epoch {epoch} {}", hex(&run.state_root()));
             }
         }
     }

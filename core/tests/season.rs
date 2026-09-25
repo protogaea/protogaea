@@ -14,7 +14,7 @@ fn seed(k: u64) -> [u8; 32] {
 }
 
 fn step(world: &mut World, rules: &Ruleset) -> EpochReport {
-    let seed = epoch_seed(&world.world_id, world.epoch, &[7; 32], &world.state_hash());
+    let seed = epoch_seed(&world.world_id, world.epoch, &[7; 32], &world.state_root());
     let report = step_epoch(world, rules, &seed);
     world.check_invariants(rules).unwrap();
     report

@@ -293,7 +293,7 @@ mod tests {
             a.step();
             b.step();
         }
-        assert_eq!(a.state_hash(), b.state_hash());
+        assert_eq!(a.state_root(), b.state_root());
     }
 
     #[test]

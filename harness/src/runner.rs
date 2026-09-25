@@ -37,7 +37,7 @@ impl Run {
     pub fn resume(seed: u64, rules: Ruleset, world: World) -> Self {
         let (genesis_seed, _) = genesis_inputs(seed);
         let (genesis_biomes, plan) = world_plan(&rules, &genesis_seed);
-        let last_hash = world.state_hash();
+        let last_hash = world.state_root();
         Self {
             seed,
             rules,
@@ -65,12 +65,12 @@ impl Run {
             &self.last_hash,
         );
         let report = step_epoch(&mut self.world, &self.rules, &seed);
-        self.last_hash = self.world.state_hash();
+        self.last_hash = self.world.state_root();
         report
     }
 
-    /// The hash of the current state; it also serves as the previous header hash.
-    pub fn state_hash(&self) -> [u8; 32] {
+    /// The `state_root` of the current state; it also serves as the previous header hash.
+    pub fn state_root(&self) -> [u8; 32] {
         self.last_hash
     }
 }

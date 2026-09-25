@@ -134,7 +134,9 @@ Measured on 2026-09-26 with `bench` on one thread of an AMD Ryzen 5 5500, defaul
 | WASM (wasmtime 49) | 1 | 16.9 s | 61.4 ms | 84.2 ms | 88.8 ms |
 | WASM (wasmtime 49) | 5 | 15.9 s | 57.7 ms | 77.2 ms | 81.8 ms |
 
-All three targets of spec §29 are met: a world day in under 30 s (11–12 s), an epoch under 100 ms at the 95th percentile (54–59 ms), and WASM at most 3× slower than native (1.45×). The native and WASM runs end with the same state hashes. The reference core is not fixed yet (roadmap decision 6); a slower core has about 2.5× headroom on the world day.
+All three targets of spec §29 are met: a world day in under 30 s (11–12 s), an epoch under 100 ms at the 95th percentile (54–59 ms), and WASM at most 3× slower than native (1.45×). The native and WASM runs end with the same state hashes.
+
+The Merkle `state_root` that replaced the flat hash adds about 3.5 ms per epoch: seed 1 then takes 12.8 s per world day natively (p95 61.5 ms) and 18.3 s under WASM (p95 87.8 ms), still within every target, and both end at the same root. The reference core is not fixed yet (roadmap decision 6); a slower core has about 2.5× headroom on the world day.
 
 ## Findings (stage A3: maps and diversity)
 

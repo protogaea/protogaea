@@ -25,7 +25,7 @@ fn forced_events_happen_in_summer() {
     world.check_invariants(&rules).unwrap();
     // The middle of summer.
     world.epoch = u64::from(rules.climate.epochs_per_year) * 3 / 8;
-    let seed = epoch_seed(&world.world_id, world.epoch, &[0; 32], &world.state_hash());
+    let seed = epoch_seed(&world.world_id, world.epoch, &[0; 32], &world.state_root());
     let report = step_epoch(&mut world, &rules, &seed);
     world.check_invariants(&rules).unwrap();
     assert_eq!(report.wildfires, 1);
@@ -44,7 +44,7 @@ fn no_wildfires_or_droughts_outside_summer() {
     rules.events.drought_ppm = 1_000_000;
     let mut world = genesis(&rules, &derive(b"events", &[]), [9; 16]);
     // Spring.
-    let seed = epoch_seed(&world.world_id, world.epoch, &[0; 32], &world.state_hash());
+    let seed = epoch_seed(&world.world_id, world.epoch, &[0; 32], &world.state_root());
     let report = step_epoch(&mut world, &rules, &seed);
     assert_eq!((report.wildfires, report.droughts), (0, 0));
 }

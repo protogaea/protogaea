@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Stage A3 (tuning) has started: the continents end the season with their own fauna — different lineages and different colors — while their traits converge, and the divergence check in spec §28 now measures the former ([harness findings](../harness/README.md#findings-stage-a3-why-the-continents-traits-do-not-diverge)). Every candidate seed now meets the map criteria (founders and all five biomes on each future continent). Still open: on half of the seeds the number of clades of 20+ briefly dips to 5 during the breakup. Performance meets its targets (a world day in 11–12 s on one core). Next: the Merkle state root and the archetype arena.
+**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Stage A3 (tuning) has started: the continents end the season with their own fauna — different lineages and different colors — while their traits converge, and the divergence check in spec §28 now measures the former ([harness findings](../harness/README.md#findings-stage-a3-why-the-continents-traits-do-not-diverge)). Every candidate seed now meets the map criteria (founders and all five biomes on each future continent). Still open: on half of the seeds the number of clades of 20+ briefly dips to 5 during the breakup. Performance meets its targets (a world day in about 13 s on one core), and the state is committed by a Merkle `state_root` with organism proofs. Next: the archetype arena.
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -34,6 +34,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 11 | English version of the specification | Done |
 
 ## Stage A in detail
+
+**A3 — the Merkle state root (2026-09-26):** item 3. The state is hashed as one Merkle tree per kind of data (cells, organisms, clades, museum, effects, rifts, spore bank, revivals, plus a leaf of global fields), shaped as in RFC 9162; an organism can be proven against `state_root` without the rest of the state. It costs about 3.5 ms per epoch, and native and WASM agree ([core README](../core/README.md#the-state-root)).
 
 **A3 — performance (2026-09-26):** the harness `bench` command times each epoch on one thread. A world day takes 11–12 s natively and 16–17 s under WASI, an epoch 54–59 ms at the 95th percentile: all targets of item 7 are met with room to spare, and native and WASM end with the same state hashes ([findings](../harness/README.md#findings-stage-a3-performance)).
 
