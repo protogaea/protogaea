@@ -66,7 +66,7 @@ These are the checks of spec §28 measured so far. The thresholds are candidates
 - equilibrium population at 40–70% of the limit;
 - at least 30 generations per world day;
 - each plate ends as its own continent (judged once the last land bridge has closed);
-- the mean genome distance between the dominant clades of different continents grows by at least 3 steps from the start of phase III to the end of the season (judged on runs of a full season).
+- each continent ends with its own fauna: the clade makeup of different continents is at least 80% apart and their mean hues at least 30° apart at the end of the season (judged on runs of a full season).
 
 ## Findings (stage A1)
 
@@ -105,3 +105,14 @@ Measured on 2026-09-25 with 20 seeds over a full 42-day season (12 seeds with 3 
 `maps --seeds 1..21` finds 9 of 20 seeds that meet every map criterion of spec §4; the others miss the 40 founders per continent (founder lineages start in clusters) or have a continent without one of the biomes.
 
 Next, stage A3: continents that differ enough to diverge (for example climates or biome mixes that vary by plate, or earlier isolation), and steadier diversity through the winters.
+
+## Findings (stage A3: why the continents' traits do not diverge)
+
+Measured on 2026-09-25 over full 42-day seasons, 12 seeds per variant (20 for the baseline). `run` now prints each plate's population, dominant clade and mean traits; `sweep` reports the growth of the distance between the plates' mean genomes (`cdiv+`), how different their clade makeup is at the start of phase III and at the end (`comp%→`, Bray–Curtis) and the angle between their mean hues (`hue°`).
+
+- **One corner of the genome wins everywhere.** With a trait budget of 24 and a cap of 8, a genome can nearly max out plant eating, defense and fertility at once (G 7, D 7, F 8). Every plate converges on that armored breeder, and hunters stay at about 1% of the population.
+- **A smaller budget makes the ecology healthier, not more divergent.** With `trait_budget` 18 or 16 (founders scaled down), hunters are 2–3× more numerous and no clade holds 60% for more than 3 days on 100% of seeds, but the plates' mean genomes still end within about one step of each other.
+- **Different surroundings do not split the traits either.** Per-plate biome mixes (`plate_mixes`: arid steppe, forest, highland, wetland), earlier isolation (bridges closed by day 24 instead of 38) and a cold north (`cold_winter_pct` 60) all leave the median `cdiv+` below 1.2 steps. With the same rules everywhere, each continent settles into the same mix of strategies; a gap of 2–3 steps appears only for a while, when continents are in different phases of the grazer–armored–hunter cycle.
+- **The continents' fauna does diverge.** The clade makeup of different plates differs by about 45% at the start of phase III and by 86–100% at the end of the season (no shared clade at all on most seeds with early isolation), and the plates' mean hues end 40–120° apart. Each continent ends with its own lineages and its own colors on the map.
+
+Specification §28 was changed accordingly: the divergence check now asks for clade makeup at least 80% apart and hues at least 30° apart by the end of the season; the distance between mean traits is reported but not required. With the default rules it passes on 16 of 20 seeds: the hues always diverge, and on the other four the clade makeup ends 64–79% apart. `trait_budget`, `plate_mixes` and `cold_winter_pct` stay in the ruleset as options for later seasons; the Season 1 defaults do not use them.

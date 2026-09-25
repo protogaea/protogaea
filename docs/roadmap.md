@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Still open: the continents barely diverge after the breakup, and diversity dips in some winters — see the [harness findings](../harness/README.md#findings-stage-a2-part-2-the-breaking-of-pangea). Next: tuning (A3), the Merkle state root, performance and the archetype arena.
+**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Stage A3 (tuning) has started: the continents end the season with their own fauna — different lineages and different colors — while their traits converge, and the divergence check in spec §28 now measures the former ([harness findings](../harness/README.md#findings-stage-a3-why-the-continents-traits-do-not-diverge)). Still open: diversity dips in some winters, and fewer than half of the candidate seeds meet every map criterion. Next: the rest of A3, the Merkle state root, performance and the archetype arena.
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -34,6 +34,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 11 | English version of the specification | Done |
 
 ## Stage A in detail
+
+**A3, part 1 — divergence between continents (2026-09-25):** plate profiles in the harness; trait budget, per-plate biome mixes and a cold north as ruleset options. None of them makes the continents' traits diverge, but their clade makeup ends 86–100% apart and their hues 40–120° apart, so spec §28 now checks the fauna instead of the traits.
 
 **A2, part 2 — the Breaking of Pangea (done, 2026-09-25):** plates, rift lines that flood in waves from the ocean inward, land bridges that close one by one, rescue or drowning on sinking cells, spring floods, the museum and the spore bank with natural revival; the `maps` command checks the Season 1 map criteria. CI compares hashes of a compressed season across platforms.
 

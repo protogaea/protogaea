@@ -14,6 +14,11 @@ const DOMINANCE_PERMILLE: u32 = 600;
 /// A group of passable cells counts as a continent if it has at least this many land cells.
 const CONTINENT_MIN_LAND: u32 = 40;
 
+/// Divergence after the breakup (spec §28): by the end of the season the continents' clade
+/// makeup differs by at least this much, and their mean hues by at least this angle.
+const FAUNA_APART_PERMILLE: u32 = 800;
+const HUES_APART_DEGREES: f64 = 30.0;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EpochStats {
     pub epoch: u64,
@@ -49,6 +54,12 @@ pub struct EpochStats {
     /// to `divergence_x10`, which moves only when clades split.
     #[serde(default)]
     pub centroid_divergence_x10: u32,
+    /// How different the plates' clade makeup is, in permille (`composition_permille`).
+    #[serde(default)]
+    pub composition_permille: u32,
+    /// The mean angle between the plates' mean hues, ×10 degrees.
+    #[serde(default)]
+    pub hue_divergence_x10: u32,
     /// The mean of each trait, ×10.
     pub trait_means_x10: [u32; TRAIT_COUNT],
 }
@@ -60,6 +71,7 @@ pub fn epoch_stats(
     continents: u32,
 ) -> EpochStats {
     let population = world.organisms.len() as u32;
+    let profiles = plate_profiles(world, plates);
     let mut stats = EpochStats {
         epoch: world.epoch,
         population,
@@ -87,7 +99,9 @@ pub fn epoch_stats(
         ticks_at_cap: report.ticks_at_cap,
         continents,
         divergence_x10: divergence_x10(world, plates),
-        centroid_divergence_x10: centroid_divergence_x10(&plate_profiles(world, plates)),
+        centroid_divergence_x10: centroid_divergence_x10(&profiles),
+        composition_permille: composition_permille(&profiles),
+        hue_divergence_x10: (hue_divergence(&profiles) * 10.0).round() as u32,
         trait_means_x10: [0; TRAIT_COUNT],
     };
     let mut sums = [0u64; TRAIT_COUNT];
@@ -196,6 +210,10 @@ pub struct PlateProfile {
     pub dominant_permille: u32,
     /// The mean of each trait on the plate, ×10.
     pub trait_means_x10: [u32; TRAIT_COUNT],
+    /// Organisms per clade on the plate.
+    pub clades: BTreeMap<u32, u32>,
+    /// The circular mean of the neutral `hue` gene, in degrees.
+    pub hue_mean: f64,
 }
 
 /// Counts gathered for one plate.
@@ -204,6 +222,8 @@ struct PlateTally {
     population: u32,
     trait_sums: [u64; TRAIT_COUNT],
     clades: BTreeMap<u32, u32>,
+    hue_x: f64,
+    hue_y: f64,
 }
 
 /// Profiles of the plates that have organisms, in plate order.
@@ -216,6 +236,9 @@ pub fn plate_profiles(world: &World, plates: &[u8]) -> Vec<PlateProfile> {
             *sum += u64::from(value);
         }
         *tally.clades.entry(o.clade_id).or_insert(0) += 1;
+        let angle = f64::from(o.genome.hue).to_radians();
+        tally.hue_x += angle.cos();
+        tally.hue_y += angle.sin();
     }
     by_plate
         .into_iter()
@@ -235,9 +258,62 @@ pub fn plate_profiles(world: &World, plates: &[u8]) -> Vec<PlateProfile> {
                 trait_means_x10: tally
                     .trait_sums
                     .map(|s| (s * 10 / u64::from(population)) as u32),
+                hue_mean: tally
+                    .hue_y
+                    .atan2(tally.hue_x)
+                    .to_degrees()
+                    .rem_euclid(360.0),
+                clades: tally.clades,
             }
         })
         .collect()
+}
+
+/// How different the clade makeup of the plates is, in permille, averaged over pairs of
+/// plates: the Bray–Curtis dissimilarity of their clade shares. 0 means the same clades in
+/// the same proportions; 1000 means no clade in common.
+pub fn composition_permille(profiles: &[PlateProfile]) -> u32 {
+    let mut sum = 0.0;
+    let mut pairs = 0u32;
+    for (i, a) in profiles.iter().enumerate() {
+        for b in &profiles[i + 1..] {
+            let shared: f64 = a
+                .clades
+                .iter()
+                .filter_map(|(clade, &na)| {
+                    b.clades.get(clade).map(|&nb| {
+                        (f64::from(na) / f64::from(a.population))
+                            .min(f64::from(nb) / f64::from(b.population))
+                    })
+                })
+                .sum();
+            sum += 1.0 - shared;
+            pairs += 1;
+        }
+    }
+    if pairs == 0 {
+        0
+    } else {
+        (sum * 1000.0 / f64::from(pairs)).round() as u32
+    }
+}
+
+/// The mean angle, in degrees (0–180), between the plates' mean hues, over pairs of plates.
+pub fn hue_divergence(profiles: &[PlateProfile]) -> f64 {
+    let mut sum = 0.0;
+    let mut pairs = 0u32;
+    for (i, a) in profiles.iter().enumerate() {
+        for b in &profiles[i + 1..] {
+            let d = (a.hue_mean - b.hue_mean).rem_euclid(360.0);
+            sum += d.min(360.0 - d);
+            pairs += 1;
+        }
+    }
+    if pairs == 0 {
+        0.0
+    } else {
+        sum / f64::from(pairs)
+    }
 }
 
 /// The mean distance, ×10, between the mean genomes of different plates, in mutation steps
@@ -275,6 +351,8 @@ pub struct Tracker {
     divergence_start_x10: Option<u32>,
     #[serde(default)]
     centroid_start_x10: Option<u32>,
+    #[serde(default)]
+    composition_start_permille: Option<u32>,
     revivals: u32,
     drowned: u32,
     ended: bool,
@@ -292,6 +370,7 @@ impl Tracker {
             continents: continents(world, rules),
             divergence_start_x10: None,
             centroid_start_x10: None,
+            composition_start_permille: None,
             revivals: 0,
             drowned: 0,
             ended: world.ended,
@@ -315,6 +394,7 @@ impl Tracker {
         if self.divergence_start_x10.is_none() && world.epoch >= phase_3 {
             self.divergence_start_x10 = Some(stats.divergence_x10);
             self.centroid_start_x10 = Some(stats.centroid_divergence_x10);
+            self.composition_start_permille = Some(stats.composition_permille);
         }
         self.revivals += stats.revivals;
         self.drowned += stats.drowned;
@@ -437,6 +517,10 @@ impl Tracker {
             reached_breakup,
             divergence_growth,
             centroid_divergence_growth,
+            start_composition_permille: self.composition_start_permille,
+            divergence_judged: has_rifts && reached_season_end,
+            final_composition_permille: last.map_or(0, |s| s.composition_permille),
+            final_hue_divergence: last.map_or(0.0, |s| f64::from(s.hue_divergence_x10) / 10.0),
         }
     }
 }
@@ -472,8 +556,16 @@ pub struct Summary {
     /// How much the divergence between the continents' dominant clades grew from the start of
     /// phase III to the end of the season, in mutation steps (spec §28).
     pub divergence_growth: Option<f64>,
-    /// The same growth for the distance between the plates' mean genomes; not a check yet.
+    /// The same growth for the distance between the plates' mean genomes; reported only.
     pub centroid_divergence_growth: Option<f64>,
+    /// The run has rifts and reached the end of the season, so divergence can be judged.
+    pub divergence_judged: bool,
+    /// At the end: how different the plates' clade makeup is, in permille, and the mean
+    /// angle between their mean hues, in degrees (spec §28).
+    pub final_composition_permille: u32,
+    /// The clade makeup difference when the rifts began to turn into shallows.
+    pub start_composition_permille: Option<u32>,
+    pub final_hue_divergence: f64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -524,8 +616,11 @@ impl Summary {
                     .then_some(self.final_continents == u32::from(self.plates)),
             ),
             check(
-                "divergence between continents grows by 3+ steps",
-                self.divergence_growth.map(|g| g >= 3.0),
+                "continents end with their own fauna (clades 80%+ apart, hues 30°+)",
+                self.divergence_judged.then_some(
+                    self.final_composition_permille >= FAUNA_APART_PERMILLE
+                        && self.final_hue_divergence >= HUES_APART_DEGREES,
+                ),
             ),
         ]
     }

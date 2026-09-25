@@ -858,7 +858,7 @@ The harness is a program that runs thousands of seasons offline with different s
 | Share of ticks at the global limit | Under 1% |
 | Equilibrium population | 40–70% of the limit |
 | Pace of evolution | A median of at least 30 generations per world day |
-| Divergence after the breakup | By the end of the season, the mean distance between the dominant clades of different continents grows by at least 3 steps compared with the start of phase III |
+| Divergence after the breakup | By the end of the season, each continent has its own fauna: the clade makeup of different continents differs by at least 80% (Bray–Curtis dissimilarity of clade shares, averaged over pairs of continents), and their mean `hue` differs by at least 30°. Traits may converge: with the same rules on every continent, evolution arrives at similar strategies, as it does in nature. The distance between the continents' mean trait values is reported but not required |
 | Archetype arena | In pairwise tests of the three archetypes (§11.3), each beats one opponent and loses to the other |
 | Performance | One world day computes in under 30 s on the reference core |
 

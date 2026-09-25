@@ -180,9 +180,11 @@ fn print_plates(run: &Run) {
         );
     }
     println!(
-        "      distance between plate means {:.1}, between dominant clades {:.1}",
+        "      distance between plate means {:.1}, between dominant clades {:.1}; clade makeup differs by {}%, hues by {:.0}°",
         f64::from(metrics::centroid_divergence_x10(&profiles)) / 10.0,
         f64::from(metrics::divergence_x10(&run.world, &run.plan.plates)) / 10.0,
+        metrics::composition_permille(&profiles) / 10,
+        metrics::hue_divergence(&profiles),
     );
 }
 
@@ -241,7 +243,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         .collect();
 
     println!(
-        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>6}",
+        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5} {:>6}",
         "seed",
         "extinct",
         "final",
@@ -256,11 +258,13 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         "cont",
         "div+",
         "cdiv+",
+        "comp%→",
+        "hue°",
         "pass"
     );
     for s in &summaries {
         println!(
-            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>4}/{}",
+            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5.0} {:>4}/{}",
             s.seed,
             if s.extinct { "yes" } else { "no" },
             s.final_population,
@@ -278,6 +282,13 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 .map_or("—".to_string(), |g| format!("{g:.1}")),
             s.centroid_divergence_growth
                 .map_or("—".to_string(), |g| format!("{g:.1}")),
+            format!(
+                "{}→{}",
+                s.start_composition_permille
+                    .map_or("—".to_string(), |c| (c / 10).to_string()),
+                s.final_composition_permille / 10
+            ),
+            s.final_hue_divergence,
             passed(s),
             s.checks().len(),
         );
@@ -306,11 +317,11 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             "seed,extinct,final_population,min_population,equilibrium_pct,min_clades_20_after_day_3,\
              dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
              revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,\
-             centroid_divergence_growth,checks_passed\n",
+             centroid_divergence_growth,final_composition_permille,final_hue_divergence,checks_passed\n",
         );
         for s in &summaries {
             csv.push_str(&format!(
-                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{},{},{:.1},{}\n",
                 s.seed,
                 s.extinct,
                 s.final_population,
@@ -331,6 +342,8 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                     .map_or(String::new(), |g| format!("{g:.1}")),
                 s.centroid_divergence_growth
                     .map_or(String::new(), |g| format!("{g:.1}")),
+                s.final_composition_permille,
+                s.final_hue_divergence,
                 passed(s),
             ));
         }

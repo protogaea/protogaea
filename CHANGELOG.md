@@ -14,7 +14,7 @@ All notable changes to this project are documented in this file. The format foll
 - Stage A2, part 2: the Breaking of Pangea (plates, rift lines, flooding waves, land bridges, organisms carried off sinking cells or drowned), spring floods, the museum of extinct named clades, the spore bank with natural revival and the end of a season by extinction.
 - Harness: the `maps` command for the Season 1 map criteria, continents and divergence between continents in the metrics, and a map that follows the breakup.
 - CI compares state hashes of a compressed season, so that the rift code is checked across platforms too.
-- Stage A3 tools: the harness prints each plate's population, dominant clade and mean traits during `run`, and measures the distance between the plates' mean genomes (`cdiv+`) next to the divergence of dominant clades. The ruleset gains `trait_budget` (24), `biome_mix` and optional per-plate `plate_mixes`; the defaults leave worlds unchanged.
+- Stage A3 tools: the harness prints each plate's population, dominant clade and mean traits during `run`, and measures the distance between the plates' mean genomes (`cdiv+`) next to the divergence of dominant clades. The ruleset gains `trait_budget` (24), `biome_mix`, optional per-plate `plate_mixes` and an optional cold north (`cold_winter_pct`); the defaults leave worlds unchanged. The harness also measures how different the continents' clade makeup (`comp%→`) and mean hues (`hue°`) are.
 - Hunting balance: satiation and cover (spec §11.3).
 - Live mode in the harness: a world in real time with snapshots, its page behind an optional password, and a systemd unit in `deploy/`.
 - A static Linux build (`x86_64-unknown-linux-musl`) that needs no C toolchain: BLAKE3 uses its portable implementation.
@@ -24,6 +24,8 @@ All notable changes to this project are documented in this file. The format foll
 - The Apache License 2.0.
 
 ### Changed
+
+- Specification §28: divergence after the breakup is judged by the continents' fauna — clade makeup at least 80% apart and mean hues at least 30° apart at the end of the season — instead of the growth of the distance between dominant clades' traits, which converge under the same rules.
 
 - Specification §10 describes the rift generator, rescue and drowning, and floods in detail; §12 says revived genomes found new clades; §15 lists the rift schedule and the revivals in the state.
 - Specification §10 now matches the core: moisture drifts toward a seasonal target (`moisture_base`, `season_moisture_delta`); values between times of year are interpolated linearly from their midpoints; a great drought also drops moisture by 30.

@@ -95,6 +95,11 @@ pub struct Climate {
     /// Food growth at zero moisture and at full moisture, in percent; linear in between.
     pub moisture_mult_min_pct: u32,
     pub moisture_mult_max_pct: u32,
+    /// Cold: extra energy cost of every organism in the middle of winter at the northern
+    /// edge of the map, in percent. It follows the times of year like `season_mult` and falls
+    /// linearly to zero at the southern edge, so that plates at different latitudes differ.
+    #[serde(default)]
+    pub cold_winter_pct: u32,
 }
 
 /// Natural events, drawn at the epoch boundary from the epoch seed (spec §10).
@@ -341,6 +346,7 @@ impl Default for Ruleset {
                 moisture_relax: 1,
                 moisture_mult_min_pct: 50,
                 moisture_mult_max_pct: 110,
+                cold_winter_pct: 0,
             },
             events: Events {
                 max_active_per_kind: 2,
@@ -498,6 +504,7 @@ impl Ruleset {
         if c.moisture_base.iter().any(|&m| m > 100)
             || c.moisture_mult_min_pct > c.moisture_mult_max_pct
             || c.season_mult.iter().flatten().any(|&m| m > 1000)
+            || c.cold_winter_pct > 1000
         {
             return Err("climate parameters are out of range".into());
         }

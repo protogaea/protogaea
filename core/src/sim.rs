@@ -646,7 +646,16 @@ fn run_tick(
         }
     }
 
-    // 4. Energy costs; deaths from starvation and old age.
+    // 4. Energy costs; deaths from starvation and old age. Cold raises the cost in the north
+    // in winter.
+    let global_tick = world.epoch * u64::from(rules.ticks_per_epoch) + u64::from(tick);
+    let cold: Vec<i64> = if rules.climate.cold_winter_pct == 0 {
+        Vec::new()
+    } else {
+        (0..i64::from(world.height))
+            .map(|row| climate::cold_pct(rules, row, global_tick))
+            .collect()
+    };
     for i in 0..world.organisms.len() {
         if !s.alive[i] {
             continue;
@@ -661,6 +670,10 @@ fn run_tick(
             } else {
                 cost + delta
             };
+        }
+        if !cold.is_empty() {
+            let row = usize::from(o.cell) / usize::from(world.width);
+            cost += (i64::from(cost) * cold[row] / 100) as i32;
         }
         if biome == Biome::Shallows {
             cost += rules.shallow_drain;

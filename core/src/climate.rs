@@ -55,6 +55,19 @@ pub fn target_moisture(rules: &Ruleset, biome: Biome, global_tick: u64) -> u8 {
     (base + delta).clamp(0, 100) as u8
 }
 
+/// The extra energy cost from cold in a map row at a global tick, in percent: the full
+/// `cold_winter_pct` in the middle of winter at the northern edge (row 0), following the times
+/// of year smoothly and falling linearly to zero at the southern edge.
+pub fn cold_pct(rules: &Ruleset, row: i64, global_tick: u64) -> i64 {
+    let cold = i64::from(rules.climate.cold_winter_pct);
+    if cold == 0 {
+        return 0;
+    }
+    let winter = seasonal(rules, [0, 0, 0, 100], global_tick).max(0);
+    let last_row = (i64::from(rules.height) - 1).max(1);
+    cold * winter * (last_row - row.clamp(0, last_row)) / (100 * last_row)
+}
+
 /// Food growth at a given moisture, in percent: linear between the minimum at 0 and the
 /// maximum at 100.
 pub fn moisture_pct(rules: &Ruleset, moisture: u8) -> u64 {
@@ -100,6 +113,22 @@ mod tests {
             seasonal(&rules, [10, -20, 0, 10], len + len / 2 + len / 2),
             -10
         );
+    }
+
+    #[test]
+    fn cold_bites_in_the_north_in_winter() {
+        let mut rules = Ruleset::default();
+        let len = rules.year_ticks() / 4;
+        let midwinter = 3 * len + len / 2;
+        let midsummer = len + len / 2;
+        let south = i64::from(rules.height) - 1;
+        assert_eq!(cold_pct(&rules, 0, midwinter), 0, "off by default");
+        rules.climate.cold_winter_pct = 40;
+        assert_eq!(cold_pct(&rules, 0, midwinter), 40);
+        assert_eq!(cold_pct(&rules, south, midwinter), 0);
+        assert_eq!(cold_pct(&rules, 0, midsummer), 0);
+        let middle = cold_pct(&rules, south / 2, midwinter);
+        assert!((19..=21).contains(&middle), "{middle}");
     }
 
     #[test]

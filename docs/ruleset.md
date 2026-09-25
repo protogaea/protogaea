@@ -97,6 +97,7 @@ Each value holds at the midpoint of its time of year; between midpoints it chang
 | `season_moisture_delta` | spring +10, summer −20, autumn 0, winter +10; follows the times of year like `season_mult` |
 | `moisture_relax` | 1 per tick toward `moisture_base + season_moisture_delta`, limited to 0–100 |
 | `moisture_mult` | linear from `moisture_mult_min_pct` (50) at 0 to `moisture_mult_max_pct` (110) at 100 |
+| `cold_winter_pct` | 0 — optional cold: extra energy cost of every organism in midwinter at the northern edge, following the times of year and falling linearly to zero at the southern edge |
 
 ### Rifts (Season 1)
 

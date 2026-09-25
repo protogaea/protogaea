@@ -290,7 +290,7 @@ impl From<&[EpochStats]> for SeriesData {
             grazers: column(|s| s.grazers),
             clades20: column(|s| s.clades_20),
             continents: column(|s| s.continents),
-            divergence: column(|s| s.divergence_x10),
+            divergence: column(|s| s.composition_permille),
             traits: (0..6)
                 .map(|k| picked.iter().map(|s| s.trait_means_x10[k]).collect())
                 .collect(),
@@ -348,7 +348,7 @@ const TEMPLATE: &str = r##"<!doctype html>
   <div>
     <h2>Population</h2><canvas id="pop" width="580" height="190"></canvas>
     <h2>Clade shares (Muller plot)</h2><canvas id="muller" width="580" height="190"></canvas>
-    <h2>Clades of 20+, continents and divergence between continents (steps)</h2><canvas id="clades" width="580" height="130"></canvas>
+    <h2>Clades of 20+, continents, and how far apart the continents' fauna is (tens of %)</h2><canvas id="clades" width="580" height="130"></canvas>
     <h2>Mean traits</h2><canvas id="traits" width="580" height="170"></canvas>
   </div>
 </div>
@@ -609,7 +609,7 @@ const TEMPLATE: &str = r##"<!doctype html>
     lineChart(document.getElementById("clades"), S.epoch, [
       { label: "clades of 20+", color: "#2c6fbb", values: S.clades20 },
       { label: "continents", color: "#8a5a00", values: S.continents },
-      { label: "divergence", color: "#7b2d8b", values: S.divergence.map((v) => v / 10) },
+      { label: "fauna apart, ×10%", color: "#7b2d8b", values: S.divergence.map((v) => v / 100) },
     ]);
     const names = ["movement", "perception", "plants", "hunting", "defense", "fertility"];
     const colors = ["#8e44ad", "#16a085", "#27ae60", "#c0392b", "#6d7a86", "#d35400"];
