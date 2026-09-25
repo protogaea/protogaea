@@ -1,13 +1,18 @@
-//! Statistics per epoch and the ecosystem health metrics of spec §28 (the stage A1 subset).
+//! Statistics per epoch and the ecosystem health metrics of spec §28 (the subset measured so
+//! far).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use protogaea_core::genome::{DEFENSE, HUNTING, TRAIT_COUNT};
-use protogaea_core::{EpochReport, Ruleset, World};
+use protogaea_core::rifts::Plan;
+use protogaea_core::{EpochReport, Genome, Ruleset, World};
 use serde::{Deserialize, Serialize};
 
 /// A share of the population above which a clade counts as dominant (spec §28).
 const DOMINANCE_PERMILLE: u32 = 600;
+
+/// A group of passable cells counts as a continent if it has at least this many land cells.
+const CONTINENT_MIN_LAND: u32 = 40;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EpochStats {
@@ -28,15 +33,28 @@ pub struct EpochStats {
     pub deaths: u32,
     pub kills: u32,
     pub plague_deaths: u32,
+    pub drowned: u32,
+    pub floods: u32,
     pub wildfires: u32,
     pub droughts: u32,
     pub plagues: u32,
+    /// 1 if the spore bank revived the world in this epoch.
+    pub revivals: u32,
     pub ticks_at_cap: u32,
+    /// Landmasses that organisms cannot walk between.
+    pub continents: u32,
+    /// The mean genome distance between the dominant clades of different plates, ×10.
+    pub divergence_x10: u32,
     /// The mean of each trait, ×10.
     pub trait_means_x10: [u32; TRAIT_COUNT],
 }
 
-pub fn epoch_stats(world: &World, report: &EpochReport) -> EpochStats {
+pub fn epoch_stats(
+    world: &World,
+    report: &EpochReport,
+    plates: &[u8],
+    continents: u32,
+) -> EpochStats {
     let population = world.organisms.len() as u32;
     let mut stats = EpochStats {
         epoch: world.epoch,
@@ -52,13 +70,19 @@ pub fn epoch_stats(world: &World, report: &EpochReport) -> EpochStats {
         deaths: report.deaths_starvation
             + report.deaths_old_age
             + report.deaths_predation
-            + report.deaths_plague,
+            + report.deaths_plague
+            + report.deaths_drowned,
         kills: report.deaths_predation,
         plague_deaths: report.deaths_plague,
+        drowned: report.deaths_drowned,
+        floods: report.floods,
         wildfires: report.wildfires,
         droughts: report.droughts,
         plagues: report.plagues,
+        revivals: u32::from(report.revival),
         ticks_at_cap: report.ticks_at_cap,
+        continents,
+        divergence_x10: divergence_x10(world, plates),
         trait_means_x10: [0; TRAIT_COUNT],
     };
     let mut sums = [0u64; TRAIT_COUNT];
@@ -91,6 +115,72 @@ pub fn epoch_stats(world: &World, report: &EpochReport) -> EpochStats {
     stats
 }
 
+/// The number of groups of passable cells (8-neighborhood) with at least `CONTINENT_MIN_LAND`
+/// land cells.
+pub fn continents(world: &World, rules: &Ruleset) -> u32 {
+    let passable = |i: usize| rules.biomes[world.cells[i].biome as usize].passable;
+    let mut seen = vec![false; world.cells.len()];
+    let mut count = 0;
+    for start in 0..world.cells.len() {
+        if seen[start] || !passable(start) {
+            continue;
+        }
+        seen[start] = true;
+        let mut queue = VecDeque::from([start]);
+        let mut land = 0u32;
+        while let Some(i) = queue.pop_front() {
+            land += u32::from(world.cells[i].biome.is_land());
+            let (x, y) = world.coords(i);
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if let Some(j) = world.index(x + dx, y + dy) {
+                        if !seen[j] && passable(j) {
+                            seen[j] = true;
+                            queue.push_back(j);
+                        }
+                    }
+                }
+            }
+        }
+        if land >= CONTINENT_MIN_LAND {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// The mean genome distance, ×10, between the dominant clades of different plates (the future
+/// continents), over the pairs of plates that have organisms.
+pub fn divergence_x10(world: &World, plates: &[u8]) -> u32 {
+    let mut counts: BTreeMap<(u8, u32), u32> = BTreeMap::new();
+    for o in &world.organisms {
+        *counts
+            .entry((plates[usize::from(o.cell)], o.clade_id))
+            .or_insert(0) += 1;
+    }
+    // For each plate, the clade with the most organisms there; ties go to the lower id.
+    let mut dominant: BTreeMap<u8, (u32, u32)> = BTreeMap::new();
+    for (&(plate, clade), &n) in &counts {
+        let best = dominant.entry(plate).or_insert((0, clade));
+        if n > best.0 {
+            *best = (n, clade);
+        }
+    }
+    let references: Vec<Genome> = dominant
+        .values()
+        .filter_map(|&(_, clade)| world.clades.get(&clade).map(|c| c.reference))
+        .collect();
+    let mut sum = 0u64;
+    let mut pairs = 0u64;
+    for (i, a) in references.iter().enumerate() {
+        for b in &references[i + 1..] {
+            sum += u64::from(a.distance(b));
+            pairs += 1;
+        }
+    }
+    (sum * 10).checked_div(pairs).unwrap_or(0) as u32
+}
+
 /// Follows a run epoch by epoch.
 #[derive(Serialize, Deserialize)]
 pub struct Tracker {
@@ -98,15 +188,31 @@ pub struct Tracker {
     pub series: Vec<EpochStats>,
     ticks: u64,
     ticks_at_cap: u64,
+    /// The plate of each cell, from the rift plan.
+    plates: Vec<u8>,
+    plate_count: u8,
+    continents: u32,
+    /// The divergence when the rifts began to turn into shallows (spec §4, phase III).
+    divergence_start_x10: Option<u32>,
+    revivals: u32,
+    drowned: u32,
+    ended: bool,
 }
 
 impl Tracker {
-    pub fn new(world: &World) -> Self {
+    pub fn new(world: &World, rules: &Ruleset, plan: &Plan) -> Self {
         Self {
             generation: world.organisms.iter().map(|o| (o.id, 0)).collect(),
             series: Vec::new(),
             ticks: 0,
             ticks_at_cap: 0,
+            plates: plan.plates.clone(),
+            plate_count: plan.plate_count,
+            continents: continents(world, rules),
+            divergence_start_x10: None,
+            revivals: 0,
+            drowned: 0,
+            ended: world.ended,
         }
     }
 
@@ -119,7 +225,18 @@ impl Tracker {
         self.generation.retain(|id, _| living.contains(id));
         self.ticks += u64::from(rules.ticks_per_epoch);
         self.ticks_at_cap += u64::from(report.ticks_at_cap);
-        self.series.push(epoch_stats(world, report));
+        if report.rift_changes > 0 {
+            self.continents = continents(world, rules);
+        }
+        let stats = epoch_stats(world, report, &self.plates, self.continents);
+        let phase_3 = u64::from(rules.rifts.shallows_from_day) * u64::from(rules.epochs_per_day);
+        if self.divergence_start_x10.is_none() && world.epoch >= phase_3 {
+            self.divergence_start_x10 = Some(stats.divergence_x10);
+        }
+        self.revivals += stats.revivals;
+        self.drowned += stats.drowned;
+        self.ended = world.ended;
+        self.series.push(stats);
     }
 
     /// Keeps only the most recent `max` epochs of the series (live mode).
@@ -144,6 +261,7 @@ impl Tracker {
         let last = self.series.last();
         // Generations are counted from genesis, even when the series keeps only recent epochs.
         let days_since_genesis = last.map_or(0.0, |s| s.epoch as f64 / per_day as f64);
+        let last_epoch = last.map_or(0, |s| s.epoch);
 
         let last_day = &self.series[self.series.len().saturating_sub(per_day as usize)..];
         let mean_last_day = if last_day.is_empty() {
@@ -185,10 +303,22 @@ impl Tracker {
             }
         }
 
+        let has_rifts = self.plate_count > 1;
+        let reached_breakup =
+            has_rifts && last_epoch >= u64::from(rules.rifts.bridges_to_day) * per_day;
+        let reached_season_end = last_epoch >= u64::from(rules.season_days) * per_day;
+        let divergence_growth = match (self.divergence_start_x10, last) {
+            (Some(start), Some(end)) if has_rifts && reached_season_end => {
+                Some((f64::from(end.divergence_x10) - f64::from(start)) / 10.0)
+            }
+            _ => None,
+        };
+
         Summary {
             seed,
             days,
-            extinct: last.is_some_and(|s| s.population == 0),
+            extinct: self.series.iter().any(|s| s.population == 0),
+            ended_by_extinction: self.ended,
             final_population: last.map_or(0, |s| s.population),
             min_population: self.series.iter().map(|s| s.population).min().unwrap_or(0),
             final_hunters: last.map_or(0, |s| s.hunters),
@@ -211,6 +341,12 @@ impl Tracker {
             } else {
                 0.0
             },
+            revivals: self.revivals,
+            drowned: self.drowned,
+            plates: self.plate_count,
+            final_continents: self.continents,
+            reached_breakup,
+            divergence_growth,
         }
     }
 }
@@ -219,7 +355,10 @@ impl Tracker {
 pub struct Summary {
     pub seed: u64,
     pub days: f64,
+    /// The population fell to zero at some point.
     pub extinct: bool,
+    /// The spore bank had to revive the world too often, and the season ended (spec §12).
+    pub ended_by_extinction: bool,
     pub final_population: u32,
     pub min_population: u32,
     pub final_hunters: u32,
@@ -232,6 +371,17 @@ pub struct Summary {
     pub longest_dominance_days: f64,
     pub cap_ticks_pct: f64,
     pub generations_per_day: f64,
+    /// Natural revivals from the spore bank.
+    pub revivals: u32,
+    pub drowned: u32,
+    /// Plates in the rift plan: the continents the world should end with.
+    pub plates: u8,
+    pub final_continents: u32,
+    /// The run lasted until the last land bridge closed.
+    pub reached_breakup: bool,
+    /// How much the divergence between the continents' dominant clades grew from the start of
+    /// phase III to the end of the season, in mutation steps (spec §28).
+    pub divergence_growth: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -248,6 +398,10 @@ impl Summary {
         vec![
             check("no total extinction", Some(!self.extinct)),
             check("predators survive to the end", Some(self.final_hunters > 0)),
+            check(
+                "the spore bank revives the world at most once",
+                Some(self.revivals <= 1),
+            ),
             check(
                 "at least 6 clades of 20+ after day 3",
                 self.min_clades_20_after_day_3.map(|m| m >= 6),
@@ -271,6 +425,15 @@ impl Summary {
             check(
                 "at least 30 generations per world day",
                 Some(self.generations_per_day >= 30.0),
+            ),
+            check(
+                "each plate ends as its own continent",
+                self.reached_breakup
+                    .then_some(self.final_continents == u32::from(self.plates)),
+            ),
+            check(
+                "divergence between continents grows by 3+ steps",
+                self.divergence_growth.map(|g| g >= 3.0),
             ),
         ]
     }

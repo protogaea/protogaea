@@ -64,6 +64,24 @@ pub enum Purpose {
     PlagueSite = 24,
     /// Whether a member within reach dies; the subject is the organism.
     PlagueDeath = 25,
+    /// Whether a flood starts this epoch; the subject is the epoch.
+    FloodChance = 26,
+    /// Where it starts.
+    FloodSite = 27,
+    /// The number of plates at genesis.
+    RiftPlates = 28,
+    /// The rotation of the plate layout at genesis.
+    RiftRotation = 29,
+    /// Noise that bends plate boundaries sideways; the subject encodes the lattice point.
+    RiftWarpX = 30,
+    /// Noise that bends plate boundaries up and down.
+    RiftWarpY = 31,
+    /// The center of a land bridge; the subject is the pair of plates it joins.
+    BridgeSite = 32,
+    /// The order in which land bridges close.
+    BridgeOrder = 33,
+    /// The cell for an organism revived from the spore bank; the subject is the organism.
+    RevivalSite = 34,
 }
 
 /// A stateless source of randomness bound to one seed.

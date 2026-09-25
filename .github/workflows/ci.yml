@@ -10,6 +10,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  FAST_SEASON: >-
+    .rifts.fault_day = 0 | .rifts.shallows_from_day = 0 | .rifts.deep_from_day = 1 |
+    .rifts.bridges_from_day = 1 | .rifts.bridges_to_day = 2
 
 jobs:
   check:
@@ -35,9 +38,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The second run compresses Season 1 into two world days, so that faults, flooding,
+      # sinking cells, rescues and closing land bridges are compared too.
       - name: State hashes
         shell: bash
-        run: cargo run --release -p protogaea-harness -- hash --seeds 1,2 --epochs 500 --every 100 > hashes.txt
+        run: |
+          cargo run --release -p protogaea-harness -- hash --seeds 1,2 --epochs 500 --every 100 > hashes.txt
+          cargo run --release -p protogaea-harness -- ruleset | jq "$FAST_SEASON" > fast-season.json
+          cargo run --release -p protogaea-harness -- hash --seeds 3 --epochs 600 --every 100 --ruleset fast-season.json >> hashes.txt
       - uses: actions/upload-artifact@v4
         with:
           name: hashes-${{ matrix.os }}
@@ -57,7 +65,10 @@ jobs:
         run: cargo build --release -p protogaea-harness --target wasm32-wasip1
       - uses: bytecodealliance/actions/wasmtime/setup@v1
       - name: State hashes
-        run: wasmtime run target/wasm32-wasip1/release/protogaea-harness.wasm hash --seeds 1,2 --epochs 500 --every 100 > hashes.txt
+        run: |
+          wasmtime run target/wasm32-wasip1/release/protogaea-harness.wasm hash --seeds 1,2 --epochs 500 --every 100 > hashes.txt
+          wasmtime run target/wasm32-wasip1/release/protogaea-harness.wasm ruleset | jq "$FAST_SEASON" > fast-season.json
+          wasmtime run --dir . target/wasm32-wasip1/release/protogaea-harness.wasm hash --seeds 3 --epochs 600 --every 100 --ruleset fast-season.json >> hashes.txt
       - uses: actions/upload-artifact@v4
         with:
           name: hashes-wasm

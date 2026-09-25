@@ -76,7 +76,7 @@
 cargo test --workspace
 cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # пишет runs/seed-1/report.html
 cargo run --release -p protogaea-harness -- sweep --seeds 1..17 --days 2
-cargo run --release -p protogaea-harness -- live --seed 4                # мир в реальном времени на http://127.0.0.1:8080
+cargo run --release -p protogaea-harness -- live --seed 5                # мир в реальном времени на http://127.0.0.1:8080
 ```
 
 - [core/](core/README.md) — детерминированное ядро и его статус относительно спецификации.

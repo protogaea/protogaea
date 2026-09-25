@@ -12,11 +12,11 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
-use protogaea_core::Ruleset;
+use protogaea_core::{Biome, Ruleset};
 
 use metrics::{Summary, Tracker};
-use report::{Recorder, RunInfo};
-use runner::{hex, Run};
+use report::Recorder;
+use runner::{hex, season_phase, Run};
 
 const USAGE: &str = "\
 protogaea-harness — runs Protogaea worlds offline and measures them
@@ -28,6 +28,8 @@ USAGE:
       Many worlds in parallel: the ecosystem health checks of spec §28 for each seed.
   protogaea-harness hash    [--seeds 1,2] [--epochs E] [--every K] [--ruleset FILE]
       State hashes at checkpoints, for cross-platform determinism checks.
+  protogaea-harness maps    [--seeds 1..21] [--ruleset FILE]
+      The Season 1 map criteria of spec §4 for candidate seeds, without running them.
   protogaea-harness ruleset
       Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
   protogaea-harness live    [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
@@ -50,6 +52,7 @@ fn main() -> ExitCode {
         "run" => cmd_run(rest),
         "sweep" => cmd_sweep(rest),
         "hash" => cmd_hash(rest),
+        "maps" => cmd_maps(rest),
         "ruleset" => cmd_ruleset(),
         "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
@@ -80,31 +83,55 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
 
     let epochs = epochs_for(days, &rules);
     let mut run = Run::new(seed, rules);
-    let mut tracker = Tracker::new(&run.world);
+    let mut tracker = Tracker::new(&run.world, &run.rules, &run.plan);
     let mut recorder = Recorder::new(epochs);
     recorder.observe(&run.world);
     let per_day = u64::from(run.rules.epochs_per_day);
     let started = std::time::Instant::now();
-    println!("seed {seed}: {days} world days ({epochs} epochs)");
+    println!(
+        "seed {seed}: {days} world days ({epochs} epochs); {} plates, {} land bridges",
+        run.plan.plate_count,
+        run.plan.bridges.len()
+    );
     for _ in 0..epochs {
         let report = run.step();
         tracker.record(&run.world, &report, &run.rules);
         recorder.observe(&run.world);
         let epoch = run.world.epoch;
-        if epoch.is_multiple_of(per_day) || run.world.organisms.is_empty() {
+        for id in &report.bridges_closed {
+            println!(
+                "  day {:>5.2}: land bridge {id} closed",
+                epoch as f64 / per_day as f64
+            );
+        }
+        if report.revival {
+            println!(
+                "  day {:>5.2}: the spore bank revived the world with {} organisms",
+                epoch as f64 / per_day as f64,
+                report.revived
+            );
+        }
+        let finished = run.world.finished(&run.rules);
+        if epoch.is_multiple_of(per_day) || finished {
             let last = tracker.series.last().expect("recorded");
             println!(
-                "  day {:>5.2}: population {:>5} (grazers {:>5}, armored {:>5}, hunters {:>5}), clades of 20+ {:>3}",
+                "  day {:>5.2}: population {:>5} (grazers {:>5}, armored {:>5}, hunters {:>5}), clades of 20+ {:>3}, continents {} ({})",
                 epoch as f64 / per_day as f64,
                 last.population,
                 last.grazers,
                 last.armored,
                 last.hunters,
                 last.clades_20,
+                last.continents,
+                season_phase(&run.rules, epoch).1,
             );
         }
-        if run.world.organisms.is_empty() {
-            println!("  everything died at epoch {epoch}");
+        if finished {
+            if run.world.ended {
+                println!("  the season ended by extinction at epoch {epoch}");
+            } else {
+                println!("  everything died at epoch {epoch}");
+            }
             break;
         }
     }
@@ -117,14 +144,9 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     write(&out.join("summary.json"), &summary_json)?;
     let rules_json = serde_json::to_string_pretty(&run.rules).map_err(|e| e.to_string())?;
     write(&out.join("ruleset.json"), &rules_json)?;
-    let info = RunInfo {
-        seed,
-        rules: &run.rules,
-        world: &run.world,
-    };
     let report_path = out.join("report.html");
     recorder
-        .write_html(&report_path, info, &tracker.series, &summary, &checks)
+        .write_html(&report_path, &run, &tracker.series, &summary, &checks)
         .map_err(|e| format!("cannot write {}: {e}", report_path.display()))?;
 
     println!(
@@ -158,11 +180,11 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             break;
         };
         let mut run = Run::new(seed, rules.clone());
-        let mut tracker = Tracker::new(&run.world);
+        let mut tracker = Tracker::new(&run.world, &run.rules, &run.plan);
         for _ in 0..epochs {
             let report = run.step();
             tracker.record(&run.world, &report, &run.rules);
-            if run.world.organisms.is_empty() {
+            if run.world.finished(&run.rules) {
                 break;
             }
         }
@@ -191,7 +213,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         .collect();
 
     println!(
-        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>6}",
+        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6}",
         "seed",
         "extinct",
         "final",
@@ -202,11 +224,14 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         "dom days",
         "cap%",
         "gen/day",
+        "rev",
+        "cont",
+        "div+",
         "pass"
     );
     for s in &summaries {
         println!(
-            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4}/{}",
+            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>4}/{}",
             s.seed,
             if s.extinct { "yes" } else { "no" },
             s.final_population,
@@ -218,6 +243,10 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             s.longest_dominance_days,
             s.cap_ticks_pct,
             s.generations_per_day,
+            s.revivals,
+            format!("{}/{}", s.final_continents, s.plates),
+            s.divergence_growth
+                .map_or("—".to_string(), |g| format!("{g:.1}")),
             passed(s),
             s.checks().len(),
         );
@@ -244,11 +273,12 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
     if let Some(path) = opts.value("out") {
         let mut csv = String::from(
             "seed,extinct,final_population,min_population,equilibrium_pct,min_clades_20_after_day_3,\
-             dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,checks_passed\n",
+             dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
+             revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,checks_passed\n",
         );
         for s in &summaries {
             csv.push_str(&format!(
-                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{}\n",
+                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{}\n",
                 s.seed,
                 s.extinct,
                 s.final_population,
@@ -260,6 +290,13 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 s.longest_dominance_days,
                 s.cap_ticks_pct,
                 s.generations_per_day,
+                s.revivals,
+                s.ended_by_extinction,
+                s.drowned,
+                s.plates,
+                s.final_continents,
+                s.divergence_growth
+                    .map_or(String::new(), |g| format!("{g:.1}")),
                 passed(s),
             ));
         }
@@ -290,6 +327,136 @@ fn cmd_hash(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// How a candidate seed's map meets the Season 1 criteria (spec §4).
+struct MapCriteria {
+    plates: u8,
+    bridge_biomes: Vec<Biome>,
+    /// The fewest land cells a plate keeps after the breakup.
+    min_land: usize,
+    /// Every plate keeps land of all five biomes.
+    all_biomes: bool,
+    /// The fewest founders that start on a plate.
+    min_founders: usize,
+}
+
+impl MapCriteria {
+    fn of(seed: u64, rules: &Ruleset) -> Self {
+        let run = Run::new(seed, rules.clone());
+        let plan = &run.plan;
+        let count = usize::from(plan.plate_count.max(1));
+        let mut on_rift = vec![false; run.genesis_biomes.len()];
+        for r in &plan.rifts {
+            on_rift[usize::from(r.cell)] = true;
+        }
+        let mut land = vec![0usize; count];
+        let mut kinds = vec![[false; Biome::COUNT]; count];
+        for (i, &b) in run.genesis_biomes.iter().enumerate() {
+            if b.is_land() && !on_rift[i] {
+                let p = usize::from(plan.plates[i]);
+                land[p] += 1;
+                kinds[p][b as usize] = true;
+            }
+        }
+        let mut founders = vec![0usize; count];
+        for o in &run.world.organisms {
+            founders[usize::from(plan.plates[usize::from(o.cell)])] += 1;
+        }
+        Self {
+            plates: plan.plate_count,
+            bridge_biomes: plan
+                .bridges
+                .iter()
+                .map(|b| run.genesis_biomes[usize::from(b.center)])
+                .collect(),
+            min_land: land.iter().copied().min().unwrap_or(0),
+            all_biomes: kinds.iter().all(|k| {
+                Biome::ALL
+                    .iter()
+                    .filter(|b| b.is_land())
+                    .all(|&b| k[b as usize])
+            }),
+            min_founders: founders.iter().copied().min().unwrap_or(0),
+        }
+    }
+
+    fn distinct_bridges(&self) -> bool {
+        let b = &self.bridge_biomes;
+        (0..b.len()).all(|i| !b[..i].contains(&b[i]))
+    }
+
+    fn pass(&self, rules: &Ruleset) -> bool {
+        (rules.rifts.plates_min..=rules.rifts.plates_max).contains(&self.plates)
+            && (3..=5).contains(&self.bridge_biomes.len())
+            && self.distinct_bridges()
+            && self.all_biomes
+            && self.min_founders >= 40
+    }
+}
+
+fn cmd_maps(args: &[String]) -> Result<(), String> {
+    let opts = Options::parse(args, &["seeds", "ruleset"])?;
+    let seeds = parse_seeds(opts.value("seeds").unwrap_or("1..21"))?;
+    let rules = load_rules(&opts)?;
+    println!(
+        "Season 1 map criteria (spec §4): 3–5 land bridges in different biomes; every future \
+         continent keeps all five land biomes and starts with at least 40 organisms.\n"
+    );
+    println!(
+        "{:>6} {:>6} {:>30} {:>9} {:>10} {:>12} {:>5}",
+        "seed", "plates", "land bridges", "min land", "5 biomes", "min founders", "pass"
+    );
+    let mut passing = Vec::new();
+    for &seed in &seeds {
+        let m = MapCriteria::of(seed, &rules);
+        let bridges: Vec<&str> = m.bridge_biomes.iter().map(|&b| biome_name(b)).collect();
+        let pass = m.pass(&rules);
+        println!(
+            "{:>6} {:>6} {:>30} {:>9} {:>10} {:>12} {:>5}",
+            seed,
+            m.plates,
+            format!(
+                "{}{}",
+                bridges.join(","),
+                if m.distinct_bridges() {
+                    ""
+                } else {
+                    " (repeats)"
+                }
+            ),
+            m.min_land,
+            if m.all_biomes { "yes" } else { "no" },
+            m.min_founders,
+            if pass { "yes" } else { "no" },
+        );
+        if pass {
+            passing.push(seed.to_string());
+        }
+    }
+    println!(
+        "\n{} of {} seeds meet every criterion: {}",
+        passing.len(),
+        seeds.len(),
+        if passing.is_empty() {
+            "none".to_string()
+        } else {
+            passing.join(", ")
+        }
+    );
+    Ok(())
+}
+
+fn biome_name(biome: Biome) -> &'static str {
+    match biome {
+        Biome::DeepWater => "deep water",
+        Biome::Shallows => "shallows",
+        Biome::Forest => "forest",
+        Biome::Steppe => "steppe",
+        Biome::Desert => "desert",
+        Biome::Mountains => "mountains",
+        Biome::Swamp => "swamp",
+    }
 }
 
 fn cmd_ruleset() -> Result<(), String> {
@@ -376,12 +543,13 @@ fn load_rules(opts: &Options) -> Result<Ruleset, String> {
 fn write_metrics_csv(path: &std::path::Path, tracker: &Tracker) -> Result<(), String> {
     let mut csv = String::from(
         "epoch,population,grazers,armored,hunters,clades,clades_20,dominant_clade,dominant_permille,\
-         births,deaths,kills,plague_deaths,wildfires,droughts,plagues,ticks_at_cap,movement_x10,perception_x10,plants_x10,hunting_x10,defense_x10,fertility_x10\n",
+         births,deaths,kills,plague_deaths,drowned,floods,wildfires,droughts,plagues,revivals,ticks_at_cap,\
+         continents,divergence_x10,movement_x10,perception_x10,plants_x10,hunting_x10,defense_x10,fertility_x10\n",
     );
     for s in &tracker.series {
         let traits: Vec<String> = s.trait_means_x10.iter().map(u32::to_string).collect();
         csv.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             s.epoch,
             s.population,
             s.grazers,
@@ -395,10 +563,15 @@ fn write_metrics_csv(path: &std::path::Path, tracker: &Tracker) -> Result<(), St
             s.deaths,
             s.kills,
             s.plague_deaths,
+            s.drowned,
+            s.floods,
             s.wildfires,
             s.droughts,
             s.plagues,
+            s.revivals,
             s.ticks_at_cap,
+            s.continents,
+            s.divergence_x10,
             traits.join(","),
         ));
     }

@@ -85,15 +85,17 @@ regen = base_regen[biome] × season_mult[biome][season] / 100 × moisture_mult(m
 | Mountains | 70 | 100 | 60 | 20 |
 | Swamp | 120 | 110 | 100 | 50 |
 
-Transitions between times of year are smoothed tick by tick.
+Each value holds at the midpoint of its time of year; between midpoints it changes linearly tick by tick, in integers. The world starts at the beginning of spring.
 
 ### Moisture
 
 | Parameter | Value |
 |---|---|
 | Range | 0–100 |
-| `moisture_relax` | TBD — per-tick return toward the biome's base level |
-| `moisture_mult` | A table from 50% at 0 to 110% at 100 (candidate) |
+| `moisture_base[biome]` | forest 70, steppe 45, desert 15, mountains 50, swamp 90, water 100 |
+| `season_moisture_delta` | spring +10, summer −20, autumn 0, winter +10; follows the times of year like `season_mult` |
+| `moisture_relax` | 1 per tick toward `moisture_base + season_moisture_delta`, limited to 0–100 |
+| `moisture_mult` | linear from `moisture_mult_min_pct` (50) at 0 to `moisture_mult_max_pct` (110) at 100 |
 
 ### Rifts (Season 1)
 
@@ -104,15 +106,26 @@ Transitions between times of year are smoothed tick by tick.
 | Shallows | 0 | ×3, plus `shallow_drain` (TBD) at the end of a tick | yes |
 | Deep water | 0 | — | no |
 
-The schedule by world day: unity 0–6, cracks 7–13, shallows 14–23, straits 24–34, the last bridges 35–38, continents 39–42. Rift lines are generated from `genesis_seed`. Organisms in a cell that becomes deep water move to the nearest free land, or drown.
+The schedule by world day: unity 0–6, cracks 7–13, shallows 14–23, straits 24–34, the last bridges 35–38, continents 39–42. The generator is described in [spec §10](spec/spec-v0.2.md#10-times-of-year-climate-rifts-and-natural-events).
+
+| Parameter | Value |
+|---|---|
+| `plates_min`, `plates_max` | 3, 4 — the number of plates (future continents), drawn at genesis |
+| `boundary_warp` | 5 cells — how far noise bends the plate boundaries |
+| `fault_day` | 7 |
+| `shallows_from_day`, `deep_from_day` | 14, 24 — waves from the ocean inward |
+| `bridges_from_day`, `bridges_to_day` | 35, 39 — land bridges close one by one |
+| `fault_growth_pct`, `fault_move_pct` | 50, 200 |
+| `bridge_radius` | 2 — a bridge is the rift cells within this distance of its center |
+| `rescue_radius` | 8 — organisms on a sinking cell move to the nearest free land within this distance, or drown |
 
 ### Natural events
 
 | Event | Conditions | Effect | Frequency (candidate) |
 |---|---|---|---|
 | Wildfire | forest or steppe, summer, moisture < 30 | radius 2–4: food and detritus → 0, organisms −50% energy; then ash: growth +50% for 72 ticks | once every 2–3 world days |
-| Flood | swamp and cells next to water, spring | cells become shallows for 24 ticks | once a day in spring |
-| Great drought | steppe and desert, summer | 9 × 9: growth ×0.5 for 72 ticks | once every 3 days |
+| Flood | swamp and land next to water, spring | land other than mountains within radius 2 acts as shallows for 24 ticks; its food is lost and its moisture set to 100 | once a day in spring (3,472 ppm per spring epoch) |
+| Great drought | steppe and desert, summer | 9 × 9: moisture −30 at once, growth ×0.5 for 72 ticks | once every 3 days |
 | Plague | a clade denser than a threshold (TBD) | mortality `plague_p` (TBD) within radius 3; the event's probability grows with the clade's share of the world | by dominance |
 
 Probabilities are stored in parts per million per epoch (TBD). At most two events of each type are active at once.
@@ -188,7 +201,7 @@ The weights `w_*` are TBD. Ties are broken by counter-based randomness.
 | `clade_split_distance` | 3 steps |
 | `clade_name_threshold` | 20 living organisms |
 | Museum capacity in the state | 1,024 extinct named clades |
-| Natural revival | fewer than 30 living organisms → 5 per genesis genome; at most once every 288 epochs |
+| Natural revival | fewer than 30 living organisms → 5 per genesis genome in free cells of its starting biome, each genome founding a new clade; at most once every 288 epochs |
 | Season ends by extinction | 3 natural revivals within 7 world days |
 
 ### Actions

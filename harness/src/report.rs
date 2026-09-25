@@ -5,10 +5,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use protogaea_core::genome::HUNTING;
-use protogaea_core::{Ruleset, World};
+use protogaea_core::World;
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::{Check, EpochStats, Summary};
+use crate::runner::Run;
 
 const MAX_FRAMES: u64 = 150;
 const MAX_SAMPLES: u64 = 400;
@@ -20,6 +21,9 @@ struct Frame {
     epoch: u64,
     /// Each organism packed as `cell × 1000 + hue × 2 + hunter`.
     orgs: Vec<u32>,
+    /// Active effects of natural events: `[kind, center, radius]`.
+    #[serde(default)]
+    effects: Vec<[u32; 3]>,
 }
 
 /// Collects map frames and clade counts while a run progresses.
@@ -71,7 +75,16 @@ impl Recorder {
                         + u32::from(o.genome.traits[HUNTING] >= 4)
                 })
                 .collect();
-            self.frames.push(Frame { epoch, orgs });
+            let effects = world
+                .effects
+                .iter()
+                .map(|e| [e.kind as u32, u32::from(e.center), u32::from(e.radius)])
+                .collect();
+            self.frames.push(Frame {
+                epoch,
+                orgs,
+                effects,
+            });
         }
         if epoch.is_multiple_of(self.sample_every) {
             let mut counts = BTreeMap::new();
@@ -94,7 +107,7 @@ impl Recorder {
     pub fn write_html(
         &self,
         path: &Path,
-        run: RunInfo<'_>,
+        run: &Run,
         series: &[EpochStats],
         summary: &Summary,
         checks: &[Check],
@@ -107,12 +120,13 @@ impl Recorder {
 
     pub fn render_html(
         &self,
-        run: RunInfo<'_>,
+        run: &Run,
         series: &[EpochStats],
         summary: &Summary,
         checks: &[Check],
         live: Option<LiveInfo>,
     ) -> Result<String, String> {
+        let r = &run.rules.rifts;
         let data = ReportData {
             seed: run.seed,
             days: summary.days,
@@ -120,7 +134,37 @@ impl Recorder {
             width: run.world.width,
             height: run.world.height,
             max_organisms: run.rules.max_organisms,
-            biomes: run.world.cells.iter().map(|c| c.biome as u8).collect(),
+            biomes: run.genesis_biomes.iter().map(|&b| b as u8).collect(),
+            rifts: run
+                .world
+                .rifts
+                .iter()
+                .map(|r| {
+                    [
+                        u64::from(r.cell),
+                        u64::from(r.bridge),
+                        r.fault_epoch,
+                        r.shallows_epoch,
+                        r.deep_epoch,
+                    ]
+                })
+                .collect(),
+            bridges: run
+                .plan
+                .bridges
+                .iter()
+                .map(|b| [u64::from(b.id), u64::from(b.center), b.close_epoch])
+                .collect(),
+            season: SeasonDays {
+                fault: r.fault_day,
+                shallows: r.shallows_from_day,
+                deep: r.deep_from_day,
+                bridges_from: r.bridges_from_day,
+                bridges_to: r.bridges_to_day,
+                end: run.rules.season_days,
+                bridge_radius: r.bridge_radius,
+            },
+            plates: run.plan.plate_count,
             series: SeriesData::from(series),
             frames: &self.frames,
             muller: self.muller(),
@@ -174,12 +218,6 @@ impl Recorder {
     }
 }
 
-pub struct RunInfo<'a> {
-    pub seed: u64,
-    pub rules: &'a Ruleset,
-    pub world: &'a World,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReportData<'a> {
@@ -189,13 +227,33 @@ struct ReportData<'a> {
     width: u16,
     height: u16,
     max_organisms: u32,
+    /// The terrain at genesis; the rift schedule changes it over time.
     biomes: Vec<u8>,
+    /// `[cell, bridge, fault_epoch, shallows_epoch, deep_epoch]`.
+    rifts: Vec<[u64; 5]>,
+    /// `[id, center, close_epoch]`.
+    bridges: Vec<[u64; 3]>,
+    season: SeasonDays,
+    plates: u8,
     series: SeriesData,
     frames: &'a [Frame],
     muller: MullerData,
     summary: &'a Summary,
     checks: &'a [Check],
     live: Option<LiveInfo>,
+}
+
+/// The days on which the phases of Season 1 begin (spec §4).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeasonDays {
+    fault: u32,
+    shallows: u32,
+    deep: u32,
+    bridges_from: u32,
+    bridges_to: u32,
+    end: u32,
+    bridge_radius: u8,
 }
 
 /// Shown on the page of a live world.
@@ -214,6 +272,8 @@ struct SeriesData {
     armored: Vec<u32>,
     grazers: Vec<u32>,
     clades20: Vec<u32>,
+    continents: Vec<u32>,
+    divergence: Vec<u32>,
     traits: Vec<Vec<u32>>,
 }
 
@@ -229,6 +289,8 @@ impl From<&[EpochStats]> for SeriesData {
             armored: column(|s| s.armored),
             grazers: column(|s| s.grazers),
             clades20: column(|s| s.clades_20),
+            continents: column(|s| s.continents),
+            divergence: column(|s| s.divergence_x10),
             traits: (0..6)
                 .map(|k| picked.iter().map(|s| s.trait_means_x10[k]).collect())
                 .collect(),
@@ -265,6 +327,7 @@ const TEMPLATE: &str = r##"<!doctype html>
   table { border-collapse: collapse; margin-top: 8px; }
   td { padding: 2px 10px 2px 0; }
   .live { color: #1a5fb4; font-weight: 600; margin: 4px 0; }
+  .phase { font-weight: 600; margin: 4px 0; }
   .pass { color: #1e7d32; } .fail { color: #b3261e; } .na { color: #888; }
   button { font: inherit; padding: 2px 12px; }
 </style>
@@ -277,14 +340,15 @@ const TEMPLATE: &str = r##"<!doctype html>
 <div class="row">
   <div>
     <h2>World</h2>
+    <div id="phase" class="phase"></div>
     <canvas id="map"></canvas>
     <div><button id="play">Play</button> <input id="slider" type="range" min="0" value="0" style="width: 360px"> <span id="label" class="muted"></span></div>
-    <p class="muted">Squares are organisms colored by their neutral hue; related organisms share a color. Dark squares are hunters (hunting ≥ 4).</p>
+    <p class="muted" style="max-width: 512px">Squares are organisms colored by their neutral hue; related organisms share a color. Dark squares are hunters (hunting ≥ 4). Dark dots mark the rift lines, darkened cells are faults, and gold frames are land bridges. Tints: blue floods, grey ash after a wildfire, orange great droughts.</p>
   </div>
   <div>
     <h2>Population</h2><canvas id="pop" width="580" height="190"></canvas>
     <h2>Clade shares (Muller plot)</h2><canvas id="muller" width="580" height="190"></canvas>
-    <h2>Clades with 20 or more organisms</h2><canvas id="clades" width="580" height="110"></canvas>
+    <h2>Clades of 20+, continents and divergence between continents (steps)</h2><canvas id="clades" width="580" height="130"></canvas>
     <h2>Mean traits</h2><canvas id="traits" width="580" height="170"></canvas>
   </div>
 </div>
@@ -295,23 +359,54 @@ const TEMPLATE: &str = r##"<!doctype html>
   const D = DATA;
   const BIOME_COLORS = ["#27496d", "#5a86b4", "#3e7a3b", "#b8b26b", "#e1cb8d", "#8c8b86", "#4e6b57"];
   const CELL = 8;
+  const EPD = D.epochsPerDay;
   let cursorEpoch = null;
+
+  const PHASES = ["I. Unity", "II. Cracks", "III. Shallows", "IV. Straits", "V. The last bridges", "VI. Continents"];
+  function phaseAt(epoch) {
+    const day = Math.floor(epoch / EPD);
+    const S = D.season;
+    if (D.rifts.length === 0) return null;
+    if (day < S.fault) return 0;
+    if (day < S.shallows) return 1;
+    if (day < S.deep) return 2;
+    if (day < S.bridgesFrom) return 3;
+    if (day < S.bridgesTo) return 4;
+    return 5;
+  }
+  const dayText = (epoch) => (epoch / EPD).toFixed(1);
+  function nextEvent(epoch) {
+    const S = D.season;
+    const day = epoch / EPD;
+    if (D.rifts.length === 0) return "";
+    if (day < S.fault) return `next: the rift lines become faults on day ${S.fault}`;
+    if (day < S.shallows) return `next: the rifts begin to flood on day ${S.shallows}`;
+    if (day < S.deep) return `next: the shallows begin to deepen on day ${S.deep}`;
+    const next = D.bridges.filter((b) => b[2] > epoch).sort((a, b) => a[2] - b[2])[0];
+    if (next) return `next: land bridge ${next[0]} closes on day ${dayText(next[2])}`;
+    return "the continents are isolated";
+  }
 
   document.getElementById("seed").textContent = D.seed;
   const s = D.summary;
   if (D.live) {
-    const day = (D.live.epoch / D.epochsPerDay).toFixed(2);
+    const day = (D.live.epoch / EPD).toFixed(2);
     const every = D.live.epochSeconds % 60 ? `${D.live.epochSeconds} s` : `${D.live.epochSeconds / 60} min`;
+    const phase = phaseAt(D.live.epoch);
     document.title = `Protogaea — live, day ${day}`;
     document.getElementById("live").textContent =
-      `Live world · epoch ${D.live.epoch} (world day ${day}) · a new epoch every ${every} · reload the page to update`;
+      `Live world · epoch ${D.live.epoch} (world day ${day})` +
+      (phase === null ? "" : ` · phase ${PHASES[phase]} · ${nextEvent(D.live.epoch)}`) +
+      ` · a new epoch every ${every} · reload the page to update`;
   }
   document.getElementById("headline").textContent =
     (D.live ? `the last ${s.days.toFixed(2)} world days · population ${s.final_population} · `
             : `${s.days.toFixed(2)} world days · final population ${s.final_population} · `) +
     `equilibrium ${s.equilibrium_pct.toFixed(1)}% of ${D.maxOrganisms} · ` +
     `${s.generations_per_day.toFixed(1)} generations/day · ` +
-    `dominant changes ${s.dominant_changes_per_3_days.toFixed(1)} per 3 days`;
+    `dominant changes ${s.dominant_changes_per_3_days.toFixed(1)} per 3 days · ` +
+    `${D.plates} plates, ${D.bridges.length} land bridges · ` +
+    `spore bank revivals ${s.revivals} · drowned ${s.drowned}`;
   const checks = document.getElementById("checks");
   for (const c of D.checks) {
     const tr = document.createElement("tr");
@@ -325,23 +420,78 @@ const TEMPLATE: &str = r##"<!doctype html>
   map.width = D.width * CELL;
   map.height = D.height * CELL;
   const ctx = map.getContext("2d");
-  const terrain = document.createElement("canvas");
-  terrain.width = map.width;
-  terrain.height = map.height;
-  const t = terrain.getContext("2d");
-  D.biomes.forEach((b, i) => {
-    t.fillStyle = BIOME_COLORS[b];
-    t.fillRect((i % D.width) * CELL, Math.floor(i / D.width) * CELL, CELL, CELL);
-  });
+  const isLand = (b) => b >= 2;
+
+  // The terrain at an epoch: genesis biomes changed by the rift schedule.
+  function terrainAt(epoch) {
+    const biomes = D.biomes.slice();
+    const phase = new Uint8Array(biomes.length);
+    for (const [cell, , fault, shallows, deep] of D.rifts) {
+      const p = epoch >= deep ? 4 : epoch >= shallows ? 3 : epoch >= fault ? 2 : 1;
+      phase[cell] = p;
+      if (p === 4) biomes[cell] = 0;
+      else if (p === 3 && isLand(biomes[cell])) biomes[cell] = 1;
+    }
+    return { biomes, phase };
+  }
+
+  function drawTerrain(epoch) {
+    const { biomes, phase } = terrainAt(epoch);
+    biomes.forEach((b, i) => {
+      ctx.fillStyle = BIOME_COLORS[b];
+      ctx.fillRect((i % D.width) * CELL, Math.floor(i / D.width) * CELL, CELL, CELL);
+    });
+    for (const [cell] of D.rifts) {
+      const x = (cell % D.width) * CELL, y = Math.floor(cell / D.width) * CELL;
+      if (phase[cell] === 1) {
+        ctx.fillStyle = "rgba(40, 25, 15, 0.7)";
+        ctx.fillRect(x + 3, y + 3, 2, 2);
+      } else if (phase[cell] === 2 && isLand(biomes[cell])) {
+        ctx.fillStyle = "rgba(40, 25, 15, 0.45)";
+        ctx.fillRect(x, y, CELL, CELL);
+      }
+    }
+    for (const [id, center, close] of D.bridges) {
+      if (epoch >= close) continue;
+      const x = (center % D.width) * CELL, y = Math.floor(center / D.width) * CELL;
+      const r = D.season.bridgeRadius;
+      ctx.strokeStyle = "#d4a017";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x - r * CELL + 1, y - r * CELL + 1, (2 * r + 1) * CELL - 2, (2 * r + 1) * CELL - 2);
+      ctx.fillStyle = "#6b4f00";
+      ctx.font = "bold 10px system-ui, sans-serif";
+      ctx.fillText(String(id), x + 2, y - r * CELL - 2);
+    }
+    return biomes;
+  }
+
+  const TINTS = ["", "rgba(40, 40, 40, 0.35)", "rgba(230, 140, 40, 0.30)", "rgba(60, 120, 220, 0.45)"];
+  function drawEffects(effects, biomes) {
+    for (const [kind, center, radius] of effects || []) {
+      const cx = center % D.width, cy = Math.floor(center / D.width);
+      ctx.fillStyle = TINTS[kind] || "rgba(0, 0, 0, 0.2)";
+      for (let y = cy - radius; y <= cy + radius; y++) {
+        for (let x = cx - radius; x <= cx + radius; x++) {
+          if (x < 0 || y < 0 || x >= D.width || y >= D.height) continue;
+          const d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+          const b = biomes[y * D.width + x];
+          const covered = kind === 2 ? true : kind === 3 ? d2 <= radius * radius && isLand(b) && b !== 5 : d2 <= radius * radius;
+          if (covered) ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+        }
+      }
+    }
+  }
 
   const slider = document.getElementById("slider");
   const label = document.getElementById("label");
+  const phaseLine = document.getElementById("phase");
   slider.max = Math.max(0, D.frames.length - 1);
 
   function drawFrame(k) {
     const f = D.frames[k];
     if (!f) return;
-    ctx.drawImage(terrain, 0, 0);
+    const biomes = drawTerrain(f.epoch);
+    drawEffects(f.effects, biomes);
     const slots = new Uint8Array(D.width * D.height);
     for (const v of f.orgs) {
       const cell = Math.floor(v / 1000);
@@ -354,7 +504,9 @@ const TEMPLATE: &str = r##"<!doctype html>
       ctx.fillStyle = `hsl(${hue}, 75%, ${hunter ? 30 : 60}%)`;
       ctx.fillRect(x, y, 4, 4);
     }
-    label.textContent = `day ${(f.epoch / D.epochsPerDay).toFixed(2)} · epoch ${f.epoch} · ${f.orgs.length} organisms`;
+    const phase = phaseAt(f.epoch);
+    phaseLine.textContent = phase === null ? "" : `Season 1, phase ${PHASES[phase]} · ${nextEvent(f.epoch)}`;
+    label.textContent = `day ${(f.epoch / EPD).toFixed(2)} · epoch ${f.epoch} · ${f.orgs.length} organisms`;
     cursorEpoch = f.epoch;
     drawCharts();
   }
@@ -386,7 +538,7 @@ const TEMPLATE: &str = r##"<!doctype html>
     c.font = "11px system-ui, sans-serif";
     c.fillText(String(Math.round(max)), 4, pad.t + 4);
     c.fillText("0", 4, H - pad.b);
-    c.fillText(`day ${(x1 / D.epochsPerDay).toFixed(1)}`, W - 56, H - 3);
+    c.fillText(`day ${(x1 / EPD).toFixed(1)}`, W - 56, H - 3);
     for (const s of series) {
       c.strokeStyle = s.color;
       c.lineWidth = 1.5;
@@ -456,6 +608,8 @@ const TEMPLATE: &str = r##"<!doctype html>
     ]);
     lineChart(document.getElementById("clades"), S.epoch, [
       { label: "clades of 20+", color: "#2c6fbb", values: S.clades20 },
+      { label: "continents", color: "#8a5a00", values: S.continents },
+      { label: "divergence", color: "#7b2d8b", values: S.divergence.map((v) => v / 10) },
     ]);
     const names = ["movement", "perception", "plants", "hunting", "defense", "fertility"];
     const colors = ["#8e44ad", "#16a085", "#27ae60", "#c0392b", "#6d7a86", "#d35400"];

@@ -280,7 +280,11 @@ Winter is the main filter: it produces population booms and busts and migrations
 
 **Moisture** ranges from 0 to 100. Every tick it moves by `moisture_relax` toward a target level: the biome's base level `moisture_base[biome]` plus the seasonal shift `season_moisture_delta[season]`, limited to 0–100. The shift follows the times of year as smoothly as the growth multipliers do. Candidate base levels: forest 70, steppe 45, desert 15, mountains 50, swamp 90, water 100. Candidate shifts: +10 in spring, −20 in summer, 0 in autumn, +10 in winter; the dry summer brings the steppe below the wildfire threshold. The `rain` and `drought` miracles shift moisture by ±30. The multiplier `moisture_mult` grows linearly from `moisture_mult_min_pct` at zero moisture to `moisture_mult_max_pct` at full moisture; the candidates are 50% and 110%.
 
-**Rifts.** The rift lines and the phase schedule (§4) are generated from `genesis_seed` and are part of the `ruleset`. A cell changes phase at the epoch boundary given in the schedule.
+**Rifts.** The rift lines and the phase schedule (§4) are generated from `genesis_seed` together with the map and are published before the season starts; the schedule is part of the state (§15). A cell changes phase at the epoch boundary given in the schedule. The generator (candidate):
+- The land is divided into `plates_min`–`plates_max` plates (candidate: 3–4), the future continents. Every cell belongs to the nearest plate center; the centers are spread evenly around the middle of the land, halfway to its edge, and noise bends the boundaries by up to `boundary_warp` cells.
+- A passable cell next to a cell of another plate (in the 8-neighborhood) lies on a rift. Once every rift cell is deep water, no step leads from one plate to another.
+- All rift cells become faults on day 7. They turn into shallows in waves from the ocean inward over days 14–23, and deepen into deep water in the same waves over days 24–34.
+- Each pair of plates that share a boundary on land gets one land bridge: the rift cells within `bridge_radius` (candidate: 2) of a center chosen by counter-based randomness in the middle of that boundary's land, in a biome no other bridge uses if possible. Bridges stay faults until they close one by one, in a random order, over days 35–38.
 
 | Cell phase | Food growth | Step cost | Passable |
 |---|---|---|---|
@@ -289,14 +293,14 @@ Winter is the main filter: it produces population booms and busts and migrations
 | Shallows | 0 | ×3; an organism that ends a tick in the shallows loses an extra `shallow_drain` energy | Yes |
 | Deep water | 0 | — | No; organisms can only be carried across it by a `migrate` miracle |
 
-Organisms standing in a cell when it turns into deep water are moved to the nearest free land by a deterministic rule. If there is no room, they die, and the log records the cause as "drowned".
+Organisms standing in a cell when it turns into deep water are moved to the nearest free land cell within `rescue_radius` (candidate: 8): the closest by straight-line distance, with ties broken by row and then by column, organisms taken in order of ID. If there is no room within reach, they die, and the log records the cause as "drowned".
 
 **Natural events** are drawn at the epoch boundary from the epoch seed. Probabilities are integers in parts per million per epoch, published in the rules. At most two events of each type are active at once.
 
 | Event | Where and when | Effect | Frequency (candidate) |
 |---|---|---|---|
 | Wildfire | Forest and steppe, summer, moisture < 30 | Within a radius of 2–4, food and detritus drop to zero and organisms lose 50% of their energy; then "ash": growth +50% for 72 ticks | Once every 2–3 world days |
-| Flood | Swamps and cells next to water, spring | Cells become shallows for 24 ticks | Once a day in spring |
+| Flood | Swamps and land next to water, spring | Land other than mountains within a radius of 2 becomes shallows for 24 ticks: its food is lost and its soil is soaked | Once a day in spring |
 | Great drought | Steppe and desert, summer | A 9×9 area: moisture drops by 30 at once, growth ×0.5 for 72 ticks | Once every 3 days |
 | Plague | A region where one clade is denser than a threshold | Mortality `plague_p` for that clade's organisms within radius 3; the event's probability grows with the clade's share of the world | Depends on dominance |
 
@@ -424,7 +428,7 @@ The numbers are tuned with the balance harness (§28). The goal is for the equil
 **The museum in the state.** So that the core can validate `revive` without external data, the state holds a bounded museum: the 1,024 most recently extinct named clades with their reference genomes. Older entries remain in the log and in the public museum, but they cannot be revived.
 
 **The spore bank** holds the genesis genomes. From the second season on, the genomes of clades that survived to the previous season's finale are added to it.
-- **Natural revival.** If fewer than 30 organisms are alive, then at the epoch boundary the spore bank places 5 organisms of each genesis genome into suitable cells chosen by counter-based randomness. This happens at most once every 288 epochs, and each trigger is a major event in the feed.
+- **Natural revival.** If fewer than 30 organisms are alive, then at the epoch boundary the spore bank places 5 organisms of each genesis genome into free cells of its starting biome (or of any land, if that biome has no room), chosen by counter-based randomness. Each genome founds a new clade. This happens at most once every 288 epochs, and each trigger is a major event in the feed.
 - **End of season.** The world is never restarted in secret. If the spore bank triggers 3 times within 7 world days, the season is declared ended by extinction.
 
 ## 13. Epoch and tick order
@@ -486,6 +490,7 @@ This speed matters less for the server than for the balance harness (thousands o
 - living organisms, ordered by ID;
 - living clades;
 - the bounded museum and the spore bank;
+- the rift schedule and the epochs of natural revivals;
 - active effects;
 - the epoch number, `ruleset_id`, and the `next_organism_id` and `next_clade_id` counters.
 
@@ -853,7 +858,7 @@ The harness is a program that runs thousands of seasons offline with different s
 | Share of ticks at the global limit | Under 1% |
 | Equilibrium population | 40–70% of the limit |
 | Pace of evolution | A median of at least 30 generations per world day |
-| Divergence after the breakup | By the end of the season, the mean distance between the dominant clades of different continents grows by at least 3 steps |
+| Divergence after the breakup | By the end of the season, the mean distance between the dominant clades of different continents grows by at least 3 steps compared with the start of phase III |
 | Archetype arena | In pairwise tests of the three archetypes (§11.3), each beats one opponent and loses to the other |
 | Performance | One world day computes in under 30 s on the reference core |
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestone A1 (a deterministic core and a balance harness) and part 1 of A2 (times of year and natural events) are done. The world lives through the seasons, predators survive on all tested seeds, and a live preview runs in real time. Still open: the dominant clade changes too rarely on about a third of the seeds — see the [harness findings](../harness/README.md#findings-stage-a2-part-1-times-of-year-and-natural-events). Next: A2 part 2 (rifts, floods, the museum and the spore bank), then tuning (A3).
+**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Still open: the continents barely diverge after the breakup, and diversity dips in some winters — see the [harness findings](../harness/README.md#findings-stage-a2-part-2-the-breaking-of-pangea). Next: tuning (A3), the Merkle state root, performance and the archetype arena.
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -8,7 +8,7 @@ The riskiest question is not technical: *will people come back to watch?* The st
 
 | Stage | Deliverables | Exit criteria | Status |
 |---|---|---|---|
-| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 and A2 part 1 done |
+| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 and A2 done |
 | B. Observation | Map, Muller plot, clade tree, cards, the WASM time machine, story detectors, museum, automatic names, "While you were away", subscriptions | In a usability test, 5–8 people explain the consequences of a mutation or an event without looking at server logs | Planned |
 | B′. Closed observation test | 2–3 weeks, 30–100 invited participants; the full wish mechanic with a daily allowance of work units instead of PoW | The product metrics declared before the test are reached. If viewers do not come back, we improve the world, not the sparks | Planned |
 | C. Sparks | yespower; the desktop app for Windows, Linux, macOS arm64 and Linux ARM64; the WASM spark client; the spark log with STHs and receipts; the ledger; the beacon; the watcher; load tests; signed builds | Sparks and miracle selection are verified independently; the engineering checks ([spec §29](spec/spec-v0.2.md#29-engineering-and-product-checks)) pass | Planned |
@@ -34,6 +34,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 11 | English version of the specification | Done |
 
 ## Stage A in detail
+
+**A2, part 2 — the Breaking of Pangea (done, 2026-09-25):** plates, rift lines that flood in waves from the ocean inward, land bridges that close one by one, rescue or drowning on sinking cells, spring floods, the museum and the spore bank with natural revival; the `maps` command checks the Season 1 map criteria. CI compares hashes of a compressed season across platforms.
 
 **Live preview (2026-09-25):** the harness can run a world in real time with snapshots and serve its report page behind a password: a first look at a living world before the stage B viewer.
 

@@ -1,15 +1,16 @@
 //! One epoch of the world (spec §13): the epoch boundary, then twelve ticks.
 //!
-//! The epoch boundary currently draws natural events (wildfires, great droughts, plague).
-//! Rifts, miracles and natural revival arrive later in stage A2.
+//! The epoch boundary moves the rifts along their schedule, draws natural events (floods,
+//! wildfires, great droughts, plague) and lets the spore bank revive a dying world. Miracles
+//! arrive in stage B′.
 
 use std::cmp::Reverse;
 
-use crate::climate::{self, SUMMER};
+use crate::climate::{self, SPRING, SUMMER};
 use crate::genome::{mutate, FERTILITY, HUNTING, PLANT};
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
-use crate::state::{Biome, Clade, Effect, EffectKind, Organism, World};
+use crate::state::{Biome, Clade, Effect, EffectKind, MuseumEntry, Organism, RiftPhase, World};
 
 /// Why an organism died.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,6 +19,8 @@ pub enum DeathCause {
     OldAge,
     Predation,
     Plague,
+    /// Its cell sank and there was no free land within reach.
+    Drowned,
 }
 
 /// What happened during one epoch. Not part of consensus: it is derived from the run and
@@ -29,14 +32,25 @@ pub struct EpochReport {
     pub deaths_old_age: u32,
     pub deaths_predation: u32,
     pub deaths_plague: u32,
+    pub deaths_drowned: u32,
+    /// Organisms carried off cells that sank.
+    pub rescued: u32,
     pub attacks: u32,
     pub births_blocked_space: u32,
     pub births_blocked_cap: u32,
     /// Ticks in which at least one birth was blocked by the global limit.
     pub ticks_at_cap: u32,
+    pub floods: u32,
     pub wildfires: u32,
     pub droughts: u32,
     pub plagues: u32,
+    /// Rift cells that moved to their next phase.
+    pub rift_changes: u32,
+    /// Land bridges that closed.
+    pub bridges_closed: Vec<u8>,
+    /// Whether the spore bank revived the world, and how many organisms it placed.
+    pub revival: bool,
+    pub revived: u32,
     /// `(parent_id, child_id)`, in the order the births happened.
     pub births_list: Vec<(u64, u64)>,
     pub clades_founded: Vec<u32>,
@@ -85,16 +99,116 @@ const NEIGHBORS: [(i32, i32); 8] = [
 ];
 
 // ---------------------------------------------------------------------------------------
-// The epoch boundary: natural events (spec §10).
+// The epoch boundary (spec §13).
 // ---------------------------------------------------------------------------------------
 
 fn epoch_boundary(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    // 1. Rift phase changes.
+    rift_changes(world, rules, report);
+    // 2. Natural events.
     let global_tick = world.epoch * u64::from(rules.ticks_per_epoch);
-    if climate::season(rules, global_tick) == SUMMER {
-        wildfire(world, rules, rng, report);
-        drought(world, rules, rng, report);
+    match climate::season(rules, global_tick) {
+        SPRING => flood(world, rules, rng, report),
+        SUMMER => {
+            wildfire(world, rules, rng, report);
+            drought(world, rules, rng, report);
+        }
+        _ => {}
     }
     plague(world, rules, rng, report);
+    // 3. Miracles arrive in stage B′.
+    // 4. Natural revival.
+    natural_revival(world, rules, rng, report);
+}
+
+/// Moves rift cells along their schedule (spec §10).
+fn rift_changes(world: &mut World, rules: &Ruleset, report: &mut EpochReport) {
+    let epoch = world.epoch;
+    let mut sank = false;
+    for k in 0..world.rifts.len() {
+        let rift = world.rifts[k];
+        let phase = rift.phase_at(epoch);
+        let cell = &mut world.cells[usize::from(rift.cell)];
+        if phase <= cell.rift {
+            continue;
+        }
+        cell.rift = phase;
+        report.rift_changes += 1;
+        match phase {
+            RiftPhase::Shallows if cell.biome.is_land() => {
+                cell.biome = Biome::Shallows;
+                cell.food = 0;
+            }
+            RiftPhase::Deep => {
+                cell.biome = Biome::DeepWater;
+                cell.food = 0;
+                cell.detritus = 0;
+                cell.moisture = 100;
+                sank = true;
+                if rift.bridge > 0 && !report.bridges_closed.contains(&rift.bridge) {
+                    report.bridges_closed.push(rift.bridge);
+                }
+            }
+            _ => {}
+        }
+    }
+    if sank {
+        rescue(world, rules, report);
+    }
+}
+
+/// Carries organisms off cells that sank to the nearest free land: the closest by straight
+/// distance within `rescue_radius`, ties broken by row, then by column. Organisms move in
+/// order of id. With no room within reach they drown.
+fn rescue(world: &mut World, rules: &Ruleset, report: &mut EpochReport) {
+    let mut occupancy = vec![0u8; world.cells.len()];
+    for o in &world.organisms {
+        occupancy[usize::from(o.cell)] += 1;
+    }
+    let reach = i32::from(rules.rifts.rescue_radius);
+    let mut offsets: Vec<(i32, i32)> = (-reach..=reach)
+        .flat_map(|dy| (-reach..=reach).map(move |dx| (dx, dy)))
+        .filter(|&offset| offset != (0, 0))
+        .collect();
+    offsets.sort_by_key(|&(dx, dy)| (dx * dx + dy * dy, dy, dx));
+    let mut drowned = vec![false; world.organisms.len()];
+    let mut any = false;
+    for (i, drowns) in drowned.iter_mut().enumerate() {
+        let o = world.organisms[i];
+        let from = usize::from(o.cell);
+        if rules.biomes[world.cells[from].biome as usize].passable {
+            continue;
+        }
+        occupancy[from] -= 1;
+        let (x, y) = world.coords(from);
+        let site = offsets.iter().find_map(|&(dx, dy)| {
+            let c = world.index(x + dx, y + dy)?;
+            (world.cells[c].biome.is_land() && occupancy[c] < rules.max_per_cell).then_some(c)
+        });
+        if let Some(c) = site {
+            world.organisms[i].cell = c as u16;
+            occupancy[c] += 1;
+            report.rescued += 1;
+        } else {
+            *drowns = true;
+            any = true;
+            world
+                .clades
+                .get_mut(&o.clade_id)
+                .expect("every organism has a clade")
+                .living -= 1;
+            report.deaths_drowned += 1;
+        }
+    }
+    if any {
+        let mut k = 0;
+        world.organisms.retain(|_| {
+            let keep = !drowned[k];
+            k += 1;
+            keep
+        });
+        close_extinct_clades(world, rules, report);
+    }
 }
 
 fn active(world: &World, kind: EffectKind) -> u32 {
@@ -106,6 +220,54 @@ fn mask(world: &World, effect: &Effect) -> Vec<bool> {
     (0..world.cells.len())
         .map(|i| effect.covers(world, i))
         .collect()
+}
+
+fn next_to_water(world: &World, cell: usize) -> bool {
+    let (x, y) = world.coords(cell);
+    NEIGHBORS.iter().any(|&(dx, dy)| {
+        world
+            .index(x + dx, y + dy)
+            .is_some_and(|c| !world.cells[c].biome.is_land())
+    })
+}
+
+/// A spring flood around a swamp or a cell next to water. Covered land loses its food and is
+/// soaked; while the flood lasts it acts as shallows.
+fn flood(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let ev = &rules.events;
+    let subject = world.epoch;
+    if active(world, EffectKind::Flood) >= ev.max_active_per_kind
+        || !rng.chance_ppm(0, Purpose::FloodChance, subject, ev.flood_ppm)
+    {
+        return;
+    }
+    let sites: Vec<usize> = (0..world.cells.len())
+        .filter(|&i| {
+            let biome = world.cells[i].biome;
+            biome.floods() && (biome == Biome::Swamp || next_to_water(world, i))
+        })
+        .collect();
+    if sites.is_empty() {
+        return;
+    }
+    let center = sites[rng.below(0, Purpose::FloodSite, subject, sites.len() as u64) as usize];
+    let flood = Effect {
+        kind: EffectKind::Flood,
+        center: center as u16,
+        radius: ev.flood_radius,
+        remaining_ticks: ev.flood_ticks,
+    };
+    let covered = mask(world, &flood);
+    for (cell, &hit) in world.cells.iter_mut().zip(&covered) {
+        if hit {
+            cell.food = 0;
+            cell.moisture = 100;
+        }
+    }
+    if ev.flood_ticks > 0 {
+        world.effects.push(flood);
+    }
+    report.floods += 1;
 }
 
 fn wildfire(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
@@ -250,10 +412,103 @@ fn plague(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochRepor
         k += 1;
         keep
     });
-    close_extinct_clades(world, report);
+    close_extinct_clades(world, rules, report);
 }
 
-fn close_extinct_clades(world: &mut World, report: &mut EpochReport) {
+/// The spore bank (spec §12). When fewer than `revival.below` organisms are alive, it places
+/// `per_genome` organisms of each of its genomes in free cells of that genome's biome, or of
+/// any land if the biome has no room, at most once per `cooldown_epochs`. Each genome founds a
+/// new clade. `season_end_count` revivals within `season_end_days` end the season.
+fn natural_revival(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let rv = &rules.revival;
+    let epoch = world.epoch;
+    if world.ended
+        || world.spore_bank.is_empty()
+        || rv.per_genome == 0
+        || world.organisms.len() as u64 >= u64::from(rv.below)
+        || world
+            .revivals
+            .last()
+            .is_some_and(|&last| epoch < last + u64::from(rv.cooldown_epochs))
+    {
+        return;
+    }
+    let mut occupancy = vec![0u8; world.cells.len()];
+    for o in &world.organisms {
+        occupancy[usize::from(o.cell)] += 1;
+    }
+    for k in 0..world.spore_bank.len() {
+        let spore = world.spore_bank[k];
+        let free = |c: usize, biome_matches: bool| {
+            let biome = world.cells[c].biome;
+            occupancy[c] < rules.max_per_cell
+                && biome.is_land()
+                && (!biome_matches || biome == spore.biome)
+        };
+        let mut sites: Vec<usize> = (0..world.cells.len()).filter(|&c| free(c, true)).collect();
+        if sites.is_empty() {
+            sites = (0..world.cells.len()).filter(|&c| free(c, false)).collect();
+        }
+        let clade_id = world.next_clade_id;
+        let mut placed = 0u32;
+        for _ in 0..rv.per_genome {
+            if sites.is_empty() || world.organisms.len() >= rules.max_organisms as usize {
+                break;
+            }
+            let id = world.next_organism_id;
+            let pick = rng.below(0, Purpose::RevivalSite, id, sites.len() as u64) as usize;
+            let cell = sites[pick];
+            occupancy[cell] += 1;
+            if occupancy[cell] >= rules.max_per_cell {
+                sites.remove(pick);
+            }
+            world.next_organism_id = id.checked_add(1).expect("organism id overflow");
+            world.organisms.push(Organism {
+                id,
+                parent_id: 0,
+                lineage_id: k as u32 + 1,
+                clade_id,
+                cell: cell as u16,
+                age: 0,
+                energy: rules.genesis_energy,
+                genome: spore.genome,
+            });
+            placed += 1;
+        }
+        if placed > 0 {
+            world.next_clade_id = clade_id.checked_add(1).expect("clade id overflow");
+            world.clades.insert(
+                clade_id,
+                Clade {
+                    id: clade_id,
+                    parent_id: 0,
+                    reference: spore.genome,
+                    founded_epoch: epoch,
+                    living: placed,
+                    peak_living: placed,
+                },
+            );
+            report.clades_founded.push(clade_id);
+        }
+        report.revived += placed;
+    }
+    world.revivals.push(epoch);
+    report.revival = true;
+    let window = u64::from(rv.season_end_days) * u64::from(rules.epochs_per_day);
+    let recent = world
+        .revivals
+        .iter()
+        .filter(|&&e| e + window > epoch)
+        .count();
+    if recent as u64 >= u64::from(rv.season_end_count) {
+        world.ended = true;
+    }
+}
+
+/// Removes clades whose last member died. A named clade, one that once had
+/// `clade_name_threshold` members alive at the same time, goes to the museum; when the museum
+/// is full, the oldest entry leaves it (spec §12).
+fn close_extinct_clades(world: &mut World, rules: &Ruleset, report: &mut EpochReport) {
     let extinct: Vec<u32> = world
         .clades
         .values()
@@ -261,9 +516,23 @@ fn close_extinct_clades(world: &mut World, report: &mut EpochReport) {
         .map(|c| c.id)
         .collect();
     for id in extinct {
-        if let Some(clade) = world.clades.remove(&id) {
-            report.clades_extinct.push(clade);
+        let Some(clade) = world.clades.remove(&id) else {
+            continue;
+        };
+        if clade.peak_living >= rules.clade_name_threshold && rules.museum_capacity > 0 {
+            if world.museum.len() >= rules.museum_capacity as usize {
+                world.museum.remove(0);
+            }
+            world.museum.push(MuseumEntry {
+                clade_id: clade.id,
+                parent_id: clade.parent_id,
+                reference: clade.reference,
+                founded_epoch: clade.founded_epoch,
+                extinct_epoch: world.epoch,
+                peak_living: clade.peak_living,
+            });
         }
+        report.clades_extinct.push(clade);
     }
 }
 
@@ -290,6 +559,10 @@ struct Scratch {
     alive_count: usize,
     /// Food growth multiplier from active effects, per cell, in percent.
     effect_pct: Vec<u64>,
+    /// The biome each cell acts as this tick: flooded land acts as shallows.
+    biome: Vec<Biome>,
+    /// The energy cost of stepping into each cell this tick.
+    move_cost: Vec<i32>,
 }
 
 impl Scratch {
@@ -352,7 +625,7 @@ fn run_tick(
                 s.hunter[c] = (power, o.clade_id);
             }
         }
-        let defense = o.genome.defense(rules) + cover(rules, world.cells[c].biome);
+        let defense = o.genome.defense(rules) + cover(rules, s.biome[c]);
         if defense < s.prey[c].0 {
             s.prey[c] = (defense, o.clade_id);
         }
@@ -379,7 +652,7 @@ fn run_tick(
             continue;
         }
         let o = world.organisms[i];
-        let biome = world.cells[usize::from(o.cell)].biome;
+        let biome = s.biome[usize::from(o.cell)];
         let mut cost = o.genome.upkeep(rules);
         if let Some(preferred) = Biome::from_habitat(o.genome.habitat) {
             let delta = cost * rules.habitat_modifier_pct / 100;
@@ -422,11 +695,12 @@ fn run_tick(
         k += 1;
         keep
     });
-    close_extinct_clades(world, report);
+    close_extinct_clades(world, rules, report);
 }
 
-/// Step 1 of a tick: moisture, decomposition and food growth under the time of year and the
-/// active effects; then the effects count down (spec §10).
+/// Step 1 of a tick: moisture, decomposition and food growth under the time of year, the
+/// active effects and rift faults; then the effects count down (spec §10). It also notes how
+/// each cell acts this tick: flooded land acts as shallows, and faults cost more to enter.
 fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
     let global_tick = world.epoch * u64::from(rules.ticks_per_epoch) + u64::from(tick);
     let growth = Biome::ALL.map(|b| climate::growth_pct(rules, b, global_tick));
@@ -434,28 +708,49 @@ fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
 
     s.effect_pct.clear();
     s.effect_pct.resize(world.cells.len(), 100);
+    s.biome.clear();
+    s.biome.extend(world.cells.iter().map(|c| c.biome));
     for effect in &world.effects {
-        let pct = u64::from(match effect.kind {
-            EffectKind::Ash => rules.events.ash_growth_pct,
-            EffectKind::Drought => rules.events.drought_growth_pct,
-        });
         let (cx, cy) = world.coords(usize::from(effect.center));
         let r = i32::from(effect.radius);
         for y in cy - r..=cy + r {
             for x in cx - r..=cx + r {
-                if let Some(c) = world.index(x, y) {
-                    if effect.covers(world, c) {
-                        s.effect_pct[c] = s.effect_pct[c] * pct / 100;
+                let Some(c) = world.index(x, y) else {
+                    continue;
+                };
+                if !effect.covers(world, c) {
+                    continue;
+                }
+                match effect.kind {
+                    EffectKind::Ash => {
+                        s.effect_pct[c] =
+                            s.effect_pct[c] * u64::from(rules.events.ash_growth_pct) / 100;
                     }
+                    EffectKind::Drought => {
+                        s.effect_pct[c] =
+                            s.effect_pct[c] * u64::from(rules.events.drought_growth_pct) / 100;
+                    }
+                    EffectKind::Flood => s.biome[c] = Biome::Shallows,
                 }
             }
         }
     }
 
     let relax = rules.climate.moisture_relax;
+    let fault_growth = u64::from(rules.rifts.fault_growth_pct);
+    s.move_cost.clear();
     for (i, cell) in world.cells.iter_mut().enumerate() {
+        let acting = s.biome[i];
+        let faulted = cell.rift == RiftPhase::Fault && cell.biome.is_land() && acting == cell.biome;
+        let step = rules.biomes[acting as usize].move_cost;
+        s.move_cost.push(if faulted {
+            step * rules.rifts.fault_move_pct / 100
+        } else {
+            step
+        });
         let p = rules.biomes[cell.biome as usize];
-        if !p.passable {
+        if !p.passable || acting != cell.biome {
+            // Deep water, or flooded land: nothing grows and the soil stays soaked.
             continue;
         }
         let t = target[cell.biome as usize];
@@ -467,11 +762,14 @@ fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
         let decomposed =
             (u64::from(cell.detritus) * u64::from(rules.decomposition_pct) / 100) as u32;
         cell.detritus -= decomposed;
-        let regen = u64::from(p.base_regen)
+        let mut regen = u64::from(p.base_regen)
             * growth[cell.biome as usize]
             * climate::moisture_pct(rules, cell.moisture)
             * s.effect_pct[i]
             / 1_000_000;
+        if faulted {
+            regen = regen * fault_growth / 100;
+        }
         let regen = u32::try_from(regen).unwrap_or(u32::MAX);
         cell.food = cell
             .food
@@ -518,7 +816,7 @@ fn act(
                 me.genome.attack(rules) + rng.below(tick, Purpose::AttackRoll, me.id, span) as i32;
             let prey = world.organisms[j];
             let defense = prey.genome.defense(rules)
-                + cover(rules, world.cells[usize::from(prey.cell)].biome)
+                + cover(rules, s.biome[usize::from(prey.cell)])
                 + rng.below(tick, Purpose::DefenseRoll, me.id, span) as i32;
             if attack > defense {
                 kill(world, rules, s, report, j, DeathCause::Predation);
@@ -569,17 +867,18 @@ fn choose_target(
             let Some(c) = world.index(x0 + dx, y0 + dy) else {
                 continue;
             };
-            let cell = world.cells[c];
-            let p = rules.biomes[cell.biome as usize];
+            let acting = s.biome[c];
+            let p = rules.biomes[acting as usize];
             if !p.passable || (c != here && s.occ[c] >= rules.max_per_cell) {
                 continue;
             }
+            let food = world.cells[c].food;
             let others = i64::from(s.occ[c]) - i64::from(c == here);
             let distance = i64::from(dx.abs().max(dy.abs()));
 
             let mut score = 0i64;
             if bite > 0 {
-                score += i64::from(cell.food.min(bite))
+                score += i64::from(food.min(bite))
                     * i64::from(rules.plant_efficiency)
                     * i64::from(w.food_pct)
                     / 100;
@@ -592,11 +891,11 @@ fn choose_target(
             }
             let threat = strongest_threat(world, s, c, me.clade_id, my_defense + p.cover);
             score -= threat * i64::from(w.danger_per_point) * caution / 4;
-            if preferred == Some(cell.biome) {
+            if preferred == Some(acting) {
                 score += i64::from(w.habitat_bonus);
             }
             score -= others * i64::from(w.crowd_per_neighbor);
-            score -= distance * i64::from(p.move_cost);
+            score -= distance * i64::from(s.move_cost[c]);
             score += distance * i64::from(g.dispersal) * i64::from(w.dispersal_per_step);
 
             if score > best_score {
@@ -673,8 +972,7 @@ fn walk(
             let Some(n) = world.index(nx, ny) else {
                 continue;
             };
-            if rules.biomes[world.cells[n].biome as usize].passable && s.occ[n] < rules.max_per_cell
-            {
+            if rules.biomes[s.biome[n] as usize].passable && s.occ[n] < rules.max_per_cell {
                 next = Some(n);
                 break;
             }
@@ -684,7 +982,7 @@ fn walk(
         };
         s.remove(pos, i as u32);
         s.add(n, i as u32);
-        s.spent[i] += rules.biomes[world.cells[n].biome as usize].move_cost;
+        s.spent[i] += s.move_cost[n];
         pos = n;
     }
     pos
@@ -716,8 +1014,7 @@ fn choose_prey(
                 if other.genome.distance(&me.genome) <= rules.kin_distance {
                     continue;
                 }
-                let margin =
-                    my_attack - (other.genome.defense(rules) + cover(rules, world.cells[n].biome));
+                let margin = my_attack - (other.genome.defense(rules) + cover(rules, s.biome[n]));
                 if margin < 0 {
                     continue;
                 }
@@ -758,6 +1055,7 @@ fn kill(
     let detritus = match cause {
         DeathCause::Predation => rules.remains_detritus,
         DeathCause::Starvation | DeathCause::OldAge | DeathCause::Plague => rules.body_detritus,
+        DeathCause::Drowned => 0,
     };
     world.cells[cell].detritus = world.cells[cell].detritus.saturating_add(detritus);
     match cause {
@@ -765,6 +1063,7 @@ fn kill(
         DeathCause::OldAge => report.deaths_old_age += 1,
         DeathCause::Predation => report.deaths_predation += 1,
         DeathCause::Plague => report.deaths_plague += 1,
+        DeathCause::Drowned => report.deaths_drowned += 1,
     }
 }
 
@@ -804,9 +1103,7 @@ fn births(
             let mut n = 0;
             for (dx, dy) in NEIGHBORS {
                 if let Some(c) = world.index(x + dx, y + dy) {
-                    if rules.biomes[world.cells[c].biome as usize].passable
-                        && s.occ[c] < rules.max_per_cell
-                    {
+                    if rules.biomes[s.biome[c] as usize].passable && s.occ[c] < rules.max_per_cell {
                         options[n] = c;
                         n += 1;
                     }

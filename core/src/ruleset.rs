@@ -84,7 +84,7 @@ pub struct Climate {
     pub season_mult: [[u32; 4]; Biome::COUNT],
     /// Base moisture of each biome, 0–100.
     pub moisture_base: [u8; Biome::COUNT],
-    /// Seasonal shift of the base moisture. Stage A2 addition, not yet in the specification.
+    /// Seasonal shift of the base moisture (spec §10).
     pub season_moisture_delta: [i32; 4],
     /// How far moisture moves toward its base per tick.
     pub moisture_relax: u8,
@@ -114,6 +114,11 @@ pub struct Events {
     pub drought_growth_pct: u32,
     pub drought_moisture_drop: u8,
     pub drought_ticks: u32,
+    /// Flood: swamps and land next to water, in spring. Land other than mountains within
+    /// `flood_radius` acts as shallows for `flood_ticks`; its food is lost and its soil soaked.
+    pub flood_ppm: u32,
+    pub flood_radius: u8,
+    pub flood_ticks: u32,
     /// Plague ("kill the winner"): strikes the most numerous clade once its share of the
     /// population exceeds `plague_min_share_permille`. The chance grows linearly with the
     /// share, up to `plague_max_ppm` at 100%.
@@ -125,6 +130,49 @@ pub struct Events {
     pub plague_mortality_ppm: u32,
 }
 
+/// The Breaking of Pangea (spec §4, §10). Plate boundaries turn into rifts on a schedule and
+/// split the continent. Days are world days from genesis.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rifts {
+    /// The number of plates, the future continents, is drawn from this range at genesis.
+    /// Zero means no rifts.
+    pub plates_min: u8,
+    pub plates_max: u8,
+    /// How far plate boundaries wander from straight lines, in cells.
+    pub boundary_warp: u8,
+    /// Rift cells become faults on this day.
+    pub fault_day: u32,
+    /// Rift cells turn into shallows in waves from the ocean inward, from this day until
+    /// `deep_from_day`.
+    pub shallows_from_day: u32,
+    /// The shallows deepen into deep water in the same waves, until `bridges_from_day`.
+    pub deep_from_day: u32,
+    /// Land bridges close one by one between these days.
+    pub bridges_from_day: u32,
+    pub bridges_to_day: u32,
+    /// A fault's food growth and step cost, in percent of its biome's.
+    pub fault_growth_pct: u32,
+    pub fault_move_pct: i32,
+    /// A land bridge is every rift cell within this Chebyshev distance of its center.
+    pub bridge_radius: u8,
+    /// How far an organism can be carried from a sinking cell to free land; beyond it drowns.
+    pub rescue_radius: u8,
+}
+
+/// Natural revival from the spore bank and the end of a season by extinction (spec §12).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Revival {
+    /// The spore bank revives the world when fewer organisms than this are alive.
+    pub below: u32,
+    /// Organisms placed per genome in the spore bank.
+    pub per_genome: u32,
+    /// At most one revival per this many epochs.
+    pub cooldown_epochs: u32,
+    /// This many revivals within `season_end_days` end the season by extinction.
+    pub season_end_count: u32,
+    pub season_end_days: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ruleset {
     pub version: u32,
@@ -132,6 +180,8 @@ pub struct Ruleset {
     pub height: u16,
     pub ticks_per_epoch: u32,
     pub epochs_per_day: u32,
+    /// The length of a season, in world days (spec §4).
+    pub season_days: u32,
     pub max_organisms: u32,
     pub max_per_cell: u8,
     /// Founder lineages: a genome and the biome it starts in (spec §9).
@@ -144,6 +194,7 @@ pub struct Ruleset {
     pub biomes: [BiomeParams; Biome::COUNT],
     pub climate: Climate,
     pub events: Events,
+    pub rifts: Rifts,
     /// Energy values are in hundredths of a unit.
     pub energy_max: i32,
     pub base_metabolism: i32,
@@ -182,6 +233,9 @@ pub struct Ruleset {
     pub hue_mutation_ppm: u32,
     pub clade_split_distance: u32,
     pub clade_name_threshold: u32,
+    /// Extinct named clades kept in the state (spec §12).
+    pub museum_capacity: u32,
+    pub revival: Revival,
     pub weights: MoveWeights,
 }
 
@@ -200,6 +254,7 @@ impl Default for Ruleset {
             height: 64,
             ticks_per_epoch: 12,
             epochs_per_day: 288,
+            season_days: 42,
             max_organisms: 6000,
             max_per_cell: 4,
             founders: default_founders(),
@@ -246,11 +301,29 @@ impl Default for Ruleset {
                 drought_growth_pct: 50,
                 drought_moisture_drop: 30,
                 drought_ticks: 72,
+                // About once a day in spring.
+                flood_ppm: 3472,
+                flood_radius: 2,
+                flood_ticks: 24,
                 plague_min_share_permille: 300,
                 plague_max_ppm: 150_000,
                 plague_radius: 3,
                 plague_min_members: 8,
                 plague_mortality_ppm: 500_000,
+            },
+            rifts: Rifts {
+                plates_min: 3,
+                plates_max: 4,
+                boundary_warp: 5,
+                fault_day: 7,
+                shallows_from_day: 14,
+                deep_from_day: 24,
+                bridges_from_day: 35,
+                bridges_to_day: 39,
+                fault_growth_pct: 50,
+                fault_move_pct: 200,
+                bridge_radius: 2,
+                rescue_radius: 8,
             },
             energy_max: 20_000,
             base_metabolism: 100,
@@ -282,6 +355,14 @@ impl Default for Ruleset {
             hue_mutation_ppm: 500_000,
             clade_split_distance: 3,
             clade_name_threshold: 20,
+            museum_capacity: 1024,
+            revival: Revival {
+                below: 30,
+                per_genome: 5,
+                cooldown_epochs: 288,
+                season_end_count: 3,
+                season_end_days: 7,
+            },
             weights: MoveWeights {
                 food_pct: 100,
                 hunt_per_point: 100,
@@ -361,8 +442,27 @@ impl Ruleset {
         if e.wildfire_radius_min > e.wildfire_radius_max
             || e.plague_min_share_permille >= 1000
             || e.plague_mortality_ppm > 1_000_000
+            || e.flood_radius > 16
         {
             return Err("event parameters are out of range".into());
+        }
+        let r = &self.rifts;
+        if r.plates_max > 8 || r.plates_min > r.plates_max || (r.plates_max > 0 && r.plates_min < 2)
+        {
+            return Err("rifts need between 2 and 8 plates, or none".into());
+        }
+        if !(r.fault_day <= r.shallows_from_day
+            && r.shallows_from_day <= r.deep_from_day
+            && r.deep_from_day <= r.bridges_from_day
+            && r.bridges_from_day <= r.bridges_to_day)
+        {
+            return Err("rift phases must follow in order".into());
+        }
+        if r.fault_growth_pct > 1000 || !(0..=1000).contains(&r.fault_move_pct) {
+            return Err("fault multipliers must be between 0 and 1000%".into());
+        }
+        if self.revival.season_end_count == 0 {
+            return Err("season_end_count must be positive".into());
         }
         for fertility in 0..=i32::from(TRAIT_MAX) {
             let threshold = self.repro_base - fertility * self.repro_per_fertility;

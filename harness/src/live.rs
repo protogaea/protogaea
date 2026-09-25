@@ -12,7 +12,7 @@ use protogaea_core::{Ruleset, World};
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::Tracker;
-use crate::report::{LiveInfo, Recorder, RunInfo};
+use crate::report::{LiveInfo, Recorder};
 use crate::runner::Run;
 
 const SNAPSHOT: &str = "snapshot.json";
@@ -69,7 +69,7 @@ pub fn run_live(opts: LiveOptions) -> Result<(), String> {
         None => {
             println!("starting seed {} from genesis", opts.seed);
             let run = Run::new(opts.seed, opts.rules.clone());
-            let tracker = Tracker::new(&run.world);
+            let tracker = Tracker::new(&run.world, &run.rules, &run.plan);
             let per_day = u64::from(run.rules.epochs_per_day);
             let mut recorder = Recorder::rolling(FRAME_EVERY, SAMPLE_EVERY, WINDOW_DAYS * per_day);
             recorder.observe(&run.world);
@@ -113,7 +113,7 @@ pub fn run_live(opts: LiveOptions) -> Result<(), String> {
         } else {
             next = now;
         }
-        if !run.world.organisms.is_empty() {
+        if !run.world.finished(&run.rules) {
             let report = run.step();
             tracker.record(&run.world, &report, &run.rules);
             tracker.trim(window);
@@ -121,7 +121,7 @@ pub fn run_live(opts: LiveOptions) -> Result<(), String> {
             let html = render(&run, &tracker, &recorder, opts.epoch_seconds)?;
             *page.lock().expect("the page lock is never poisoned") = html;
             let epoch = run.world.epoch;
-            if epoch % opts.snapshot_every.max(1) == 0 || run.world.organisms.is_empty() {
+            if epoch % opts.snapshot_every.max(1) == 0 || run.world.finished(&run.rules) {
                 save(&opts.data, &run, &tracker, &recorder)?;
                 println!(
                     "epoch {epoch}: population {}, snapshot saved",
@@ -140,16 +140,11 @@ fn render(
 ) -> Result<String, String> {
     let summary = tracker.summary(run.seed, &run.rules);
     let checks = summary.checks();
-    let info = RunInfo {
-        seed: run.seed,
-        rules: &run.rules,
-        world: &run.world,
-    };
     let live = LiveInfo {
         epoch: run.world.epoch,
         epoch_seconds,
     };
-    recorder.render_html(info, &tracker.series, &summary, &checks, Some(live))
+    recorder.render_html(run, &tracker.series, &summary, &checks, Some(live))
 }
 
 fn load(dir: &Path) -> Result<Option<Snapshot>, String> {

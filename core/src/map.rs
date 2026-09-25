@@ -1,29 +1,47 @@
 //! Terrain generation and genesis.
 //!
-//! A single continent surrounded by water, with coastal shallows. Rifts and the Season 1
-//! schedule arrive later in stage A2.
+//! A single continent surrounded by water, with coastal shallows, and the rift plan that will
+//! break it apart (spec §4).
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use crate::climate;
+use crate::rifts::{self, Plan};
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
-use crate::state::{Biome, Cell, Clade, Organism, World};
+use crate::state::{Biome, Cell, Clade, Organism, RiftPhase, World};
+
+fn genesis_rng(genesis_seed: &[u8; 32]) -> Rng {
+    Rng::new(&derive(b"PROTOGAEA/GENESIS/V0", &[genesis_seed]))
+}
+
+/// The terrain at genesis and the rift plan, both drawn from the genesis seed. The plan is
+/// published before a season starts (spec §4); its schedule becomes part of the state.
+pub fn world_plan(rules: &Ruleset, genesis_seed: &[u8; 32]) -> (Vec<Biome>, Plan) {
+    let rng = genesis_rng(genesis_seed);
+    let biomes = generate_terrain(rules, &rng);
+    let plan = rifts::plan(rules, &rng, &biomes);
+    (biomes, plan)
+}
 
 /// Creates the world at epoch 0.
 pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> World {
-    let rng = Rng::new(&derive(b"PROTOGAEA/GENESIS/V0", &[genesis_seed]));
-    let biomes = generate_terrain(rules, &rng);
-    let cells = biomes
+    let rng = genesis_rng(genesis_seed);
+    let (biomes, plan) = world_plan(rules, genesis_seed);
+    let mut cells: Vec<Cell> = biomes
         .iter()
         .map(|&biome| Cell {
             biome,
             food: rules.biomes[biome as usize].food_max,
             detritus: 0,
             moisture: climate::target_moisture(rules, biome, 0),
+            rift: RiftPhase::None,
         })
         .collect();
+    for r in &plan.rifts {
+        cells[usize::from(r.cell)].rift = RiftPhase::Crack;
+    }
     let mut world = World {
         world_id,
         ruleset_id: rules.ruleset_id(),
@@ -34,6 +52,11 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
         organisms: Vec::new(),
         clades: BTreeMap::new(),
         effects: Vec::new(),
+        rifts: plan.rifts,
+        museum: Vec::new(),
+        spore_bank: rules.founders.clone(),
+        revivals: Vec::new(),
+        ended: false,
         next_organism_id: 1,
         next_clade_id: 1,
     };
@@ -194,7 +217,12 @@ pub fn generate_terrain(rules: &Ruleset, rng: &Rng) -> Vec<Biome> {
 
 /// Integer value noise: for each octave `(cell_size, amplitude)`, random lattice values in
 /// `0..1024` interpolated bilinearly.
-fn value_noise(rules: &Ruleset, rng: &Rng, purpose: Purpose, octaves: &[(i64, i64)]) -> Vec<i64> {
+pub(crate) fn value_noise(
+    rules: &Ruleset,
+    rng: &Rng,
+    purpose: Purpose,
+    octaves: &[(i64, i64)],
+) -> Vec<i64> {
     let (w, h) = (i64::from(rules.width), i64::from(rules.height));
     let mut out = vec![0i64; (w * h) as usize];
     for (octave, &(size, amplitude)) in octaves.iter().enumerate() {

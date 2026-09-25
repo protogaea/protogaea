@@ -82,7 +82,7 @@ The code covers stage A1 and part of A2: the deterministic core with times of ye
 cargo test --workspace
 cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # writes runs/seed-1/report.html
 cargo run --release -p protogaea-harness -- sweep --seeds 1..17 --days 2
-cargo run --release -p protogaea-harness -- live --seed 4                # a world in real time on http://127.0.0.1:8080
+cargo run --release -p protogaea-harness -- live --seed 5                # a world in real time on http://127.0.0.1:8080
 ```
 
 - [core/](core/README.md) — the deterministic simulation core, with its status against the specification.
