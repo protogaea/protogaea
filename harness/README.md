@@ -22,6 +22,31 @@ cargo run --release -p protogaea-harness -- ruleset > my-rules.json
 
 The beacon is replaced by a value derived from the run seed, so every run is reproducible.
 
+## Live mode
+
+A world running in real time, as a preview before the stage B viewer:
+
+```sh
+PROTOGAEA_PASSWORD=choose-one cargo run --release -p protogaea-harness -- live --seed 4
+```
+
+- One epoch every `--epoch-seconds` (300 by default: world time runs at the pace of real time). After a pause the world does not catch up.
+- The page at `http://127.0.0.1:8080` (`--listen`) is the run report for the last seven world days, opened at the latest map frame. Reload it to update.
+- `PROTOGAEA_PASSWORD`, and optionally `PROTOGAEA_USER` (by default `protogaea`), put the page behind HTTP Basic authentication. Without a password anyone who can reach the port sees the page. `/health` is always open.
+- A snapshot goes to `--data` (`runs/live`) every `--snapshot-every` epochs (12). On start the world resumes from it, with the saved seed and ruleset, and continues exactly as if it had never stopped.
+- The page is served over plain HTTP, so the password crosses the network unencrypted: it is a lock for tests, not protection. Anything more needs TLS in front.
+
+[deploy/protogaea-live.service](../deploy/protogaea-live.service) runs live mode as a systemd service with resource limits and sandboxing.
+
+## Static Linux build
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl -p protogaea-harness
+```
+
+The result is a single static binary. [.cargo/config.toml](../.cargo/config.toml) links it with `rust-lld`, and BLAKE3 uses its portable Rust implementation, so no C toolchain is needed, even on Windows.
+
 ## Checks
 
 These are the checks of spec §28 measured so far. The thresholds are candidates.

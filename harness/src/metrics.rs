@@ -4,12 +4,12 @@ use std::collections::{HashMap, HashSet};
 
 use protogaea_core::genome::{DEFENSE, HUNTING, TRAIT_COUNT};
 use protogaea_core::{EpochReport, Ruleset, World};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A share of the population above which a clade counts as dominant (spec §28).
 const DOMINANCE_PERMILLE: u32 = 600;
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EpochStats {
     pub epoch: u64,
     pub population: u32,
@@ -92,6 +92,7 @@ pub fn epoch_stats(world: &World, report: &EpochReport) -> EpochStats {
 }
 
 /// Follows a run epoch by epoch.
+#[derive(Serialize, Deserialize)]
 pub struct Tracker {
     generation: HashMap<u64, u32>,
     pub series: Vec<EpochStats>,
@@ -121,6 +122,14 @@ impl Tracker {
         self.series.push(epoch_stats(world, report));
     }
 
+    /// Keeps only the most recent `max` epochs of the series (live mode).
+    pub fn trim(&mut self, max: usize) {
+        if self.series.len() > max {
+            let excess = self.series.len() - max;
+            self.series.drain(..excess);
+        }
+    }
+
     pub fn mean_generation(&self) -> f64 {
         if self.generation.is_empty() {
             return 0.0;
@@ -133,6 +142,8 @@ impl Tracker {
         let epochs = self.series.len() as u64;
         let days = epochs as f64 / per_day as f64;
         let last = self.series.last();
+        // Generations are counted from genesis, even when the series keeps only recent epochs.
+        let days_since_genesis = last.map_or(0.0, |s| s.epoch as f64 / per_day as f64);
 
         let last_day = &self.series[self.series.len().saturating_sub(per_day as usize)..];
         let mean_last_day = if last_day.is_empty() {
@@ -195,8 +206,8 @@ impl Tracker {
             } else {
                 0.0
             },
-            generations_per_day: if days > 0.0 {
-                self.mean_generation() / days
+            generations_per_day: if days_since_genesis > 0.0 {
+                self.mean_generation() / days_since_genesis
             } else {
                 0.0
             },

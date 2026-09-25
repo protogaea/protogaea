@@ -6,7 +6,7 @@ use std::path::Path;
 
 use protogaea_core::genome::HUNTING;
 use protogaea_core::{Ruleset, World};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::metrics::{Check, EpochStats, Summary};
 
@@ -15,7 +15,7 @@ const MAX_SAMPLES: u64 = 400;
 const MAX_SERIES_POINTS: usize = 1500;
 const MULLER_CLADES: usize = 14;
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct Frame {
     epoch: u64,
     /// Each organism packed as `cell × 1000 + hue × 2 + hunter`.
@@ -23,12 +23,16 @@ struct Frame {
 }
 
 /// Collects map frames and clade counts while a run progresses.
+#[derive(Serialize, Deserialize)]
 pub struct Recorder {
     frame_every: u64,
     sample_every: u64,
     frames: Vec<Frame>,
     samples: Vec<(u64, BTreeMap<u32, u32>)>,
     hues: BTreeMap<u32, u16>,
+    /// In live mode, only the most recent epochs are kept.
+    #[serde(default)]
+    window: Option<u64>,
 }
 
 impl Recorder {
@@ -39,6 +43,19 @@ impl Recorder {
             frames: Vec::new(),
             samples: Vec::new(),
             hues: BTreeMap::new(),
+            window: None,
+        }
+    }
+
+    /// A recorder for a live world: fixed intervals, and only the last `window` epochs.
+    pub fn rolling(frame_every: u64, sample_every: u64, window: u64) -> Self {
+        Self {
+            frame_every: frame_every.max(1),
+            sample_every: sample_every.max(1),
+            frames: Vec::new(),
+            samples: Vec::new(),
+            hues: BTreeMap::new(),
+            window: Some(window),
         }
     }
 
@@ -64,6 +81,14 @@ impl Recorder {
             }
             self.samples.push((epoch, counts));
         }
+        if let Some(window) = self.window {
+            let oldest = epoch.saturating_sub(window);
+            self.frames.retain(|f| f.epoch >= oldest);
+            self.samples.retain(|(e, _)| *e >= oldest);
+            let samples = &self.samples;
+            self.hues
+                .retain(|id, _| samples.iter().any(|(_, counts)| counts.contains_key(id)));
+        }
     }
 
     pub fn write_html(
@@ -74,6 +99,20 @@ impl Recorder {
         summary: &Summary,
         checks: &[Check],
     ) -> std::io::Result<()> {
+        let html = self
+            .render_html(run, series, summary, checks, None)
+            .map_err(std::io::Error::other)?;
+        std::fs::write(path, html)
+    }
+
+    pub fn render_html(
+        &self,
+        run: RunInfo<'_>,
+        series: &[EpochStats],
+        summary: &Summary,
+        checks: &[Check],
+        live: Option<LiveInfo>,
+    ) -> Result<String, String> {
         let data = ReportData {
             seed: run.seed,
             days: summary.days,
@@ -87,9 +126,10 @@ impl Recorder {
             muller: self.muller(),
             summary,
             checks,
+            live,
         };
-        let json = serde_json::to_string(&data).map_err(std::io::Error::other)?;
-        std::fs::write(path, TEMPLATE.replace("/*DATA*/", &json))
+        let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+        Ok(TEMPLATE.replace("/*DATA*/", &json))
     }
 
     /// The most present clades over the run, plus "other".
@@ -155,6 +195,15 @@ struct ReportData<'a> {
     muller: MullerData,
     summary: &'a Summary,
     checks: &'a [Check],
+    live: Option<LiveInfo>,
+}
+
+/// Shown on the page of a live world.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveInfo {
+    pub epoch: u64,
+    pub epoch_seconds: u64,
 }
 
 #[derive(Serialize)]
@@ -215,12 +264,14 @@ const TEMPLATE: &str = r##"<!doctype html>
   .muted { color: #666; }
   table { border-collapse: collapse; margin-top: 8px; }
   td { padding: 2px 10px 2px 0; }
+  .live { color: #1a5fb4; font-weight: 600; margin: 4px 0; }
   .pass { color: #1e7d32; } .fail { color: #b3261e; } .na { color: #888; }
   button { font: inherit; padding: 2px 12px; }
 </style>
 </head>
 <body>
 <h1>Protogaea — seed <span id="seed"></span></h1>
+<div id="live" class="live"></div>
 <div class="muted" id="headline"></div>
 <table id="checks"></table>
 <div class="row">
@@ -248,8 +299,16 @@ const TEMPLATE: &str = r##"<!doctype html>
 
   document.getElementById("seed").textContent = D.seed;
   const s = D.summary;
+  if (D.live) {
+    const day = (D.live.epoch / D.epochsPerDay).toFixed(2);
+    const every = D.live.epochSeconds % 60 ? `${D.live.epochSeconds} s` : `${D.live.epochSeconds / 60} min`;
+    document.title = `Protogaea — live, day ${day}`;
+    document.getElementById("live").textContent =
+      `Live world · epoch ${D.live.epoch} (world day ${day}) · a new epoch every ${every} · reload the page to update`;
+  }
   document.getElementById("headline").textContent =
-    `${s.days.toFixed(2)} world days · final population ${s.final_population} · ` +
+    (D.live ? `the last ${s.days.toFixed(2)} world days · population ${s.final_population} · `
+            : `${s.days.toFixed(2)} world days · final population ${s.final_population} · `) +
     `equilibrium ${s.equilibrium_pct.toFixed(1)}% of ${D.maxOrganisms} · ` +
     `${s.generations_per_day.toFixed(1)} generations/day · ` +
     `dominant changes ${s.dominant_changes_per_3_days.toFixed(1)} per 3 days`;
@@ -426,7 +485,9 @@ const TEMPLATE: &str = r##"<!doctype html>
     }, 120);
   });
   slider.addEventListener("input", () => drawFrame(Number(slider.value)));
-  drawFrame(0);
+  const first = D.live ? D.frames.length - 1 : 0;
+  slider.value = String(first);
+  drawFrame(first);
 })();
 </script>
 </body>

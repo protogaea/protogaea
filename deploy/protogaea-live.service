@@ -1,0 +1,53 @@
+# The live preview world (stage A): `protogaea-harness live` as a systemd service.
+#
+# Install:
+#   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin protogaea
+#   install -D -m 0755 protogaea-harness /opt/protogaea/protogaea-harness
+#   install -D -m 0600 /dev/null /etc/protogaea/live.env   # then set PROTOGAEA_PASSWORD=... in it
+#   cp protogaea-live.service /etc/systemd/system/ && systemctl daemon-reload
+#   systemctl enable --now protogaea-live
+#
+# The world is saved in /var/lib/protogaea and resumes from there after a restart.
+# The limits below keep it a polite neighbor to other services on the same machine.
+
+[Unit]
+Description=Protogaea live world preview
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=protogaea
+Group=protogaea
+EnvironmentFile=/etc/protogaea/live.env
+ExecStart=/opt/protogaea/protogaea-harness live --seed 4 --data /var/lib/protogaea --listen 0.0.0.0:8080 --epoch-seconds 300
+StateDirectory=protogaea
+StateDirectoryMode=0750
+Restart=on-failure
+RestartSec=10
+
+# Resource limits.
+Nice=10
+CPUQuota=50%
+MemoryMax=512M
+TasksMax=64
+IOSchedulingClass=idle
+
+# Sandboxing.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

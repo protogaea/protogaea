@@ -1,5 +1,6 @@
 //! The balance harness (spec §28): runs worlds offline, measures them and draws reports.
 
+mod live;
 mod metrics;
 mod report;
 mod runner;
@@ -29,6 +30,12 @@ USAGE:
       State hashes at checkpoints, for cross-platform determinism checks.
   protogaea-harness ruleset
       Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
+  protogaea-harness live    [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
+                            [--snapshot-every K] [--ruleset FILE]
+      A live world in real time: one epoch every S seconds (300), its page on http://ADDR
+      (127.0.0.1:8080), a snapshot in DIR (runs/live) every K epochs (12). Resumes from the
+      snapshot if there is one. Set PROTOGAEA_PASSWORD (and PROTOGAEA_USER, by default
+      `protogaea`) to put the page behind a password.
 
 Seeds are a list (1,2,5), a half-open range (1..21) or a single number.
 ";
@@ -44,6 +51,7 @@ fn main() -> ExitCode {
         "sweep" => cmd_sweep(rest),
         "hash" => cmd_hash(rest),
         "ruleset" => cmd_ruleset(),
+        "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             Ok(())
@@ -288,6 +296,44 @@ fn cmd_ruleset() -> Result<(), String> {
     let json = serde_json::to_string_pretty(&Ruleset::default()).map_err(|e| e.to_string())?;
     println!("{json}");
     Ok(())
+}
+
+fn cmd_live(args: &[String]) -> Result<(), String> {
+    let opts = Options::parse(
+        args,
+        &[
+            "seed",
+            "data",
+            "listen",
+            "epoch-seconds",
+            "snapshot-every",
+            "ruleset",
+        ],
+    )?;
+    let epoch_seconds: u64 = opts.get("epoch-seconds", 300)?;
+    let snapshot_every: u64 = opts.get("snapshot-every", 12)?;
+    if epoch_seconds == 0 || snapshot_every == 0 {
+        return Err("--epoch-seconds and --snapshot-every must be positive".into());
+    }
+    let credentials = match std::env::var("PROTOGAEA_PASSWORD") {
+        Ok(password) if !password.is_empty() => {
+            let user = std::env::var("PROTOGAEA_USER")
+                .ok()
+                .filter(|u| !u.is_empty())
+                .unwrap_or_else(|| "protogaea".to_string());
+            Some((user, password))
+        }
+        _ => None,
+    };
+    live::run_live(live::LiveOptions {
+        seed: opts.get("seed", 1)?,
+        data: PathBuf::from(opts.value("data").unwrap_or("runs/live")),
+        listen: opts.value("listen").unwrap_or("127.0.0.1:8080").to_string(),
+        epoch_seconds,
+        snapshot_every,
+        rules: load_rules(&opts)?,
+        credentials,
+    })
 }
 
 fn passed(summary: &Summary) -> usize {

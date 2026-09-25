@@ -1,0 +1,3 @@
+# Static Linux builds from any host: `cargo build --release --target x86_64-unknown-linux-musl`.
+[target.x86_64-unknown-linux-musl]
+linker = "rust-lld"

@@ -27,6 +27,17 @@ impl Run {
         }
     }
 
+    /// Continues a world saved earlier.
+    pub fn resume(seed: u64, rules: Ruleset, world: World) -> Self {
+        let last_hash = world.state_hash();
+        Self {
+            seed,
+            rules,
+            world,
+            last_hash,
+        }
+    }
+
     /// The stage A1 stand-in for the drand beacon (spec §20): derived from the run seed.
     fn beacon(&self, epoch: u64) -> [u8; 32] {
         derive(

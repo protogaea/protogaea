@@ -35,6 +35,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 
 ## Stage A in detail
 
+**Live preview (2026-09-25):** the harness can run a world in real time with snapshots and serve its report page behind a password: a first look at a living world before the stage B viewer.
+
 **A2, part 1 — times of year and natural events (done, 2026-09-25):** a 372-epoch year with smooth transitions, moisture, wildfires, great droughts and plague; founders moved into the ruleset. Predators now survive 8 world days on 16 of 16 seeds.
 
 **A1 — "Is the world alive?" (done, 2026-09-25):** items 1, 2 (without times of year, rifts, natural events, the museum and the spore bank), 4 (in CI) and 5 (the harness with the first checks) below. Next: the predator–prey balance (A1.1), then the rest of items 2–3 and 6–7 (A2), then tuning (A3).

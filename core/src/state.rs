@@ -49,7 +49,7 @@ impl Biome {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cell {
     pub biome: Biome,
     /// Tenths of a food unit.
@@ -61,7 +61,7 @@ pub struct Cell {
 }
 
 /// A temporary effect of a natural event on an area (spec §10).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum EffectKind {
     /// After a wildfire: food grows faster.
@@ -70,7 +70,7 @@ pub enum EffectKind {
     Drought = 2,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Effect {
     pub kind: EffectKind,
     pub center: u16,
@@ -91,7 +91,7 @@ impl Effect {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Organism {
     pub id: u64,
     /// 0 for founders.
@@ -105,7 +105,7 @@ pub struct Organism {
     pub genome: Genome,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Clade {
     pub id: u32,
     /// 0 for founder clades.
@@ -117,7 +117,7 @@ pub struct Clade {
     pub peak_living: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct World {
     pub world_id: [u8; 16],
     pub ruleset_id: [u8; 32],
