@@ -19,7 +19,7 @@ CI builds the crate for `wasm32-unknown-unknown` and compares state hashes acros
 | Map (§9) | A single continent: five land biomes, coastal shallows, deep water |
 | Genome and mutations (§11.1) | Done |
 | Energy and feeding (§11.2) | Done |
-| Hunting (§11.3) | Done, plus satiation and an experimental cover mechanic (see below) |
+| Hunting (§11.3) | Done, including satiation and cover |
 | Movement choice (§11.4) | Simplified (see below) |
 | Reproduction (§11.5) | Done |
 | Death and decomposition (§11.6) | Done |
@@ -33,13 +33,11 @@ CI builds the crate for `wasm32-unknown-unknown` and compares state hashes acros
 
 To be resolved in the next version of the specification.
 
-1. **Satiation** (`hunt_hunger_pct`, default 60). An organism hunts, and scores cells for prey, only while its energy is below this share of `energy_max`.
-2. **Cover** (`BiomeParams::cover`, default 0 — off). A defense bonus for organisms standing in a biome. It is an experiment: see the [harness findings](../harness/README.md#findings-stage-a1).
-3. **Movement score approximations** (§11.4):
+1. **Movement score approximations** (§11.4):
    - `prey_vulnerability(c)` uses the weakest organism in the cell at the start of the tick;
    - `threat(c)` uses the strongest hunter in the 3 × 3 area around the cell;
    - the kin check in both uses the clade instead of the genome distance. The attack itself uses the exact genome distance (`kin_distance`).
-4. **Dispersal** is approximated as a bonus per step of distance (`dispersal_per_step`), not as distance from relatives.
+2. **Dispersal** is approximated as a bonus per step of distance (`dispersal_per_step`), not as distance from relatives.
 
 ## Layout
 

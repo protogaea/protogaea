@@ -381,7 +381,7 @@ fn choose_target(
     best
 }
 
-/// The defense bonus of standing in a biome (stage A1 experiment; 0 by default).
+/// The defense bonus of standing in a biome (spec §11.3).
 fn cover(rules: &Ruleset, biome: Biome) -> i32 {
     rules.biomes[biome as usize].cover
 }

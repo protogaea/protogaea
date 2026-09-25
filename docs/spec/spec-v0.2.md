@@ -12,6 +12,7 @@
 |---|---|---|---|
 | Story | A continuous world with no arc | Season 1 "The Breaking of Pangea": the supercontinent splits on a published schedule (§4) | Time gets a direction, the season gets a beginning and an end, and viewers get events worth showing up for live |
 | Ecology | Static environment; hunting unspecified | Yearly cycle, natural events, hunting with cyclic dominance, decomposition, behavioral genes, a neutral color gene (§10–11) | In a static environment evolution quickly finds an optimum and freezes |
+| Hunting balance | — | Satiation and cover (§11.3), added after the first balance-harness runs in stage A1 | Without them, predators wiped out their prey within a few epochs and then died out on 16 of 16 seeds |
 | Allocating influence | Lottery: 3 slots per epoch | Wishes accumulate sparks across epochs; a miracle executes once its price is reached; the price has a floor, and there are at most 3 miracles per epoch (§6, 19) | The lottery frustrates a large audience and is worthless for a small one; cooperation becomes possible |
 | Actions | `found_lineage` with an arbitrary genome; `weather` 3×3 for 12 ticks | `revive` from the museum or spore bank with at most 2 edit steps; `weather` 7×7 for 36 ticks with a cooldown; free `ring` (§5) | No "meta-build" optimization; weather effects are noticeable; researchers get an action that needs no sparks |
 | Randomness | Stateful generator | Counter-based randomness `H(seed, tick, subject, purpose, k)` (§14) | Independence from call order, safe parallelism, honest counterfactuals |
@@ -356,9 +357,13 @@ Traits have different upkeep: hunting, defense and mobility cost more than plant
 An organism with `H ≥ 1` can attack an organism it has spotted in its own or a neighboring cell if their genomes differ by more than `kin_distance` (candidate: 2) — "kin do not eat kin".
 
 `attack = H × attack_weight + P + rand(0 … roll_span)`  
-`defense = D × defense_weight + M + P_prey / 2 + rand(0 … roll_span)`
+`defense = D × defense_weight + M + P_prey / 2 + cover + rand(0 … roll_span)`
 
 If `attack > defense`, the prey dies (cause: predation). The hunter gains `prey_energy × predation_efficiency / 100 + body_value`, and the remains become detritus. On failure the hunter loses only `attack_cost`. At most one attack per tick.
+
+**Satiation.** An organism hunts, and looks for prey when choosing a move, only while its energy is below `hunt_hunger_pct` of `energy_max` (candidate: 60%). A fed predator does not kill.
+
+**Cover.** An organism standing in a biome with cover adds that biome's `cover` to its defense (candidates: forest +12, swamp +10, mountains +14; open land 0). Prey seek cover when a predator is near, and hunters do best in open land. Both rules were added in stage A1: without them, predators wiped out their prey within a few epochs and then died out on 16 of 16 seeds; with them, predators survived three world days on 14 of 16 seeds ([harness findings](../../harness/README.md#findings-stage-a1)).
 
 **Intended cyclic dominance** (checked by the "archetype arena", §28):
 - plant eaters (high `G`) beat armored organisms (high `D`) in the competition for food;
@@ -398,7 +403,7 @@ All energy costs and gains are gathered in a single complete table in `ruleset.j
 | Movement | `move_cost`, `shallow_drain` |
 | Metabolism | `base_metabolism`, `trait_upkeep`, `habitat_bonus`, `energy_max` |
 | Feeding | `bite_per_point`, `plant_efficiency` |
-| Hunting | `attack_weight`, `defense_weight`, `roll_span`, `attack_cost`, `predation_efficiency`, `body_value`, `kin_distance` |
+| Hunting | `attack_weight`, `defense_weight`, `roll_span`, `attack_cost`, `predation_efficiency`, `body_value`, `kin_distance`, `hunt_hunger_pct`, `cover` (per biome) |
 | Reproduction | `repro_base`, `repro_per_F`, `child_base`, `child_per_F`, `birth_cost` |
 | Aging and decomposition | `senescence_start`, `max_age`, `detritus_share`, `decomposition_rate` |
 | Mutation | `mutation_rate`, `behavior_mutation_rate`, `hue_mutation_rate` |

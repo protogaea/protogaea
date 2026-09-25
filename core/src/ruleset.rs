@@ -17,9 +17,7 @@ pub struct BiomeParams {
     pub food_max: u32,
     /// The energy cost of stepping into a cell of this biome, in hundredths.
     pub move_cost: i32,
-    /// Cover: a defense bonus for organisms standing in this biome. Stage A1 experiment,
-    /// off (0) by default and not yet in the specification.
-    #[serde(default)]
+    /// Cover: a defense bonus for organisms standing in this biome (spec §11.3).
     pub cover: i32,
 }
 
@@ -70,7 +68,7 @@ pub struct Ruleset {
     pub roll_span: u32,
     pub attack_cost: i32,
     /// Satiation: an organism hunts only while its energy is below this share of
-    /// `energy_max`. Stage A1 addition, not yet in the specification.
+    /// `energy_max` (spec §11.3).
     pub hunt_hunger_pct: i32,
     pub predation_efficiency_pct: i32,
     pub body_value: i32,
@@ -98,12 +96,12 @@ pub struct Ruleset {
 
 impl Default for Ruleset {
     fn default() -> Self {
-        let biome = |passable, base_regen, food_max, move_cost| BiomeParams {
+        let biome = |passable, base_regen, food_max, move_cost, cover| BiomeParams {
             passable,
             base_regen,
             food_max,
             move_cost,
-            cover: 0,
+            cover,
         };
         Self {
             version: 0,
@@ -118,13 +116,13 @@ impl Default for Ruleset {
             genesis_energy: 8000,
             land_share_pct: 60,
             biomes: [
-                biome(false, 0, 0, 0),   // deep water
-                biome(true, 0, 0, 90),   // shallows
-                biome(true, 12, 60, 30), // forest
-                biome(true, 9, 45, 20),  // steppe
-                biome(true, 3, 15, 30),  // desert
-                biome(true, 4, 20, 80),  // mountains
-                biome(true, 10, 50, 60), // swamp
+                biome(false, 0, 0, 0, 0),    // deep water
+                biome(true, 0, 0, 90, 0),    // shallows
+                biome(true, 12, 60, 30, 12), // forest
+                biome(true, 9, 45, 20, 0),   // steppe
+                biome(true, 3, 15, 30, 0),   // desert
+                biome(true, 4, 20, 80, 14),  // mountains
+                biome(true, 10, 50, 60, 10), // swamp
             ],
             energy_max: 20_000,
             base_metabolism: 100,

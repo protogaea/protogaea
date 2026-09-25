@@ -2,7 +2,7 @@
 
 > **Status: Draft.** The rules themselves are defined in [Part II of the specification](spec/spec-v0.2.md#part-ii-world-rules-ruleset-v0). This document describes the structure of the season rules file and lists every parameter with its candidate value, or **TBD** where the balance harness will set it (stage A).
 
-**Stage A1 implementation.** [core/src/ruleset.rs](../core/src/ruleset.rs) holds the parameters the core uses, with untuned default values; `protogaea-harness ruleset` prints them as JSON. Two additions are not yet in the specification: satiation (`hunt_hunger_pct`) and experimental cover (`cover`, off by default). See [core/README.md](../core/README.md#differences-from-the-specification).
+**Stage A1 implementation.** [core/src/ruleset.rs](../core/src/ruleset.rs) holds the parameters the core uses, with untuned default values; `protogaea-harness ruleset` prints them as JSON. Satiation (`hunt_hunger_pct`) and cover (`cover`) were added to spec §11.3 during stage A1. The remaining differences from the specification are listed in [core/README.md](../core/README.md#differences-from-the-specification).
 
 ## 1. Principles
 
@@ -149,12 +149,14 @@ Probabilities are stored in parts per million per epoch (TBD). At most two event
 | `attack_weight`, `defense_weight`, `roll_span`, `attack_cost` | TBD |
 | `predation_efficiency`, `body_value` | TBD |
 | `kin_distance` | 2 — no attacks on organisms within this genome distance |
+| `hunt_hunger_pct` | 60 — hunting only while energy is below this share of `energy_max` |
+| `cover` | forest 12, swamp 10, mountains 14, open land 0 — a defense bonus in the biome |
 
 Attack and defense:
 
 ```
 attack  = H × attack_weight  + P             + rand(0 … roll_span)
-defense = D × defense_weight + M + P_prey / 2 + rand(0 … roll_span)
+defense = D × defense_weight + M + P_prey / 2 + cover + rand(0 … roll_span)
 ```
 
 ### Movement choice
