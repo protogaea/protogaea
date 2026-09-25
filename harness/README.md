@@ -19,6 +19,12 @@ cargo run --release -p protogaea-harness -- ruleset > my-rules.json
 
 # The Season 1 map criteria of spec §4 for candidate seeds, without running them
 cargo run --release -p protogaea-harness -- maps --seeds 1..21
+
+# Performance on one thread: epoch times over a world day after two days of warm-up
+cargo run --release -p protogaea-harness -- bench --seed 1 --warmup 2 --days 1
+# The same under WASI
+cargo build --release -p protogaea-harness --target wasm32-wasip1
+wasmtime run target/wasm32-wasip1/release/protogaea-harness.wasm bench --seed 1
 ```
 
 `report.html` is self-contained: open it in a browser to watch the map, the population by type, the Muller plot of clade shares and the mean traits. The map follows the Breaking of Pangea: rift lines, faults, flooding and sinking rifts, land bridges until they close, and floods, ash and droughts as tints.
@@ -116,6 +122,19 @@ Measured on 2026-09-25 over full 42-day seasons, 12 seeds per variant (20 for th
 - **The continents' fauna does diverge.** The clade makeup of different plates differs by about 45% at the start of phase III and by 86–100% at the end of the season (no shared clade at all on most seeds with early isolation), and the plates' mean hues end 40–120° apart. Each continent ends with its own lineages and its own colors on the map.
 
 Specification §28 was changed accordingly: the divergence check now asks for clade makeup at least 80% apart and hues at least 30° apart by the end of the season; the distance between mean traits is reported but not required. With the default rules it passes on 16 of 20 seeds: the hues always diverge, and on the other four the clade makeup ends 64–79% apart. `trait_budget` and `cold_winter_pct` stay in the ruleset as options for later seasons.
+
+## Findings (stage A3: performance)
+
+Measured on 2026-09-26 with `bench` on one thread of an AMD Ryzen 5 5500, default rules, after two world days of warm-up (population 1,500–4,800). Each epoch includes the step and the state hash.
+
+| Build | Seed | World day | Epoch p50 | Epoch p95 | Epoch max |
+|---|---|---|---|---|---|
+| native (x86-64) | 1 | 11.8 s | 42.5 ms | 59.4 ms | 62.8 ms |
+| native (x86-64) | 5 | 11.0 s | 39.7 ms | 53.7 ms | 57.4 ms |
+| WASM (wasmtime 49) | 1 | 16.9 s | 61.4 ms | 84.2 ms | 88.8 ms |
+| WASM (wasmtime 49) | 5 | 15.9 s | 57.7 ms | 77.2 ms | 81.8 ms |
+
+All three targets of spec §29 are met: a world day in under 30 s (11–12 s), an epoch under 100 ms at the 95th percentile (54–59 ms), and WASM at most 3× slower than native (1.45×). The native and WASM runs end with the same state hashes. The reference core is not fixed yet (roadmap decision 6); a slower core has about 2.5× headroom on the world day.
 
 ## Findings (stage A3: maps and diversity)
 

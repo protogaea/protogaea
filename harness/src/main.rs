@@ -30,6 +30,10 @@ USAGE:
       State hashes at checkpoints, for cross-platform determinism checks.
   protogaea-harness maps    [--seeds 1..21] [--ruleset FILE]
       The Season 1 map criteria of spec §4 for candidate seeds, without running them.
+  protogaea-harness bench   [--seed N] [--warmup D] [--days D] [--ruleset FILE]
+      Performance on one thread (spec §29): after D world days of warm-up, the time of each epoch
+      (the step and the state hash) over the next D days, against the targets of a world day
+      under 30 s and an epoch under 100 ms at the 95th percentile.
   protogaea-harness ruleset
       Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
   protogaea-harness live    [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
@@ -53,6 +57,7 @@ fn main() -> ExitCode {
         "sweep" => cmd_sweep(rest),
         "hash" => cmd_hash(rest),
         "maps" => cmd_maps(rest),
+        "bench" => cmd_bench(rest),
         "ruleset" => cmd_ruleset(),
         "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
@@ -350,6 +355,51 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         write(&PathBuf::from(path), &csv)?;
         println!("results: {path}");
     }
+    Ok(())
+}
+
+fn cmd_bench(args: &[String]) -> Result<(), String> {
+    let opts = Options::parse(args, &["seed", "warmup", "days", "ruleset"])?;
+    let seed: u64 = opts.get("seed", 1)?;
+    let warmup: f64 = opts.get("warmup", 2.0)?;
+    let days: f64 = opts.get("days", 1.0)?;
+    let rules = load_rules(&opts)?;
+    let per_day = f64::from(rules.epochs_per_day);
+    let mut run = Run::new(seed, rules.clone());
+    println!("seed {seed}: warming up for {warmup} world days");
+    for _ in 0..epochs_for(warmup, &rules) {
+        run.step();
+    }
+    let epochs = epochs_for(days, &rules);
+    println!(
+        "timing {epochs} epochs from day {:.2}, population {}",
+        run.world.epoch as f64 / per_day,
+        run.world.organisms.len()
+    );
+    let mut times = Vec::with_capacity(epochs as usize);
+    let (mut min_pop, mut max_pop) = (usize::MAX, 0);
+    for _ in 0..epochs {
+        let started = std::time::Instant::now();
+        run.step();
+        times.push(started.elapsed().as_secs_f64());
+        min_pop = min_pop.min(run.world.organisms.len());
+        max_pop = max_pop.max(run.world.organisms.len());
+    }
+    let total: f64 = times.iter().sum();
+    times.sort_by(f64::total_cmp);
+    let pct = |p: f64| times[((times.len() - 1) as f64 * p).round() as usize] * 1000.0;
+    let day_seconds = total / times.len() as f64 * per_day;
+    let (p50, p95, max) = (pct(0.5), pct(0.95), pct(1.0));
+    println!("population {min_pop}–{max_pop}");
+    println!(
+        "epoch: p50 {p50:.1} ms, p95 {p95:.1} ms, max {max:.1} ms (target: p95 under 100 ms) — {}",
+        if p95 < 100.0 { "pass" } else { "FAIL" }
+    );
+    println!(
+        "world day: {day_seconds:.1} s (target: under 30 s) — {}",
+        if day_seconds < 30.0 { "pass" } else { "FAIL" }
+    );
+    println!("state hash {}", hex(&run.state_hash()));
     Ok(())
 }
 
