@@ -21,6 +21,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- Specification §10 now matches the core: moisture drifts toward a seasonal target (`moisture_base`, `season_moisture_delta`); values between times of year are interpolated linearly from their midpoints; a great drought also drops moisture by 30.
 - The working name changed from Pangea to **Protogaea**. Pangea is now the supercontinent of Season 1.
 - Specification v0.2 replaces v0.1. The main changes: wishes with accumulated work replace the lottery; the Season 1 story "The Breaking of Pangea"; a changing environment and hunting with cyclic dominance; counter-based randomness; a spark log committed before the beacon; a bounded state with Merkle roots; open source from the first commit. The full list is in [spec §0](docs/spec/spec-v0.2.md#0-what-changed-since-v01).
 

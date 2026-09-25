@@ -276,9 +276,9 @@ Here `season` means the time of year, not a game season. The food stock never ex
 | Mountains | 70 | 100 | 60 | 20 |
 | Swamp | 120 | 110 | 100 | 50 |
 
-Winter is the main filter: it produces population booms and busts and migrations toward milder biomes. Transitions between times of year are smoothed tick by tick, with no steps.
+Winter is the main filter: it produces population booms and busts and migrations toward milder biomes. Each value in the table holds at the midpoint of its time of year; between two midpoints it changes linearly tick by tick, in integer arithmetic (§14), so there are no steps. The world starts at the beginning of spring.
 
-**Moisture** ranges from 0 to 100. Every tick it returns toward the biome's base level by `moisture_relax`. The `rain` and `drought` miracles shift it by ±30. The function `moisture_mult` is defined by a table; the candidate ranges from 50% at zero moisture to 110% at full moisture.
+**Moisture** ranges from 0 to 100. Every tick it moves by `moisture_relax` toward a target level: the biome's base level `moisture_base[biome]` plus the seasonal shift `season_moisture_delta[season]`, limited to 0–100. The shift follows the times of year as smoothly as the growth multipliers do. Candidate base levels: forest 70, steppe 45, desert 15, mountains 50, swamp 90, water 100. Candidate shifts: +10 in spring, −20 in summer, 0 in autumn, +10 in winter; the dry summer brings the steppe below the wildfire threshold. The `rain` and `drought` miracles shift moisture by ±30. The multiplier `moisture_mult` grows linearly from `moisture_mult_min_pct` at zero moisture to `moisture_mult_max_pct` at full moisture; the candidates are 50% and 110%.
 
 **Rifts.** The rift lines and the phase schedule (§4) are generated from `genesis_seed` and are part of the `ruleset`. A cell changes phase at the epoch boundary given in the schedule.
 
@@ -297,7 +297,7 @@ Organisms standing in a cell when it turns into deep water are moved to the near
 |---|---|---|---|
 | Wildfire | Forest and steppe, summer, moisture < 30 | Within a radius of 2–4, food and detritus drop to zero and organisms lose 50% of their energy; then "ash": growth +50% for 72 ticks | Once every 2–3 world days |
 | Flood | Swamps and cells next to water, spring | Cells become shallows for 24 ticks | Once a day in spring |
-| Great drought | Steppe and desert, summer | A 9×9 area: growth ×0.5 for 72 ticks | Once every 3 days |
+| Great drought | Steppe and desert, summer | A 9×9 area: moisture drops by 30 at once, growth ×0.5 for 72 ticks | Once every 3 days |
 | Plague | A region where one clade is denser than a threshold | Mortality `plague_p` for that clade's organisms within radius 3; the event's probability grows with the clade's share of the world | Depends on dominance |
 
 Plague follows the "kill the winner" principle: the more a single clade dominates, the more likely disease is to strike it. This frequency-dependent selection sustains diversity and keeps the map from turning into a monoculture. Among natural events, only plague kills directly; apart from that, organisms can drown when a rift deepens. Wildfire and drought act through energy and food.
@@ -399,7 +399,7 @@ All energy costs and gains are gathered in a single complete table in `ruleset.j
 
 | Group | Parameters |
 |---|---|
-| Environment and food | `base_regen`, `food_max`, `season_mult`, `moisture_mult`, `moisture_relax` |
+| Environment and food | `base_regen`, `food_max`, `season_mult`, `moisture_base`, `season_moisture_delta`, `moisture_relax`, `moisture_mult_min_pct`, `moisture_mult_max_pct` |
 | Movement | `move_cost`, `shallow_drain` |
 | Metabolism | `base_metabolism`, `trait_upkeep`, `habitat_bonus`, `energy_max` |
 | Feeding | `bite_per_point`, `plant_efficiency` |
