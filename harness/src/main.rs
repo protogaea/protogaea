@@ -125,6 +125,9 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
                 last.continents,
                 season_phase(&run.rules, epoch).1,
             );
+            if run.plan.plate_count > 1 && season_phase(&run.rules, epoch).0 >= 3 {
+                print_plates(&run);
+            }
         }
         if finished {
             if run.world.ended {
@@ -156,6 +159,31 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
     print_checks(&summary);
     println!("\nreport: {}", report_path.display());
     Ok(())
+}
+
+/// One line per plate: its population, dominant clade and mean traits.
+fn print_plates(run: &Run) {
+    let profiles = metrics::plate_profiles(&run.world, &run.plan.plates);
+    for p in &profiles {
+        let traits: Vec<String> = p
+            .trait_means_x10
+            .iter()
+            .map(|&t| format!("{:.1}", f64::from(t) / 10.0))
+            .collect();
+        println!(
+            "      plate {}: {:>5} organisms, clade {:>4} holds {:>3}%, M P G H D F {}",
+            p.plate,
+            p.population,
+            p.dominant_clade,
+            p.dominant_permille / 10,
+            traits.join(" "),
+        );
+    }
+    println!(
+        "      distance between plate means {:.1}, between dominant clades {:.1}",
+        f64::from(metrics::centroid_divergence_x10(&profiles)) / 10.0,
+        f64::from(metrics::divergence_x10(&run.world, &run.plan.plates)) / 10.0,
+    );
 }
 
 fn cmd_sweep(args: &[String]) -> Result<(), String> {
@@ -213,7 +241,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         .collect();
 
     println!(
-        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6}",
+        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>6}",
         "seed",
         "extinct",
         "final",
@@ -227,11 +255,12 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         "rev",
         "cont",
         "div+",
+        "cdiv+",
         "pass"
     );
     for s in &summaries {
         println!(
-            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>4}/{}",
+            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>4}/{}",
             s.seed,
             if s.extinct { "yes" } else { "no" },
             s.final_population,
@@ -246,6 +275,8 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             s.revivals,
             format!("{}/{}", s.final_continents, s.plates),
             s.divergence_growth
+                .map_or("—".to_string(), |g| format!("{g:.1}")),
+            s.centroid_divergence_growth
                 .map_or("—".to_string(), |g| format!("{g:.1}")),
             passed(s),
             s.checks().len(),
@@ -274,11 +305,12 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         let mut csv = String::from(
             "seed,extinct,final_population,min_population,equilibrium_pct,min_clades_20_after_day_3,\
              dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
-             revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,checks_passed\n",
+             revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,\
+             centroid_divergence_growth,checks_passed\n",
         );
         for s in &summaries {
             csv.push_str(&format!(
-                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{}\n",
+                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{},{}\n",
                 s.seed,
                 s.extinct,
                 s.final_population,
@@ -296,6 +328,8 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 s.plates,
                 s.final_continents,
                 s.divergence_growth
+                    .map_or(String::new(), |g| format!("{g:.1}")),
+                s.centroid_divergence_growth
                     .map_or(String::new(), |g| format!("{g:.1}")),
                 passed(s),
             ));

@@ -82,6 +82,8 @@ pub enum Purpose {
     BridgeOrder = 33,
     /// The cell for an organism revived from the spore bank; the subject is the organism.
     RevivalSite = 34,
+    /// Which biome mix goes to which plate at genesis.
+    PlateMix = 35,
 }
 
 /// A stateless source of randomness bound to one seed.

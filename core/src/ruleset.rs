@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::genome::{Genome, TRAIT_MAX};
+use crate::genome::{Genome, TRAIT_BUDGET_MAX, TRAIT_MAX};
 use crate::rng::derive;
 use crate::state::Biome;
 
@@ -44,6 +44,10 @@ pub struct MoveWeights {
 pub struct Founder {
     pub genome: Genome,
     pub biome: Biome,
+}
+
+fn default_trait_budget() -> u32 {
+    24
 }
 
 /// Six archetypes in different biomes.
@@ -157,6 +161,48 @@ pub struct Rifts {
     pub bridge_radius: u8,
     /// How far an organism can be carried from a sinking cell to free land; beyond it drowns.
     pub rescue_radius: u8,
+    /// Biome mixes of the future continents, so that their ecologies differ. At genesis the
+    /// plates take them in turn from a random starting point. Empty: every plate uses
+    /// `Ruleset::biome_mix`.
+    #[serde(default)]
+    pub plate_mixes: Vec<BiomeMix>,
+}
+
+/// The shares of land biomes (spec §4, §9). Mountains take the highest land by height; the
+/// rest of the land is divided by moisture, from dry to wet: desert, steppe, forest, and swamp
+/// for whatever remains. Every share must be positive, so that every biome appears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BiomeMix {
+    /// Percent of the land.
+    pub mountains_pct: u8,
+    /// Percent of the land other than mountains.
+    pub desert_pct: u8,
+    pub steppe_pct: u8,
+    pub forest_pct: u8,
+}
+
+impl Default for BiomeMix {
+    /// 12% mountains; the rest 20% desert, 30% steppe, 35% forest and 15% swamp.
+    fn default() -> Self {
+        Self {
+            mountains_pct: 12,
+            desert_pct: 20,
+            steppe_pct: 30,
+            forest_pct: 35,
+        }
+    }
+}
+
+impl BiomeMix {
+    fn is_valid(&self) -> bool {
+        let rest =
+            u32::from(self.desert_pct) + u32::from(self.steppe_pct) + u32::from(self.forest_pct);
+        (1..100).contains(&self.mountains_pct)
+            && self.desert_pct > 0
+            && self.steppe_pct > 0
+            && self.forest_pct > 0
+            && rest < 100
+    }
 }
 
 /// Natural revival from the spore bank and the end of a season by extinction (spec §12).
@@ -184,12 +230,19 @@ pub struct Ruleset {
     pub season_days: u32,
     pub max_organisms: u32,
     pub max_per_cell: u8,
+    /// The sum of the six traits of every genome (spec §11.1): one trait grows only at
+    /// another's expense.
+    #[serde(default = "default_trait_budget")]
+    pub trait_budget: u32,
     /// Founder lineages: a genome and the biome it starts in (spec §9).
     pub founders: Vec<Founder>,
     pub organisms_per_lineage: u32,
     /// The founders' energy, in hundredths.
     pub genesis_energy: i32,
     pub land_share_pct: u32,
+    /// The biome mix of the land, unless the plates have their own (`Rifts::plate_mixes`).
+    #[serde(default)]
+    pub biome_mix: BiomeMix,
     /// Indexed by `Biome as usize`.
     pub biomes: [BiomeParams; Biome::COUNT],
     pub climate: Climate,
@@ -257,10 +310,12 @@ impl Default for Ruleset {
             season_days: 42,
             max_organisms: 6000,
             max_per_cell: 4,
+            trait_budget: default_trait_budget(),
             founders: default_founders(),
             organisms_per_lineage: 50,
             genesis_energy: 8000,
             land_share_pct: 60,
+            biome_mix: BiomeMix::default(),
             biomes: [
                 biome(false, 0, 0, 0, 0),      // deep water
                 biome(true, 0, 0, 90, 0),      // shallows
@@ -324,6 +379,7 @@ impl Default for Ruleset {
                 fault_move_pct: 200,
                 bridge_radius: 2,
                 rescue_radius: 8,
+                plate_mixes: Vec::new(),
             },
             energy_max: 20_000,
             base_metabolism: 100,
@@ -409,13 +465,20 @@ impl Ruleset {
         if self.land_share_pct == 0 || self.land_share_pct > 100 {
             return Err("land_share_pct must be between 1 and 100".into());
         }
+        if !(1..=TRAIT_BUDGET_MAX).contains(&self.trait_budget) {
+            return Err(format!(
+                "trait_budget must be between 1 and {TRAIT_BUDGET_MAX}"
+            ));
+        }
         if self.founders.is_empty()
             || self
                 .founders
                 .iter()
-                .any(|f| !f.genome.is_valid() || !f.biome.is_land())
+                .any(|f| !f.genome.is_valid(self.trait_budget) || !f.biome.is_land())
         {
-            return Err("founders must be valid genomes on land biomes".into());
+            return Err(
+                "founders must be valid genomes that spend the trait budget, on land biomes".into(),
+            );
         }
         if self.biomes.iter().any(|b| b.cover < 0) {
             return Err("cover must not be negative".into());
@@ -460,6 +523,13 @@ impl Ruleset {
         }
         if r.fault_growth_pct > 1000 || !(0..=1000).contains(&r.fault_move_pct) {
             return Err("fault multipliers must be between 0 and 1000%".into());
+        }
+        if !self.biome_mix.is_valid() || !r.plate_mixes.iter().all(BiomeMix::is_valid) {
+            return Err(
+                "biome mixes need 1–99% mountains and positive desert, steppe, forest and \
+                 swamp shares"
+                    .into(),
+            );
         }
         if self.revival.season_end_count == 0 {
             return Err("season_end_count must be positive".into());

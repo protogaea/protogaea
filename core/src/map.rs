@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use crate::climate;
 use crate::rifts::{self, Plan};
 use crate::rng::{derive, Purpose, Rng};
-use crate::ruleset::Ruleset;
+use crate::ruleset::{BiomeMix, Ruleset};
 use crate::state::{Biome, Cell, Clade, Organism, RiftPhase, World};
 
 fn genesis_rng(genesis_seed: &[u8; 32]) -> Rng {
@@ -146,7 +146,8 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
 }
 
 /// Generates one continent: value noise for height and moisture, a radial falloff towards
-/// the edges, then biomes by percentiles so that the proportions are stable across seeds.
+/// the edges, then biomes by percentiles so that the proportions are stable across seeds;
+/// with `Rifts::plate_mixes`, separately on each plate.
 pub fn generate_terrain(rules: &Ruleset, rng: &Rng) -> Vec<Biome> {
     let (w, h) = (i64::from(rules.width), i64::from(rules.height));
     let n = (w * h) as usize;
@@ -169,26 +170,56 @@ pub fn generate_terrain(rules: &Ruleset, rng: &Rng) -> Vec<Biome> {
     order.sort_by_key(|&i| (Reverse(adjusted[i]), i));
     let land_count = n * rules.land_share_pct as usize / 100;
     let mut biomes = vec![Biome::DeepWater; n];
-    let mut land: Vec<usize> = order[..land_count].to_vec();
-
-    // Mountains: the highest 12% of land by raw height.
-    land.sort_by_key(|&i| (Reverse(height[i]), i));
-    let mountains = land.len() * 12 / 100;
-    for &i in &land[..mountains] {
-        biomes[i] = Biome::Mountains;
+    let mut is_land = vec![false; n];
+    for &i in &order[..land_count] {
+        is_land[i] = true;
     }
 
-    // The rest of the land by moisture: 20% desert, 30% steppe, 35% forest, 15% swamp.
-    let mut rest = land[mountains..].to_vec();
-    rest.sort_by_key(|&i| (moisture[i], i));
-    let total = rest.len().max(1);
-    for (k, &i) in rest.iter().enumerate() {
-        biomes[i] = match k * 100 / total {
-            0..=19 => Biome::Desert,
-            20..=49 => Biome::Steppe,
-            50..=84 => Biome::Forest,
-            _ => Biome::Swamp,
-        };
+    // One biome mix for all the land, or one per plate (a future continent): the plates take
+    // the mixes in turn from a random starting point.
+    let mixes = &rules.rifts.plate_mixes;
+    let groups: Vec<(BiomeMix, Vec<usize>)> = if mixes.is_empty() {
+        vec![(rules.biome_mix, (0..n).filter(|&i| is_land[i]).collect())]
+    } else {
+        let (plates, plate_count) = rifts::plate_map(rules, rng, &is_land);
+        let first = rng.below(0, Purpose::PlateMix, 0, mixes.len() as u64) as usize;
+        (0..plate_count)
+            .map(|plate| {
+                let mix = mixes[(first + usize::from(plate)) % mixes.len()];
+                let land = (0..n)
+                    .filter(|&i| is_land[i] && plates[i] == plate)
+                    .collect();
+                (mix, land)
+            })
+            .collect()
+    };
+    for (mix, mut land) in groups {
+        // Mountains: the highest land by raw height.
+        land.sort_by_key(|&i| (Reverse(height[i]), i));
+        let mountains = land.len() * usize::from(mix.mountains_pct) / 100;
+        for &i in &land[..mountains] {
+            biomes[i] = Biome::Mountains;
+        }
+
+        // The rest of the land by moisture, from dry to wet.
+        let mut rest = land[mountains..].to_vec();
+        rest.sort_by_key(|&i| (moisture[i], i));
+        let total = rest.len().max(1);
+        let desert = usize::from(mix.desert_pct);
+        let steppe = desert + usize::from(mix.steppe_pct);
+        let forest = steppe + usize::from(mix.forest_pct);
+        for (k, &i) in rest.iter().enumerate() {
+            let pct = k * 100 / total;
+            biomes[i] = if pct < desert {
+                Biome::Desert
+            } else if pct < steppe {
+                Biome::Steppe
+            } else if pct < forest {
+                Biome::Forest
+            } else {
+                Biome::Swamp
+            };
+        }
     }
 
     // Shallows: water next to land.
@@ -250,8 +281,9 @@ mod tests {
 
     #[test]
     fn founders_start_on_land() {
-        for founder in Ruleset::default().founders {
-            assert!(founder.genome.is_valid(), "{founder:?}");
+        let rules = Ruleset::default();
+        for founder in rules.founders {
+            assert!(founder.genome.is_valid(rules.trait_budget), "{founder:?}");
             assert!(founder.biome.is_land());
         }
     }
@@ -271,6 +303,49 @@ mod tests {
             Biome::Shallows,
         ] {
             assert!(biomes.contains(&biome), "missing {biome:?}");
+        }
+    }
+
+    #[test]
+    fn every_plate_gets_every_biome_of_its_mix() {
+        let mix = |mountains_pct, desert_pct, steppe_pct, forest_pct| BiomeMix {
+            mountains_pct,
+            desert_pct,
+            steppe_pct,
+            forest_pct,
+        };
+        let mut rules = Ruleset::default();
+        rules.rifts.plate_mixes = vec![mix(10, 40, 40, 10), mix(30, 5, 15, 60)];
+        rules.validate().unwrap();
+        for seed in 1..6u8 {
+            let rng = Rng::new(&[seed; 32]);
+            let biomes = generate_terrain(&rules, &rng);
+            let is_land: Vec<bool> = biomes.iter().map(|b| b.is_land()).collect();
+            let (plates, count) = rifts::plate_map(&rules, &rng, &is_land);
+            let mut mountain_shares = Vec::new();
+            for plate in 0..count {
+                let on_plate = |b: Biome| {
+                    (0..biomes.len())
+                        .filter(|&i| plates[i] == plate && biomes[i] == b)
+                        .count()
+                };
+                for b in [
+                    Biome::Forest,
+                    Biome::Steppe,
+                    Biome::Desert,
+                    Biome::Mountains,
+                    Biome::Swamp,
+                ] {
+                    assert!(on_plate(b) > 0, "seed {seed}, plate {plate} lacks {b:?}");
+                }
+                let land = (0..biomes.len())
+                    .filter(|&i| plates[i] == plate && is_land[i])
+                    .count();
+                mountain_shares.push(on_plate(Biome::Mountains) * 100 / land);
+            }
+            // The two mixes alternate, so the plates differ in their mountains.
+            assert!(mountain_shares.iter().any(|&s| s <= 10));
+            assert!(mountain_shares.iter().any(|&s| s >= 29));
         }
     }
 

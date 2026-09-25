@@ -346,7 +346,7 @@ impl World {
                 ));
             }
             previous = o.id;
-            if !o.genome.is_valid() {
+            if !o.genome.is_valid(rules.trait_budget) {
                 return Err(format!("organism {} has an invalid genome", o.id));
             }
             if o.energy <= 0 || o.energy > rules.energy_max {

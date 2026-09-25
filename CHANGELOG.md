@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. The format foll
 - Stage A2, part 2: the Breaking of Pangea (plates, rift lines, flooding waves, land bridges, organisms carried off sinking cells or drowned), spring floods, the museum of extinct named clades, the spore bank with natural revival and the end of a season by extinction.
 - Harness: the `maps` command for the Season 1 map criteria, continents and divergence between continents in the metrics, and a map that follows the breakup.
 - CI compares state hashes of a compressed season, so that the rift code is checked across platforms too.
+- Stage A3 tools: the harness prints each plate's population, dominant clade and mean traits during `run`, and measures the distance between the plates' mean genomes (`cdiv+`) next to the divergence of dominant clades. The ruleset gains `trait_budget` (24), `biome_mix` and optional per-plate `plate_mixes`; the defaults leave worlds unchanged.
 - Hunting balance: satiation and cover (spec §11.3).
 - Live mode in the harness: a world in real time with snapshots, its page behind an optional password, and a systemd unit in `deploy/`.
 - A static Linux build (`x86_64-unknown-linux-musl`) that needs no C toolchain: BLAKE3 uses its portable implementation.

@@ -13,7 +13,8 @@ pub const HUNTING: usize = 3;
 pub const DEFENSE: usize = 4;
 pub const FERTILITY: usize = 5;
 pub const TRAIT_MAX: u8 = 8;
-pub const TRAIT_SUM: u32 = 24;
+/// The largest trait budget: every trait at its maximum.
+pub const TRAIT_BUDGET_MAX: u32 = TRAIT_COUNT as u32 * TRAIT_MAX as u32;
 pub const HABITAT_GENERALIST: u8 = 5;
 pub const DISPERSAL_MAX: u8 = 3;
 pub const BOLDNESS_MAX: u8 = 3;
@@ -21,7 +22,8 @@ pub const HUE_RANGE: u16 = 360;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genome {
-    /// Movement, perception, plant eating, hunting, defense and fertility: each 0–8, sum 24.
+    /// Movement, perception, plant eating, hunting, defense and fertility: each 0–8, summing
+    /// to the trait budget of the rules (`Ruleset::trait_budget`).
     pub traits: [u8; TRAIT_COUNT],
     /// The preferred land biome, 0–4, or 5 for a generalist.
     pub habitat: u8,
@@ -34,9 +36,10 @@ pub struct Genome {
 }
 
 impl Genome {
-    pub fn is_valid(&self) -> bool {
+    /// Every gene in range, and the traits spend exactly `trait_budget`.
+    pub fn is_valid(&self, trait_budget: u32) -> bool {
         self.traits.iter().all(|&t| t <= TRAIT_MAX)
-            && self.traits.iter().map(|&t| u32::from(t)).sum::<u32>() == TRAIT_SUM
+            && self.traits.iter().map(|&t| u32::from(t)).sum::<u32>() == trait_budget
             && self.habitat <= HABITAT_GENERALIST
             && self.dispersal <= DISPERSAL_MAX
             && self.boldness <= BOLDNESS_MAX
@@ -144,7 +147,7 @@ pub fn mutate(parent: &Genome, rules: &Ruleset, rng: &Rng, tick: u32, subject: u
             (g.hue + HUE_RANGE - delta) % HUE_RANGE
         };
     }
-    debug_assert!(g.is_valid());
+    debug_assert!(g.is_valid(rules.trait_budget));
     g
 }
 
@@ -173,7 +176,7 @@ mod tests {
 
     #[test]
     fn sample_is_valid() {
-        assert!(SAMPLE.is_valid());
+        assert!(SAMPLE.is_valid(24));
         assert_eq!(SAMPLE.steps(), 1);
         assert_eq!(SAMPLE.sight(), 2);
     }
@@ -202,7 +205,7 @@ mod tests {
         let mut g = SAMPLE;
         for subject in 0..5000 {
             let child = mutate(&g, &rules, &rng, 0, subject);
-            assert!(child.is_valid(), "{child:?}");
+            assert!(child.is_valid(rules.trait_budget), "{child:?}");
             assert!(g.distance(&child) <= 1);
             g = child;
         }

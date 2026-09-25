@@ -101,18 +101,15 @@ impl Grid {
     }
 }
 
-/// Draws the plates, rift lines and land bridges of a world from its genesis randomness.
-pub fn plan(rules: &Ruleset, rng: &Rng, biomes: &[Biome]) -> Plan {
+/// Divides the map into plates: every cell belongs to the nearest plate center, measured from
+/// its position bent by noise. The centers are spread evenly around the middle of the land.
+/// Returns the plate of every cell and the number of plates; without rifts, one plate.
+pub fn plate_map(rules: &Ruleset, rng: &Rng, is_land: &[bool]) -> (Vec<u8>, u8) {
     let r = &rules.rifts;
-    let n = biomes.len();
-    let land: Vec<usize> = (0..n).filter(|&i| biomes[i].is_land()).collect();
+    let n = is_land.len();
+    let land: Vec<usize> = (0..n).filter(|&i| is_land[i]).collect();
     if r.plates_max == 0 || land.is_empty() {
-        return Plan {
-            plates: vec![0; n],
-            plate_count: 1,
-            rifts: Vec::new(),
-            bridges: Vec::new(),
-        };
+        return (vec![0; n], 1);
     }
     let grid = Grid {
         w: i64::from(rules.width),
@@ -160,6 +157,27 @@ pub fn plan(rules: &Ruleset, rng: &Rng, biomes: &[Biome]) -> Plan {
                 .expect("at least one plate") as u8
         })
         .collect();
+    (plates, count)
+}
+
+/// Draws the plates, rift lines and land bridges of a world from its genesis randomness.
+pub fn plan(rules: &Ruleset, rng: &Rng, biomes: &[Biome]) -> Plan {
+    let r = &rules.rifts;
+    let n = biomes.len();
+    let is_land: Vec<bool> = biomes.iter().map(|b| b.is_land()).collect();
+    let (plates, count) = plate_map(rules, rng, &is_land);
+    if count == 1 {
+        return Plan {
+            plates,
+            plate_count: 1,
+            rifts: Vec::new(),
+            bridges: Vec::new(),
+        };
+    }
+    let grid = Grid {
+        w: i64::from(rules.width),
+        h: i64::from(rules.height),
+    };
 
     // Rift cells: passable cells next to another plate.
     let passable = |i: usize| rules.biomes[biomes[i] as usize].passable;

@@ -45,6 +45,10 @@ pub struct EpochStats {
     pub continents: u32,
     /// The mean genome distance between the dominant clades of different plates, ×10.
     pub divergence_x10: u32,
+    /// The mean distance between the mean genomes of different plates, ×10: a smooth companion
+    /// to `divergence_x10`, which moves only when clades split.
+    #[serde(default)]
+    pub centroid_divergence_x10: u32,
     /// The mean of each trait, ×10.
     pub trait_means_x10: [u32; TRAIT_COUNT],
 }
@@ -83,6 +87,7 @@ pub fn epoch_stats(
         ticks_at_cap: report.ticks_at_cap,
         continents,
         divergence_x10: divergence_x10(world, plates),
+        centroid_divergence_x10: centroid_divergence_x10(&plate_profiles(world, plates)),
         trait_means_x10: [0; TRAIT_COUNT],
     };
     let mut sums = [0u64; TRAIT_COUNT];
@@ -181,6 +186,80 @@ pub fn divergence_x10(world: &World, plates: &[u8]) -> u32 {
     (sum * 10).checked_div(pairs).unwrap_or(0) as u32
 }
 
+/// The organisms of one plate (a future continent).
+#[derive(Clone, Debug)]
+pub struct PlateProfile {
+    pub plate: u8,
+    pub population: u32,
+    pub dominant_clade: u32,
+    /// The dominant clade's share of the plate's population, in permille.
+    pub dominant_permille: u32,
+    /// The mean of each trait on the plate, ×10.
+    pub trait_means_x10: [u32; TRAIT_COUNT],
+}
+
+/// Counts gathered for one plate.
+#[derive(Default)]
+struct PlateTally {
+    population: u32,
+    trait_sums: [u64; TRAIT_COUNT],
+    clades: BTreeMap<u32, u32>,
+}
+
+/// Profiles of the plates that have organisms, in plate order.
+pub fn plate_profiles(world: &World, plates: &[u8]) -> Vec<PlateProfile> {
+    let mut by_plate: BTreeMap<u8, PlateTally> = BTreeMap::new();
+    for o in &world.organisms {
+        let tally = by_plate.entry(plates[usize::from(o.cell)]).or_default();
+        tally.population += 1;
+        for (sum, &value) in tally.trait_sums.iter_mut().zip(o.genome.traits.iter()) {
+            *sum += u64::from(value);
+        }
+        *tally.clades.entry(o.clade_id).or_insert(0) += 1;
+    }
+    by_plate
+        .into_iter()
+        .map(|(plate, tally)| {
+            // Ties go to the lower clade id.
+            let (dominant_clade, top) =
+                tally.clades.iter().fold(
+                    (0, 0),
+                    |best, (&c, &n)| if n > best.1 { (c, n) } else { best },
+                );
+            let population = tally.population;
+            PlateProfile {
+                plate,
+                population,
+                dominant_clade,
+                dominant_permille: top * 1000 / population,
+                trait_means_x10: tally
+                    .trait_sums
+                    .map(|s| (s * 10 / u64::from(population)) as u32),
+            }
+        })
+        .collect()
+}
+
+/// The mean distance, ×10, between the mean genomes of different plates, in mutation steps
+/// (half the sum of the absolute trait differences, as in `Genome::distance`).
+pub fn centroid_divergence_x10(profiles: &[PlateProfile]) -> u32 {
+    let mut sum = 0u64;
+    let mut pairs = 0u64;
+    for (i, a) in profiles.iter().enumerate() {
+        for b in &profiles[i + 1..] {
+            let d: u32 = a
+                .trait_means_x10
+                .iter()
+                .zip(b.trait_means_x10.iter())
+                .map(|(&x, &y)| x.abs_diff(y))
+                .sum();
+            sum += u64::from(d / 2);
+            pairs += 1;
+        }
+    }
+    sum.checked_div(pairs).unwrap_or(0) as u32
+}
+
 /// Follows a run epoch by epoch.
 #[derive(Serialize, Deserialize)]
 pub struct Tracker {
@@ -194,6 +273,8 @@ pub struct Tracker {
     continents: u32,
     /// The divergence when the rifts began to turn into shallows (spec §4, phase III).
     divergence_start_x10: Option<u32>,
+    #[serde(default)]
+    centroid_start_x10: Option<u32>,
     revivals: u32,
     drowned: u32,
     ended: bool,
@@ -210,6 +291,7 @@ impl Tracker {
             plate_count: plan.plate_count,
             continents: continents(world, rules),
             divergence_start_x10: None,
+            centroid_start_x10: None,
             revivals: 0,
             drowned: 0,
             ended: world.ended,
@@ -232,6 +314,7 @@ impl Tracker {
         let phase_3 = u64::from(rules.rifts.shallows_from_day) * u64::from(rules.epochs_per_day);
         if self.divergence_start_x10.is_none() && world.epoch >= phase_3 {
             self.divergence_start_x10 = Some(stats.divergence_x10);
+            self.centroid_start_x10 = Some(stats.centroid_divergence_x10);
         }
         self.revivals += stats.revivals;
         self.drowned += stats.drowned;
@@ -313,6 +396,12 @@ impl Tracker {
             }
             _ => None,
         };
+        let centroid_divergence_growth = match (self.centroid_start_x10, last) {
+            (Some(start), Some(end)) if has_rifts && reached_season_end => {
+                Some((f64::from(end.centroid_divergence_x10) - f64::from(start)) / 10.0)
+            }
+            _ => None,
+        };
 
         Summary {
             seed,
@@ -347,6 +436,7 @@ impl Tracker {
             final_continents: self.continents,
             reached_breakup,
             divergence_growth,
+            centroid_divergence_growth,
         }
     }
 }
@@ -382,6 +472,8 @@ pub struct Summary {
     /// How much the divergence between the continents' dominant clades grew from the start of
     /// phase III to the end of the season, in mutation steps (spec §28).
     pub divergence_growth: Option<f64>,
+    /// The same growth for the distance between the plates' mean genomes; not a check yet.
+    pub centroid_divergence_growth: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]

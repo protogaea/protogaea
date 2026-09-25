@@ -278,8 +278,11 @@ fn a_spring_flood_turns_land_into_shallows_for_a_while() {
         assert_eq!(world.cells[c].moisture, 100);
         assert!(world.cells[c].biome.floods());
     }
-    // No new floods; the first one recedes after `flood_ticks`.
+    // No new floods; the first one recedes after `flood_ticks`. Nobody is left to eat what
+    // grows back, and the spore bank stays shut.
     rules.events.flood_ppm = 0;
+    rules.revival.below = 0;
+    keep_only(&mut world, 0);
     step(&mut world, &rules);
     assert!(world.effects.iter().all(|e| e.kind != EffectKind::Flood));
     step(&mut world, &rules);

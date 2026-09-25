@@ -66,6 +66,7 @@ The top-level sections, with a few representative values. The layout is illustra
 | Water | shallows (passable), deep water (impassable) |
 | `base_regen[biome]`, `food_max[biome]` | TBD |
 | `move_cost[biome]` | TBD; mountains and swamps cost more |
+| `biome_mix` | 12% of the land is mountains (the highest cells); the rest by moisture, dry to wet: 20% desert, 30% steppe, 35% forest, 15% swamp |
 
 Food growth per tick:
 
@@ -118,6 +119,7 @@ The schedule by world day: unity 0–6, cracks 7–13, shallows 14–23, straits
 | `fault_growth_pct`, `fault_move_pct` | 50, 200 |
 | `bridge_radius` | 2 — a bridge is the rift cells within this distance of its center |
 | `rescue_radius` | 8 — organisms on a sinking cell move to the nearest free land within this distance, or drown |
+| `plate_mixes` | empty — optional biome mixes, one per plate in turn from a random start, so that the future continents differ; each mix keeps all five land biomes. Empty means `biome_mix` everywhere |
 
 ### Natural events
 
@@ -144,6 +146,8 @@ Probabilities are stored in parts per million per epoch (TBD). At most two event
 | `dispersal` | 0–3 | tendency to leave settled cells and relatives |
 | `boldness` | 0–3 | how much food outweighs danger |
 | `hue` | 0–359 | neutral color; no effect |
+
+The six traits `M`–`F` always sum to `trait_budget` (24), so one grows only at another's expense.
 
 | Mutation parameter | Value |
 |---|---|
