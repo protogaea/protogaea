@@ -20,6 +20,11 @@ cargo run --release -p protogaea-harness -- ruleset > my-rules.json
 # The Season 1 map criteria of spec §4 for candidate seeds, without running them
 cargo run --release -p protogaea-harness -- maps --seeds 1..21
 
+# The archetype arena: grazers, armored organisms and hunters in pairs, mutation off
+cargo run --release -p protogaea-harness -- arena --seeds 1..21 --days 3
+# One hunters-versus-grazers world, day by day
+cargo run --release -p protogaea-harness -- arena --trace 5
+
 # Performance on one thread: epoch times over a world day after two days of warm-up
 cargo run --release -p protogaea-harness -- bench --seed 1 --warmup 2 --days 1
 # The same under WASI
@@ -122,6 +127,17 @@ Measured on 2026-09-25 over full 42-day seasons, 12 seeds per variant (20 for th
 - **The continents' fauna does diverge.** The clade makeup of different plates differs by about 45% at the start of phase III and by 86–100% at the end of the season (no shared clade at all on most seeds with early isolation), and the plates' mean hues end 40–120° apart. Each continent ends with its own lineages and its own colors on the map.
 
 Specification §28 was changed accordingly: the divergence check now asks for clade makeup at least 80% apart and hues at least 30° apart by the end of the season; the distance between mean traits is reported but not required. With the default rules it passes on 16 of 20 seeds: the hues always diverge, and on the other four the clade makeup ends 64–79% apart. `trait_budget` and `cold_winter_pct` stay in the ruleset as options for later seasons.
+
+## Findings (stage A3: the archetype arena)
+
+Measured on 2026-09-26 with `arena --seeds 1..21 --days 3`: the grazer, armored and hunter founders of the default ruleset, 100 of each, in pairs, with mutation and the spore bank off and no rifts, the second lineage starting next to the first; each plant eater also runs alone. The verdicts follow spec §11.3: grazers beat armored organisms if they hold the larger share at the end, armored organisms beat hunters if the hunters starve out, hunters beat grazers if they survive and keep the grazers at 60% or less of their numbers alone.
+
+- **Grazers beat armored organisms on 20 of 20 seeds**, with about 60% of the population against 40%.
+- **Armored organisms beat hunters on 20 of 20**: the hunters starve within the first day.
+- **Hunters beat grazers on 19 of 20**, holding them at 10–55% of the 3,650 they reach alone. On seed 14 the hunters ate every grazer and then starved.
+- **The full cycle holds on 19 of 20 seeds.**
+
+Genesis puts each founder in its own biome, and at first the lineages often started far apart: on 3 of 9 seeds the hunters starved before they found any grazer. The arena now moves the second lineage next to the first, so that it measures the archetypes against each other rather than the distance between them.
 
 ## Findings (stage A3: performance)
 

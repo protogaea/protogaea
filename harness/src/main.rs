@@ -1,5 +1,6 @@
 //! The balance harness (spec §28): runs worlds offline, measures them and draws reports.
 
+mod arena;
 mod live;
 mod metrics;
 mod report;
@@ -30,6 +31,9 @@ USAGE:
       State hashes at checkpoints, for cross-platform determinism checks.
   protogaea-harness maps    [--seeds 1..21] [--ruleset FILE]
       The Season 1 map criteria of spec §4 for candidate seeds, without running them.
+  protogaea-harness arena   [--seeds 1..10] [--days D] [--per-lineage N] [--threads N] [--ruleset FILE]
+      The archetype arena (spec §28): grazers, armored organisms and hunters in pairs, mutation
+      off, against runs of each plant eater alone; checks that each beats one and loses to the other.
   protogaea-harness bench   [--seed N] [--warmup D] [--days D] [--ruleset FILE]
       Performance on one thread (spec §29): after D world days of warm-up, the time of each epoch
       (the step and the state root) over the next D days, against the targets of a world day
@@ -58,6 +62,7 @@ fn main() -> ExitCode {
         "hash" => cmd_hash(rest),
         "maps" => cmd_maps(rest),
         "bench" => cmd_bench(rest),
+        "arena" => cmd_arena(rest),
         "ruleset" => cmd_ruleset(),
         "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
@@ -355,6 +360,125 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         write(&PathBuf::from(path), &csv)?;
         println!("results: {path}");
     }
+    Ok(())
+}
+
+fn cmd_arena(args: &[String]) -> Result<(), String> {
+    use arena::Archetype::{Armored, Grazer, Hunter};
+    let opts = Options::parse(
+        args,
+        &[
+            "seeds",
+            "days",
+            "per-lineage",
+            "threads",
+            "ruleset",
+            "trace",
+        ],
+    )?;
+    let seeds = parse_seeds(opts.value("seeds").unwrap_or("1..10"))?;
+    let days: f64 = opts.get("days", 3.0)?;
+    let per_lineage: u32 = opts.get("per-lineage", 100)?;
+    if let Some(seed) = opts.value("trace") {
+        // Hunters against grazers in one world, every tenth of a day.
+        let seed: u64 = seed
+            .parse()
+            .map_err(|_| "--trace takes a seed".to_string())?;
+        let base = load_rules(&opts)?;
+        let every = (u64::from(base.epochs_per_day) / 10).max(1);
+        println!("seed {seed}: hunters, then grazers");
+        arena::trace_arena(
+            seed,
+            arena::arena_rules(&base, &[Hunter, Grazer], per_lineage),
+            epochs_for(days, &base),
+            every,
+        );
+        return Ok(());
+    }
+    let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads: usize = opts.get("threads", default_threads)?;
+    let base = load_rules(&opts)?;
+    let epochs = epochs_for(days, &base);
+    let tail = (u64::from(base.epochs_per_day) / 4).max(1).min(epochs);
+    // Each plant eater alone, then the three pairs of the cycle.
+    let configs: Vec<Vec<arena::Archetype>> = vec![
+        vec![Grazer],
+        vec![Armored],
+        vec![Grazer, Armored],
+        vec![Armored, Hunter],
+        vec![Hunter, Grazer],
+    ];
+    let jobs: Vec<(usize, u64)> = (0..configs.len())
+        .flat_map(|c| seeds.iter().map(move |&s| (c, s)))
+        .collect();
+    println!(
+        "{} seeds × {} worlds × {days} world days, {per_lineage} founders per lineage, on {threads} threads",
+        seeds.len(),
+        configs.len()
+    );
+    let results: Mutex<HashMap<(usize, u64), Vec<f64>>> = Mutex::new(HashMap::new());
+    let next = AtomicUsize::new(0);
+    let work = || loop {
+        let k = next.fetch_add(1, Ordering::Relaxed);
+        let Some(&(c, seed)) = jobs.get(k) else {
+            break;
+        };
+        let rules = arena::arena_rules(&base, &configs[c], per_lineage);
+        let means = arena::run_arena(seed, rules, epochs, tail);
+        results
+            .lock()
+            .expect("no thread panicked")
+            .insert((c, seed), means);
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..threads.clamp(1, jobs.len().max(1)) {
+            scope.spawn(work);
+        }
+    });
+    let r = results.into_inner().expect("no thread panicked");
+
+    println!(
+        "\nmean population over the last quarter day\n{:>5} {:>8} {:>8} | {:>16} {:>6} | {:>16} {:>6} | {:>16} {:>6} | {:>5}",
+        "seed", "grazers", "armored", "grazers:armored", "", "armored:hunters", "", "hunters:grazers", "", "cycle"
+    );
+    let (mut g_a, mut a_h, mut h_g, mut cycles) = (0, 0, 0, 0);
+    for &seed in &seeds {
+        let solo_g = r[&(0, seed)][0];
+        let solo_a = r[&(1, seed)][0];
+        let ga = &r[&(2, seed)];
+        let ah = &r[&(3, seed)];
+        let hg = &r[&(4, seed)];
+        // Grazers beat armored organisms: they take the larger share of the food.
+        let grazers_win = ga[0] > ga[1];
+        // Armored organisms beat hunters: the hunters starve out.
+        let armored_win = ah[0] > 0.0 && ah[1] < 0.05 * f64::from(per_lineage);
+        // Hunters beat grazers: they live on them and hold them well below their numbers alone.
+        let hunters_win = hg[0] > 0.0 && hg[1] <= 0.6 * solo_g;
+        let mark = |b: bool| if b { "yes" } else { "no" };
+        println!(
+            "{:>5} {:>8.0} {:>8.0} | {:>7.0}:{:<8.0} {:>6} | {:>7.0}:{:<8.0} {:>6} | {:>7.0}:{:<8.0} {:>6} | {:>5}",
+            seed,
+            solo_g,
+            solo_a,
+            ga[0],
+            ga[1],
+            mark(grazers_win),
+            ah[0],
+            ah[1],
+            mark(armored_win),
+            hg[0],
+            hg[1],
+            mark(hunters_win),
+            mark(grazers_win && armored_win && hunters_win),
+        );
+        g_a += usize::from(grazers_win);
+        a_h += usize::from(armored_win);
+        h_g += usize::from(hunters_win);
+        cycles += usize::from(grazers_win && armored_win && hunters_win);
+    }
+    let n = seeds.len();
+    println!("\ngrazers beat armored on {g_a} of {n}; armored beat hunters on {a_h} of {n}; hunters beat grazers on {h_g} of {n}");
+    println!("the full cycle holds on {cycles} of {n} seeds");
     Ok(())
 }
 

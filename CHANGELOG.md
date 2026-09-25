@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file. The format foll
 - Stage A2, part 2: the Breaking of Pangea (plates, rift lines, flooding waves, land bridges, organisms carried off sinking cells or drowned), spring floods, the museum of extinct named clades, the spore bank with natural revival and the end of a season by extinction.
 - Harness: the `maps` command for the Season 1 map criteria, continents and divergence between continents in the metrics, and a map that follows the breakup.
 - CI compares state hashes of a compressed season, so that the rift code is checked across platforms too.
+- Harness: the `arena` command (spec §28) pits the three archetypes against each other in pairs; the grazer–armored–hunter cycle holds on 19 of 20 seeds.
 - The Merkle `state_root` of spec §15: one tree per kind of data plus a leaf of global fields, in the shape of RFC 9162 with BLAKE3, and inclusion proofs for organisms (`World::prove_organism`, `OrganismProof::verify`). It replaces the flat state hash everywhere, including the epoch seed; the encoding tag is `PROTOGAEA/STATE/A3`.
 - Harness: the `bench` command times epochs on one thread against the performance targets of spec §29; natively a world day takes 11–12 s, under WASI 16–17 s.
 - Season 1 maps: founder lineages are spread over the plates, away from the future rifts, and the plates get four different biome mixes by default, so every candidate seed gives each future continent founders and all five biomes; this also doubles the seasons that keep 6+ clades of 20+.
