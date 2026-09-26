@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- `protogaea-protocol`: the spark protocol v0 in code: canonical wish bytes, `proposal_id` and strict Ed25519 signatures, the epoch challenge, sparks and their batches, `spark_id`, the PoW check and the target adjustment, the spark log after RFC 9162 with inclusion and consistency proofs, signed tree heads and receipts, with test vectors.
 - yespower 1.0 ported to plain Rust in `protogaea-pow` (checked against the reference C in CI and a Protogaea spark vector); the viewer's WebAssembly core hashes sparks (`spark_hash`) at about 0.45 of the C speed.
 - Stage C begins: `protogaea-pow`, yespower 1.0 with the spark parameters (the reference implementation vendored, its test vectors), the spark input of spec §18, the target check and work units, and a benchmark; first measurements on two x86-64 CPUs.
 - The Telegram bot follows continents too (`/continent`), and on its first run it starts from the present in one pass.

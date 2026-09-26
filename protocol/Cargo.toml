@@ -1,0 +1,12 @@
+[package]
+name = "protogaea-protocol"
+description = "The Protogaea spark protocol v0: wishes, sparks, the spark log with its tree heads and receipts, and the epoch target"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+blake3.workspace = true
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
+protogaea-pow = { path = "../pow" }

@@ -54,7 +54,7 @@ Season 1, **The Breaking of Pangea**, begins with a single supercontinent that s
 | A | Deterministic core, WASM build, balance harness, Season 1 map generator | Nearly done: the parameter search for Season 1 is running |
 | B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot, the clade tree, the stories of the day, the "While you were away" digest, the replay of the last day, predictions for tomorrow, the Telegram bot and the time machine (any past epoch recomputed in the browser and checked against the log, two moments compared, inclusion proofs checked in the browser), the museum and the daily chronicle are done; next are a region to follow and the tests with people |
 | B′ | Closed observation test with invited users, no PoW | Planned |
-| C | Sparks: yespower, desktop app, WASM client, spark log, watchers | Started: yespower with the spark parameters, checked against its reference vectors and measured on x86-64 |
+| C | Sparks: yespower, desktop app, WASM client, spark log, watchers | Started: yespower with the spark parameters (in Rust too, for the browser) and the spark protocol primitives: wishes, sparks, the spark log and receipts |
 | D | Public Season 1 — The Breaking of Pangea | Planned |
 | E | Decide what comes next, based on the results | Planned |
 
@@ -83,6 +83,7 @@ The repository holds four parts:
 - [core/](core/README.md): the deterministic simulation core (Rust, no dependencies beyond BLAKE3 and serde; also builds for WASM), with its status against the specification. Season 1 runs in full: times of year, natural events, the Breaking of Pangea, the museum, the spore bank and a Merkle `state_root` with inclusion proofs.
 - [harness/](harness/README.md): the balance harness that runs thousands of seasons offline and checks the ecosystem health criteria of spec §28, with its findings, the archetype arena, a benchmark and the parameter search.
 - [pow/](pow/README.md): the proof of work behind sparks: yespower 1.0 with the spark parameters, the spark input and its target check, with measurements.
+- [protocol/](protocol/README.md): the spark protocol v0: wishes and their signatures, sparks and their check, the spark log with its proofs, signed tree heads and receipts.
 - [server/](server/README.md): the world server. It runs the world on a timer, records every epoch, organism, clade and event in SQLite, keeps snapshots, recovers from a crash without losing an epoch, and serves the read API of spec §23.
 - [viewer/](viewer/README.md): the web viewer (TypeScript and PixiJS): the illustrated map with live organisms, the season timeline, clade and organism cards, the Muller plot, the clade tree, the event feed and the time machine, with the core compiled to WebAssembly (`viewer/wasm`), in English and Russian.
 

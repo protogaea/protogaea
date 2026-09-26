@@ -41,7 +41,20 @@ All tags are ASCII strings without a terminator.
 
 ### 4.1 Canonical bytes
 
-The field list is decided; the exact layout is TBD.
+The field list is decided; the layout is **Proposed** and implemented in [`protocol/src/wish.rs`](../protocol/src/wish.rs):
+
+```
+version u8 (0) ‖ world_id [16] ‖ ruleset_id [32] ‖ action u8 ‖ params (per action)
+‖ author_pubkey [32] ‖ created_epoch u64 ‖ expires_epoch u64
+‖ hypothesis: 0 | 1 ‖ template u16 ‖ len u8 ‖ params [len ≤ 32]
+‖ name:       0 | 1 ‖ genus u16 ‖ epithet u16
+
+weather: x u8 ‖ y u8 ‖ kind u8
+migrate: clade_id u32 ‖ from_x u8 ‖ from_y u8 ‖ to_x u8 ‖ to_y u8
+revive:  source u8 ‖ entry_id u32 ‖ steps u8 (0–2) ‖ (i u8 ‖ j u8) × steps ‖ x u8 ‖ y u8
+```
+
+Decoding is strict: unknown values, a lifetime above 288 epochs, a name on anything but `revive` and trailing bytes are rejected, so a wish has exactly one encoding. The table below lists the fields.
 
 | Field | Type (candidate) | Notes |
 |---|---|---|
@@ -157,13 +170,13 @@ An invalid PoW blocks the key and the IP temporarily (candidate: 1 hour). The ve
 t_{E+1} = clamp(t_E × S_target / max(S_E, 1), t_E × 3/4, t_E × 5/4)
 ```
 
-`S_E` is the number of sparks accepted in epoch E. The arithmetic is integer-only; the rounding rule is TBD. The target bounds the verification load; it does not affect the price of a miracle, which is measured in work units.
+`S_E` is the number of sparks accepted in epoch E. The arithmetic is integer-only (u128), rounding down, and the target never falls below 1 (**Proposed**, [`protocol/src/spark.rs`](../protocol/src/spark.rs)). The target bounds the verification load; it does not affect the price of a miracle, which is measured in work units.
 
 ## 6. Spark log
 
 - One Merkle tree per epoch, following RFC 6962: leaf hash = `H(0x00 ‖ leaf)`, node hash = `H(0x01 ‖ left ‖ right)`. Hash function: BLAKE3 (candidate; RFC 6962 itself uses SHA-256).
-- Leaf encoding: TBD; candidate `epoch ‖ proposal_id ‖ miner_pubkey ‖ nonce`.
-- **STH:** `{epoch, tree_size, root, timestamp, signature}`. The timestamp is informational. An STH is published at least every 2 seconds; the final STH of the epoch no later than `close_E + 2 s`.
+- Leaf encoding (**Proposed**): `epoch u64 ‖ proposal_id ‖ miner_pubkey ‖ nonce u64`, 80 bytes. The tree, its inclusion and consistency proofs follow RFC 9162 §2.1 ([`protocol/src/log.rs`](../protocol/src/log.rs)).
+- **STH:** `{epoch, tree_size, root, timestamp, signature}`. The signed payload (**Proposed**): `"PROTOGAEA/STH/V0" ‖ epoch u64 ‖ tree_size u64 ‖ root ‖ timestamp_ms u64`, Ed25519 with the operator key ([`protocol/src/sth.rs`](../protocol/src/sth.rs)). The timestamp is informational. An STH is published at least every 2 seconds; the final STH of the epoch no later than `close_E + 2 s`.
 - **Receipt:** `{spark_id, leaf_index, sth, inclusion_proof}`, issued only after the spark has been written.
 - Consistency proofs between any two STHs are available through the API.
 
@@ -248,7 +261,9 @@ Encoding: TBD. Signature (Proposed): `Ed25519_sign(operator_key, BLAKE3("PROTOGA
 - Consensus formats carry a version in their domain tags (`V0`) and in the wish `version` byte. A change to any of them means a new version tag and a new season.
 - The HTTP API is versioned by path (`/v0/`).
 
-## 12. Test vectors (TBD)
+## 12. Test vectors
+
+In the code so far: yespower 1.0 with its reference vectors and a Protogaea spark vector ([`pow`](../pow/src/lib.rs)); a `proposal_id` with its signature, strict verification (a non-canonical `S`, a small-order key), a challenge, a spark found under an easy target, and the roots of small spark log trees ([`protocol`](../protocol/src)). They will be collected into files that other implementations can read.
 
 Planned sets:
 - yespower with the `pers` string;
