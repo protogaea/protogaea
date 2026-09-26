@@ -13,6 +13,7 @@ pub mod climate;
 pub mod genome;
 pub mod map;
 pub mod merkle;
+pub mod miracle;
 pub mod rifts;
 pub mod rng;
 pub mod ruleset;
@@ -22,8 +23,9 @@ pub mod state;
 
 pub use genome::Genome;
 pub use map::{genesis, world_plan};
+pub use miracle::Miracle;
 pub use ruleset::Ruleset;
-pub use sim::{epoch_seed, step_epoch, DeathCause, EpochReport};
+pub use sim::{epoch_seed, step_epoch, step_epoch_with, DeathCause, EpochReport};
 pub use state::{
     Biome, Cell, Clade, Effect, EffectKind, MuseumEntry, Organism, OrganismProof, Rift, RiftPhase,
     StateRoots, World,

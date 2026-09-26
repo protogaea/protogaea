@@ -5,7 +5,9 @@
 
 use crate::rifts::Plan;
 use crate::rng::derive;
-use crate::{epoch_seed, genesis, step_epoch, world_plan, Biome, EpochReport, Ruleset, World};
+use crate::{
+    epoch_seed, genesis, step_epoch_with, world_plan, Biome, EpochReport, Miracle, Ruleset, World,
+};
 
 pub struct Run {
     pub seed: u64,
@@ -50,7 +52,7 @@ impl Run {
     }
 
     /// The stage A stand-in for the drand beacon (spec §20): derived from the run seed.
-    fn beacon(&self, epoch: u64) -> [u8; 32] {
+    pub fn beacon(&self, epoch: u64) -> [u8; 32] {
         derive(
             b"PROTOGAEA/SIM_BEACON/V0",
             &[&self.seed.to_le_bytes(), &epoch.to_le_bytes()],
@@ -58,6 +60,11 @@ impl Run {
     }
 
     pub fn step(&mut self) -> EpochReport {
+        self.step_with(&[])
+    }
+
+    /// One epoch with the miracles selected for it.
+    pub fn step_with(&mut self, miracles: &[Miracle]) -> EpochReport {
         let epoch = self.world.epoch;
         let seed = epoch_seed(
             &self.world.world_id,
@@ -65,7 +72,7 @@ impl Run {
             &self.beacon(epoch),
             &self.last_hash,
         );
-        let report = step_epoch(&mut self.world, &self.rules, &seed);
+        let report = step_epoch_with(&mut self.world, &self.rules, &seed, miracles);
         self.last_hash = self.world.state_root();
         report
     }

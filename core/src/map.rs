@@ -59,6 +59,7 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
         museum: Vec::new(),
         spore_bank: rules.founders.clone(),
         revivals: Vec::new(),
+        cooldowns: Vec::new(),
         ended: false,
         next_organism_id: 1,
         next_clade_id: 1,

@@ -59,6 +59,8 @@ pub struct EpochReport {
     pub clades_extinct: Vec<Clade>,
     /// Every organism that died, as it was at that moment, in the order the deaths happened.
     pub deaths_list: Vec<(Organism, DeathCause)>,
+    /// The miracles given for this epoch that were applied, and those refused with the reason.
+    pub miracles: crate::miracle::Outcomes,
 }
 
 /// `BLAKE3("PROTOGAEA/EPOCH_SEED/V0" ‖ world_id ‖ E ‖ beacon_E ‖ header_hash_{E−1})` (spec §14).
@@ -76,9 +78,19 @@ pub fn epoch_seed(
 
 /// Runs one epoch.
 pub fn step_epoch(world: &mut World, rules: &Ruleset, epoch_seed: &[u8; 32]) -> EpochReport {
+    step_epoch_with(world, rules, epoch_seed, &[])
+}
+
+/// One epoch with the miracles selected for it (spec §19), applied at its boundary.
+pub fn step_epoch_with(
+    world: &mut World,
+    rules: &Ruleset,
+    epoch_seed: &[u8; 32],
+    miracles: &[crate::Miracle],
+) -> EpochReport {
     let rng = Rng::new(epoch_seed);
     let mut report = EpochReport::default();
-    epoch_boundary(world, rules, &rng, &mut report);
+    epoch_boundary(world, rules, &rng, miracles, &mut report);
     let mut scratch = Scratch::default();
     for tick in 0..rules.ticks_per_epoch {
         run_tick(world, rules, &rng, tick, &mut report, &mut scratch);
@@ -105,7 +117,13 @@ const NEIGHBORS: [(i32, i32); 8] = [
 // The epoch boundary (spec §13).
 // ---------------------------------------------------------------------------------------
 
-fn epoch_boundary(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+fn epoch_boundary(
+    world: &mut World,
+    rules: &Ruleset,
+    rng: &Rng,
+    miracles: &[crate::Miracle],
+    report: &mut EpochReport,
+) {
     // 1. Rift phase changes.
     rift_changes(world, rules, report);
     // 2. Natural events.
@@ -119,7 +137,8 @@ fn epoch_boundary(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut Ep
         _ => {}
     }
     plague(world, rules, rng, report);
-    // 3. Miracles arrive in stage B′.
+    // 3. Miracles: weather, migrate, revive.
+    report.miracles = crate::miracle::apply(world, rules, miracles, &mut report.clades_founded);
     // 4. Natural revival.
     natural_revival(world, rules, rng, report);
 }
@@ -747,6 +766,14 @@ fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
                             s.effect_pct[c] * u64::from(rules.events.drought_growth_pct) / 100;
                     }
                     EffectKind::Flood => s.biome[c] = Biome::Shallows,
+                    EffectKind::Rain => {
+                        s.effect_pct[c] =
+                            s.effect_pct[c] * u64::from(rules.miracles.rain_growth_pct) / 100;
+                    }
+                    EffectKind::Dry => {
+                        s.effect_pct[c] =
+                            s.effect_pct[c] * u64::from(rules.miracles.dry_growth_pct) / 100;
+                    }
                 }
             }
         }

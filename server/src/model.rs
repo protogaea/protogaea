@@ -59,6 +59,9 @@ pub struct Roots {
     pub rifts: String,
     pub spore_bank: String,
     pub revivals: String,
+    /// Present only while miracles' cooldowns run.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cooldowns: Option<String>,
 }
 
 impl From<&StateRoots> for Roots {
@@ -73,6 +76,7 @@ impl From<&StateRoots> for Roots {
             rifts: hex(&r.rifts),
             spore_bank: hex(&r.spore_bank),
             revivals: hex(&r.revivals),
+            cooldowns: r.cooldowns.as_ref().map(|c| hex(c)),
         }
     }
 }

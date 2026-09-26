@@ -231,6 +231,52 @@ impl BiomeMix {
     }
 }
 
+/// Miracles (spec §5): the effects and limits of `weather`, `migrate` and `revive`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Miracles {
+    /// `weather` covers the square of this radius (3: 7 × 7) for this many ticks.
+    pub weather_radius: u8,
+    pub weather_ticks: u32,
+    /// Food growth under rain and drought, in percent.
+    pub rain_growth_pct: u32,
+    pub dry_growth_pct: u32,
+    /// Moisture added by rain or taken by drought when the miracle begins.
+    pub weather_moisture: u8,
+    /// A weather region and a relocated clade cool down for this many epochs.
+    pub cooldown_epochs: u32,
+    /// `migrate`: the source area's radius (2: 5 × 5), the clade's members needed there, and how
+    /// many move.
+    pub migrate_radius: u8,
+    pub migrate_min: u32,
+    pub migrate_moved: u32,
+    /// `revive`: how long a museum entry must have been extinct, the radius (2: 5 × 5) and the
+    /// most organisms around the start, and how many organisms come back.
+    pub revive_extinct_epochs: u32,
+    pub revive_radius: u8,
+    pub revive_max_nearby: u32,
+    pub revive_count: u32,
+}
+
+impl Default for Miracles {
+    fn default() -> Self {
+        Self {
+            weather_radius: 3,
+            weather_ticks: 36,
+            rain_growth_pct: 150,
+            dry_growth_pct: 50,
+            weather_moisture: 30,
+            cooldown_epochs: 12,
+            migrate_radius: 2,
+            migrate_min: 10,
+            migrate_moved: 3,
+            revive_extinct_epochs: 36,
+            revive_radius: 2,
+            revive_max_nearby: 8,
+            revive_count: 5,
+        }
+    }
+}
+
 /// Natural revival from the spore bank and the end of a season by extinction (spec §12).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revival {
@@ -316,6 +362,8 @@ pub struct Ruleset {
     pub museum_capacity: u32,
     pub revival: Revival,
     pub weights: MoveWeights,
+    #[serde(default)]
+    pub miracles: Miracles,
 }
 
 impl Default for Ruleset {
@@ -454,6 +502,7 @@ impl Default for Ruleset {
                 crowd_per_neighbor: 150,
                 dispersal_per_step: 10,
             },
+            miracles: Miracles::default(),
         }
     }
 }

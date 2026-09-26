@@ -44,7 +44,7 @@ CI builds the crate for `wasm32-unknown-unknown` and compares state roots across
 | Death and decomposition (§11.6) | Done |
 | Clades (§12) | Done, with the museum of extinct named clades |
 | Spore bank (§12) | Done: natural revival and the end of a season by extinction |
-| Tick order (§13) | Done. The epoch boundary applies the rift schedule, draws natural events and runs natural revival; miracles are still to come |
+| Tick order (§13) | Done. The epoch boundary applies the rift schedule, draws natural events, applies miracles (`weather`, `migrate`, `revive`, with their hard checks and cooldowns) and runs natural revival |
 | Times of year and moisture (§10) | Done: a 372-epoch year, smooth transitions, moisture drifting to a seasonal target |
 | Natural events (§10) | Floods, wildfire with ash, great drought, plague ("kill the winner") |
 | State root (§15) | Done: Merkle trees in the shape of RFC 9162 (see below), with inclusion proofs for organisms |

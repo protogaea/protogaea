@@ -130,6 +130,10 @@ pub enum EffectKind {
     Drought = 2,
     /// A flood: land acts as shallows.
     Flood = 3,
+    /// A `weather` miracle: rain, food grows faster.
+    Rain = 4,
+    /// A `weather` miracle: drought, food grows slower.
+    Dry = 5,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +153,7 @@ impl Effect {
         let (dx, dy, r) = ((x - cx).abs(), (y - cy).abs(), i32::from(self.radius));
         match self.kind {
             EffectKind::Ash => dx * dx + dy * dy <= r * r,
-            EffectKind::Drought => dx <= r && dy <= r,
+            EffectKind::Drought | EffectKind::Rain | EffectKind::Dry => dx <= r && dy <= r,
             EffectKind::Flood => dx * dx + dy * dy <= r * r && world.cells[cell].biome.floods(),
         }
     }
@@ -204,6 +208,9 @@ pub struct World {
     pub spore_bank: Vec<Founder>,
     /// The epochs at which the spore bank revived the world.
     pub revivals: Vec<u64>,
+    /// Miracles' cooldowns still running (spec §5), in the order they started.
+    #[serde(default)]
+    pub cooldowns: Vec<Cooldown>,
     /// The season ended by extinction (spec §12).
     pub ended: bool,
     pub next_organism_id: u64,
@@ -335,6 +342,12 @@ impl World {
                     .map(|e| e.to_le_bytes().to_vec())
                     .collect(),
             ),
+            cooldowns: (!self.cooldowns.is_empty()).then(|| {
+                tree(
+                    COOLDOWN,
+                    self.cooldowns.iter().map(cooldown_bytes).collect(),
+                )
+            }),
         }
     }
 
@@ -462,6 +475,25 @@ const EFFECT: &[u8] = b"PROTOGAEA/STATE/A3/EFFECT";
 const RIFT: &[u8] = b"PROTOGAEA/STATE/A3/RIFT";
 const SPORE: &[u8] = b"PROTOGAEA/STATE/A3/SPORE";
 const REVIVAL: &[u8] = b"PROTOGAEA/STATE/A3/REVIVAL";
+const COOLDOWN: &[u8] = b"PROTOGAEA/STATE/A3/COOLDOWN";
+
+/// A miracle's cooldown (spec §5): a weather region (by its center), a relocated clade or a
+/// revived entry, until an epoch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cooldown {
+    /// `miracle::COOLDOWN_*`.
+    pub kind: u8,
+    pub key: u32,
+    pub until: u64,
+}
+
+fn cooldown_bytes(c: &Cooldown) -> Vec<u8> {
+    let mut out = Vec::with_capacity(13);
+    out.push(c.kind);
+    out.extend_from_slice(&c.key.to_le_bytes());
+    out.extend_from_slice(&c.until.to_le_bytes());
+    out
+}
 
 /// The roots of the state's subtrees, in the order they enter `state_root`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -483,11 +515,15 @@ pub struct StateRoots {
     pub spore_bank: Hash,
     /// The epochs of natural revivals.
     pub revivals: Hash,
+    /// Miracles' cooldowns; absent while there are none, so that states without miracles keep
+    /// the root they had before miracles existed.
+    #[serde(default)]
+    pub cooldowns: Option<Hash>,
 }
 
 impl StateRoots {
     /// `state_root = BLAKE3("PROTOGAEA/STATE_ROOT/A3" ‖ globals ‖ cells ‖ organisms ‖ clades ‖
-    /// museum ‖ effects ‖ rifts ‖ spore_bank ‖ revivals)`.
+    /// museum ‖ effects ‖ rifts ‖ spore_bank ‖ revivals [‖ cooldowns])`.
     pub fn root(&self) -> Hash {
         let mut h = blake3::Hasher::new();
         h.update(b"PROTOGAEA/STATE_ROOT/A3");
@@ -503,6 +539,9 @@ impl StateRoots {
             &self.revivals,
         ] {
             h.update(part);
+        }
+        if let Some(c) = &self.cooldowns {
+            h.update(c);
         }
         *h.finalize().as_bytes()
     }

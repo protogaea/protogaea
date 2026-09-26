@@ -220,6 +220,8 @@ The weights `w_*` are TBD. Ties are broken by counter-based randomness.
 
 Order at the epoch boundary: rifts → natural events → `weather` → `migrate` → `revive` → natural revival.
 
+**In the core** ([`core/src/miracle.rs`](../core/src/miracle.rs), parameters in `Ruleset::miracles`): each miracle is checked hard when applied and refused with a reason if it no longer holds; the same check is the soft check of open wishes. `weather` changes moisture once when it begins and food growth for its 36 ticks; its region is the 7 × 7 square, and two regions overlap if their centers are within 6 cells. `migrate` moves the clade's lowest ids in the source area into the 3 × 3 around the target, filling cells up to `max_per_cell` in row order. `revive` places 5 organisms in the 3 × 3 around the start the same way; each edit step moves one point from trait `i` to trait `j`, so the trait budget holds; a museum revival's clade has the museum clade as its parent, a spore bank revival's has none. Cooldowns are part of the state; their subtree enters `state_root` only while one runs, so a world without miracles keeps its roots.
+
 ### Ledger
 
 | Parameter | Value |
