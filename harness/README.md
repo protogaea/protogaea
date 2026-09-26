@@ -178,7 +178,7 @@ Measured on 2026-09-26 over full 42-day seasons on fresh seeds 101 to 113 (12 se
 - **Health is the same at both sizes.** The larger world does not make continents diverge more.
 - **More stories, but of the routine kinds.** A season at 128 × 128 tells about twice as many crossings (167 against 83) and three times as many comebacks (50 against 15), but fewer of the rarer ones: new leaders 4 against 17, invasions 28 against 45, the last of a great clade 6 against 19. A larger world has a steadier leader.
 - **It costs 4.4 times as much:** about 72 s of one core per world day, against the target of 30 s (spec §29), and four times the snapshots, replay frames and time-machine work in the browser.
-- **Arms races are almost never told** at either size (0.1 and 0 a season): the detector's thresholds or the hunters' balance need a look.
+- **Arms races were almost never told** at either size (0.1 and 0 a season): the detector compared world-wide daily means, which swing with the hunters' booms and busts (15 to 500 hunters from one day to the next). It now compares two three-day windows with enough hunters in both; with the Season 1 numbers it tells 7 arms races in 12 seasons, in half of them.
 
 Season 1 stays at 64 × 64 unless the core gets about 2.5 times faster.
 
