@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Stage B5, part 1: "While you were away" (`/v0/digest`), the last world day replayed in about 30 seconds with story captions (`/v0/replay`, compact frames of the last two world days) and predictions for tomorrow in the viewer.
 - Stage B4, part 1: story detectors (`protogaea-stories`) in the harness, the world server (`/v0/stories`, kept across restarts) and the viewer ("Today's stories").
 - Stage B3: automatic binomial clade names, stored once a clade reaches the naming threshold; the Muller plot and the clade tree in the viewer; `/v0/tree` and a Muller plot folded to named clades on the server.
 - Stage B2, the viewer (`viewer/`): the map with layers and genome glyphs, live mode, the season timeline, clade and organism cards, the event feed and permanent links, in English and Russian; the server serves it at `/app/` and its API gains the traits on the map, past epochs from snapshots and a newest-first feed.

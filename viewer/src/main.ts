@@ -9,6 +9,8 @@ import { fmt, lang, t } from './i18n';
 import { WorldMap, type Layers } from './map';
 import { renderMuller, type Marker, type MullerData, type TreeClade } from './muller';
 import { renderTree } from './tree';
+import * as predictions from './predictions';
+import { parseFrames, stateOf } from './replay';
 
 // Permanent links live in the hash: #epoch=N&clade=ID&organism=ID. Without `epoch` the viewer is
 // live and follows the world epoch by epoch.
@@ -354,7 +356,61 @@ function renderClade(c: CladeInfo) {
       <div class="fact">${t.parent}<b>${c.parent_id ? `<a href="${link({ ...route, clade: c.parent_id, organism: undefined })}">${cladeLabel(c.parent_id)}</a>` : '-'}</b></div>
     </div>
     ${kids ? `<div class="fact" style="margin-top:14px">${t.children}<div class="links" style="margin-top:4px">${kids}</div></div>` : ''}
+    ${c.extinct_epoch === null && route.epoch === undefined ? predictHtml(c) : ''}
     ${traitsTable(c.reference.traits)}`;
+}
+
+// ---------------------------------------------------------------- predictions for tomorrow
+
+function predictHtml(c: CladeInfo): string {
+  const list = predictions.load();
+  const row = (question: predictions.Question, text: string) => {
+    const p = predictions.pending(list, c.id, question);
+    const right = p
+      ? `<span class="done">${fmt(t.predictPending, { answer: p.answer ? t.yes : t.no, day: dayOf(p.due).toFixed(2) })}</span>`
+      : `<span class="btns"><button class="btn" data-q="${question}" data-a="1">${t.yes}</button><button class="btn" data-q="${question}" data-a="0">${t.no}</button></span>`;
+    return `<div class="q"><span>${text}</span>${right}</div>`;
+  };
+  return `<div class="predict" data-clade="${c.id}" data-living="${c.living}"><h4>${t.predictTitle}</h4>${row('survive', t.predictSurvive)}${row('grow', fmt(t.predictGrow, { n: c.living }))}</div>`;
+}
+
+function bindPredict(el: HTMLElement) {
+  el.querySelectorAll<HTMLButtonElement>('.predict .btn').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const box = b.closest<HTMLElement>('.predict')!;
+      predictions.make(
+        Number(box.dataset.clade),
+        b.dataset.q as predictions.Question,
+        b.dataset.a === '1',
+        world.header.epoch,
+        world.epochs_per_day,
+        Number(box.dataset.living),
+      );
+      await renderDetails();
+      renderPredictions();
+    }),
+  );
+}
+
+function renderPredictions() {
+  const list = predictions.load();
+  const el = $('predictions');
+  if (list.length === 0) {
+    el.hidden = true;
+    return;
+  }
+  const settled = list.filter((p) => p.correct !== undefined);
+  const right = settled.filter((p) => p.correct).length;
+  const recent = list.slice(-6).reverse();
+  el.hidden = false;
+  el.innerHTML = `<h2>${t.predictionsTitle}</h2>
+    <div class="subtitle">${fmt(t.predictionsScore, { right, settled: settled.length, pending: list.length - settled.length })}</div>
+    <ul class="plist">${recent
+      .map((p) => {
+        const r = p.correct === undefined ? `<span class="r wait">${t.predictionWaiting}</span>` : p.correct ? `<span class="r ok">${t.predictionRight}</span>` : `<span class="r bad">${t.predictionWrong}</span>`;
+        return `<li><span><a href="${link({ ...route, clade: p.clade, organism: undefined })}">${cladeLabel(p.clade)}</a>: ${p.question === 'survive' ? t.qSurvive : t.qGrow}, ${p.answer ? t.yes : t.no}</span>${r}</li>`;
+      })
+      .join('')}</ul>`;
 }
 
 function renderOrganism(o: OrganismInfo) {
@@ -396,6 +452,7 @@ async function renderDetails() {
     }
     el.hidden = false;
     el.querySelector('.close')?.addEventListener('click', () => go({ epoch: route.epoch }));
+    bindPredict(el);
   } catch (e) {
     el.hidden = false;
     el.innerHTML = `<div class="card-head"><span class="subtitle">${esc(e instanceof Error ? e.message : String(e))}</span>${closeBtn}</div>`;
@@ -504,7 +561,7 @@ async function renderView() {
   renderTabs();
   $('muller').hidden = view !== 'muller';
   $('tree').hidden = view !== 'tree';
-  for (const id of ['layers', 'legend', 'minimap']) $(id).style.visibility = view === 'map' ? '' : 'hidden';
+  for (const id of ['layers', 'legend', 'minimap', 'replay-btn']) $(id).style.visibility = view === 'map' ? '' : 'hidden';
   document.querySelector<HTMLElement>('.zoom')!.style.visibility = view === 'map' ? '' : 'hidden';
   if (view === 'map') return;
   await loadCharts();
@@ -562,7 +619,9 @@ async function poll() {
     const next = await api.world();
     const moved = next.header.epoch !== world.header.epoch;
     world = next;
-    if (moved && route.epoch === undefined) {
+    rememberSeen();
+    if (moved && (await predictions.resolve(world.header.epoch))) renderPredictions();
+    if (moved && route.epoch === undefined && !replaying) {
       await showEpoch(undefined, true);
       renderStats(world.header);
       renderSeason();
@@ -572,6 +631,117 @@ async function poll() {
     }
   } catch (e) {
     banner(esc(fmt(t.error, { message: e instanceof Error ? e.message : String(e) })), true);
+  }
+}
+
+// ---------------------------------------------------------------- "While you were away"
+
+const SEEN_KEY = 'protogaea.lastSeen';
+function rememberSeen() {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify({ epoch: world.header.epoch, world: world.world_id }));
+  } catch {
+    /* no storage, no digest */
+  }
+}
+function lastSeen(): number | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) ?? 'null');
+    return v && v.world === world.world_id ? Number(v.epoch) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function showDigest(since: number) {
+  const d = await api.digest(since);
+  learnNames(d.names);
+  const el = $('digest');
+  const minutes = ((d.now - d.since) * 24 * 60) / world.epochs_per_day;
+  const time = minutes >= 90 ? fmt(t.hours, { h: Math.round(minutes / 60) }) : fmt(t.minutes, { m: Math.round(minutes) });
+  const popThen = d.then?.population;
+  const leaderThen = d.then?.dominant_clade;
+  const leaderNow = d.header.dominant_clade;
+  el.innerHTML = `<div class="digest" role="dialog" aria-modal="true">
+    <h2>${t.awayTitle}</h2>
+    <p class="lead">${fmt(t.awayFor, { time, from: dayOf(d.since).toFixed(1), to: dayOf(d.now).toFixed(1) })}</p>
+    <div class="numbers">
+      <div>${t.awayPopulation}<b>${popThen !== undefined ? `${nf.format(popThen)} → ` : ''}${nf.format(d.header.population)}</b></div>
+      <div>${t.awayNamed}<b>${d.counts.clade_named ?? 0}</b></div>
+      <div>${t.awayExtinct}<b>${d.counts.clade_extinct ?? 0}</b></div>
+    </div>
+    <div class="fact">${t.awayLeader}<b>${leaderThen !== undefined && leaderThen !== leaderNow ? `${cladeLabel(leaderThen)} → ` : ''}${cladeLabel(leaderNow)}</b></div>
+    ${d.bridges_closed.length ? `<div class="fact" style="margin-top:10px">${t.awayBridges}<b>${d.bridges_closed.map((e) => e.data.bridge).join(', ')}</b></div>` : ''}
+    <h3>${t.awayStories}</h3>
+    ${d.stories.length ? `<div class="stories">${d.stories.map(storyHtml).join('')}</div>` : `<p class="empty">${t.awayNoStories}</p>`}
+    <div class="actions"><button class="btn primary" id="digest-close">${t.awayClose}</button></div>
+  </div>`;
+  el.hidden = false;
+  const close = () => {
+    el.hidden = true;
+  };
+  $('digest-close').addEventListener('click', close);
+  el.addEventListener('click', (ev) => {
+    if (ev.target === el) close();
+  });
+  el.querySelectorAll('a').forEach((a) => a.addEventListener('click', close));
+}
+
+// ---------------------------------------------------------------- the last day in thirty seconds
+
+let replaying = false;
+let stopReplay = () => {};
+
+async function playReplay() {
+  if (replaying) return stopReplay();
+  const bar = $('replay-bar');
+  const caption = $('replay-caption');
+  bar.hidden = false;
+  bar.innerHTML = `<span class="clock">${t.replayLoading}</span>`;
+  replaying = true;
+  let stopped = false;
+  stopReplay = () => {
+    stopped = true;
+  };
+  $('replay-btn').querySelector('span')!.textContent = t.replayStop;
+  try {
+    const [buf] = await Promise.all([api.replay(2)]);
+    const frames = parseFrames(buf);
+    if (frames.length < 2 || !state) {
+      bar.innerHTML = `<span class="clock">${t.replayEmpty}</span>`;
+      await new Promise((r) => setTimeout(r, 2500));
+      return;
+    }
+    const base = state;
+    const { stories, names: storyNames } = await api.storiesSince(frames[0].epoch);
+    learnNames(storyNames);
+    const told = stories.slice().sort((a, b) => a.epoch - b.epoch);
+    const perFrame = Math.max(90, 30000 / frames.length);
+    for (let i = 0; i < frames.length && !stopped; i++) {
+      const f = frames[i];
+      map.setState(stateOf(f, base), i > 0, perFrame * 0.95);
+      const pct = ((i + 1) / frames.length) * 100;
+      bar.innerHTML = `<span class="clock">${t.day} ${dayOf(f.epoch).toFixed(2)}</span><span class="track"><i style="width:${pct}%"></i></span><button class="btn" id="replay-stop">${t.replayStop}</button>`;
+      $('replay-stop').addEventListener('click', () => stopReplay());
+      const now = told.filter((s) => s.epoch <= f.epoch && s.epoch > (frames[i - 1]?.epoch ?? -1));
+      if (now.length) {
+        const s = now.sort((a, b) => b.score - a.score)[0];
+        const [title] = t.story[s.kind] ?? [s.kind];
+        const html = storyHtml(s).replace(/^.*?<p>/s, '').replace(/<\/p>.*$/s, '');
+        caption.innerHTML = `<b>${title}</b>${html}`;
+        caption.hidden = false;
+        setTimeout(() => (caption.hidden = true), 3200);
+      }
+      await new Promise((r) => setTimeout(r, perFrame));
+    }
+  } catch (e) {
+    banner(esc(fmt(t.error, { message: e instanceof Error ? e.message : String(e) })), true);
+  } finally {
+    replaying = false;
+    bar.hidden = true;
+    caption.hidden = true;
+    $('replay-btn').querySelector('span')!.textContent = t.replayButton;
+    await showEpoch(route.epoch, false);
   }
 }
 
@@ -603,7 +773,15 @@ async function boot() {
   $('zoom-out').title = t.zoomOut;
   $('zoom-fit').title = t.fit;
   window.addEventListener('hashchange', onRoute);
+  $('replay-btn').querySelector('span')!.textContent = t.replayButton;
+  $('replay-btn').addEventListener('click', () => playReplay());
+  const seen = lastSeen();
   await onRoute();
+  if (seen !== undefined && world.header.epoch - seen >= 12) showDigest(seen).catch(() => {});
+  rememberSeen();
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && rememberSeen());
+  predictions.resolve(world.header.epoch).then(() => renderPredictions());
+  renderPredictions();
   await Promise.all([renderStories(), renderFeed()]);
   setInterval(renderClock, 1000);
   setInterval(poll, 5000);

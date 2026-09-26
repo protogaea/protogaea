@@ -79,6 +79,8 @@ pub fn router(api: Api, viewer: bool) -> Router {
         .route("/v0/muller", get(muller))
         .route("/v0/tree", get(tree))
         .route("/v0/stories", get(stories))
+        .route("/v0/digest", get(digest))
+        .route("/v0/replay", get(replay))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
         .route("/health", get(|| async { "ok" }))
         .with_state(api)
@@ -539,6 +541,116 @@ async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
     Ok(Json(
         json!({ "since": since, "stories": rows, "names": names }),
     ))
+}
+
+#[derive(Deserialize)]
+struct DigestQuery {
+    since: u64,
+}
+
+/// "While you were away" (spec §7): what changed since an epoch the viewer last saw.
+async fn digest(State(api): State<Api>, Query(q): Query<DigestQuery>) -> Reply {
+    let (now, header) = {
+        let live = api.live.read().expect("the lock is never poisoned");
+        (
+            live.world.epoch,
+            serde_json::to_value(&live.header).unwrap_or(Value::Null),
+        )
+    };
+    let since = q.since.min(now);
+    let (then, counts, bridges, stories, names) = read(&api, move |c| {
+        let then = store::header(c, since)?;
+        let counts = store::event_counts(c, since)?;
+        let bridges = store::events_since(c, since, "bridge_closed")?;
+        // The best stories of the time away, one per clade and kind first.
+        let all = store::stories(c, since + 1, 300)?;
+        let (mut first, mut rest) = (Vec::new(), Vec::new());
+        let mut seen = std::collections::HashSet::new();
+        for s in all {
+            let key = (
+                s["clade_id"].as_i64(),
+                s["kind"].as_str().unwrap_or_default().to_string(),
+            );
+            if seen.insert(key) {
+                first.push(s);
+            } else {
+                rest.push(s);
+            }
+        }
+        let stories: Vec<Value> = first.into_iter().chain(rest).take(6).collect();
+        let mut ids: Vec<u32> = stories
+            .iter()
+            .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
+            .flatten()
+            .map(|id| id as u32)
+            .collect();
+        for h in [then.as_ref(), None].into_iter().flatten() {
+            if let Some(d) = h["dominant_clade"].as_u64() {
+                ids.push(d as u32);
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let names = store::clade_names(c, &ids)?;
+        Ok((then, counts, bridges, stories, names))
+    })
+    .await?;
+    let mut names: serde_json::Map<String, Value> = names
+        .into_iter()
+        .map(|(id, n)| (id.to_string(), Value::String(n)))
+        .collect();
+    if let Some(d) = header["dominant_clade"].as_u64() {
+        let d = d as u32;
+        if !names.contains_key(&d.to_string()) {
+            let found = read(&api, move |c| store::clade_names(c, &[d])).await?;
+            for (id, n) in found {
+                names.insert(id.to_string(), Value::String(n));
+            }
+        }
+    }
+    Ok(Json(json!({
+        "since": since,
+        "now": now,
+        "then": then,
+        "header": header,
+        "counts": counts.into_iter().collect::<std::collections::BTreeMap<_, _>>(),
+        "bridges_closed": bridges,
+        "stories": stories,
+        "names": names,
+    })))
+}
+
+#[derive(Deserialize)]
+struct ReplayQuery {
+    from: Option<u64>,
+    step: Option<u64>,
+}
+
+/// Frames of the recent past for the replay, binary: for each frame the epoch (u32) and the
+/// number of organisms (u32), then per organism the low 32 bits of its id (u32), its cell (u16),
+/// clade (u32), hue (u16) and archetype (u8); all little-endian.
+async fn replay(
+    State(api): State<Api>,
+    Query(q): Query<ReplayQuery>,
+) -> Result<Response, ApiError> {
+    let now = api
+        .live
+        .read()
+        .expect("the lock is never poisoned")
+        .world
+        .epoch;
+    let from = q
+        .from
+        .unwrap_or_else(|| now.saturating_sub(u64::from(api.rules.epochs_per_day)));
+    let step = q.step.unwrap_or(2).clamp(1, 48);
+    let frames = read(&api, move |c| store::frames(c, from, now, step)).await?;
+    let mut out = Vec::new();
+    for (epoch, data) in frames {
+        out.extend_from_slice(&(epoch as u32).to_le_bytes());
+        out.extend_from_slice(&((data.len() / store::FRAME_ORGANISM) as u32).to_le_bytes());
+        out.extend_from_slice(&data);
+    }
+    Ok(([(header::CONTENT_TYPE, "application/octet-stream")], out).into_response())
 }
 
 #[derive(Deserialize)]

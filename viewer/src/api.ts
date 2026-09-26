@@ -175,6 +175,23 @@ export const api = {
   tree: () =>
     get<{ clades: [number, number, number, number | null, number, number, string | null][]; name_threshold: number }>('/v0/tree'),
   stories: (limit = 6) => get<{ since: number; stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?limit=${limit}`),
+  digest: (since: number) =>
+    get<{
+      since: number;
+      now: number;
+      then: Header | null;
+      header: Header;
+      counts: Record<string, number>;
+      bridges_closed: WorldEvent[];
+      stories: StoryRow[];
+      names: Record<string, string>;
+    }>(`/v0/digest?since=${since}`),
+  replay: async (step = 2): Promise<ArrayBuffer> => {
+    const res = await fetch(`/v0/replay?step=${step}`);
+    if (!res.ok) throw new ApiError(res.status, 'E_HTTP', `${res.status}`);
+    return res.arrayBuffer();
+  },
+  storiesSince: (since: number) => get<{ stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?since=${since}&limit=60`),
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),

@@ -21,6 +21,9 @@ npm run build    # dist/, for protogaea-server --viewer viewer/dist
 - **The season timeline:** the six phases of the Breaking of Pangea, the current day and when each land bridge closes.
 - **Cards** for a clade (population history, parent and child clades, reference genome) and an organism (clade, parent, offspring, cause of death, genome).
 - **Today's stories:** the best stories of the last world day (comebacks, crossings, invasions, arms races, the last of a great clade, a new leader, clades split by the sea, falls), each a sentence with the protagonist and a link.
+- **While you were away:** after an absence of an hour of world time or more, a summary of what changed: population, the leading clade then and now, clades named and extinct, land bridges closed and the best stories.
+- **The last day in 30 seconds:** the last world day replayed on the map, organisms walking between frames, with the day's stories as captions when they happen.
+- **Predictions for tomorrow:** on a living clade's card, will it still be alive, or larger, this time tomorrow; checked the next day and scored in "My predictions". Kept in the browser only.
 - **The feed** of events: phases, clades named and extinct, a change of the dominant clade, land bridges closing, wildfires, droughts, floods, plague and revivals.
 - **Permanent links** in the hash: `#epoch=N` opens an archived snapshot, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
 

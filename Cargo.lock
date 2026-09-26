@@ -524,6 +524,7 @@ version = "0.0.1"
 dependencies = [
  "axum",
  "protogaea-core",
+ "protogaea-stories",
  "rusqlite",
  "serde",
  "serde_json",

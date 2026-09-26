@@ -52,7 +52,7 @@ Season 1, **The Breaking of Pangea**, begins with a single supercontinent that s
 |---|---|---|
 | Spec | Specification v0.2: English canonical, Russian translation | Done |
 | A | Deterministic core, WASM build, balance harness, Season 1 map generator | Nearly done: the parameter search for Season 1 is running |
-| B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot and the clade tree are done; next are stories, then what brings viewers back the next day |
+| B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot, the clade tree, the stories of the day, the "While you were away" digest, the replay of the last day and predictions for tomorrow are done; next are subscriptions and a test with friends |
 | B′ | Closed observation test with invited users, no PoW | Planned |
 | C | Sparks: yespower, desktop app, WASM client, spark log, watchers | Planned |
 | D | Public Season 1 — The Breaking of Pangea | Planned |

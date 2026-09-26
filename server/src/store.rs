@@ -16,6 +16,11 @@ use crate::names;
 /// Clade counts for the Muller plot are kept once per world hour.
 pub const MULLER_EVERY: u64 = 12;
 
+/// Replay frames are kept for this many recent epochs (two world days).
+pub const FRAMES_KEPT: u64 = 576;
+/// Bytes per organism in a frame: id (low 32 bits), cell, clade, hue, archetype.
+pub const FRAME_ORGANISM: usize = 13;
+
 const SCHEMA: &str = "
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -58,6 +63,10 @@ CREATE TABLE IF NOT EXISTS organisms (
 );
 CREATE INDEX IF NOT EXISTS organisms_parent ON organisms (parent_id);
 CREATE INDEX IF NOT EXISTS organisms_clade ON organisms (clade_id);
+CREATE TABLE IF NOT EXISTS frames (
+    epoch INTEGER PRIMARY KEY,
+    data BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS stories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     epoch INTEGER NOT NULL,
@@ -162,7 +171,7 @@ impl Store {
     pub fn clear(&self) -> Result<()> {
         self.conn
             .execute_batch(
-                "DELETE FROM epochs; DELETE FROM events; DELETE FROM clades; DELETE FROM stories;
+                "DELETE FROM epochs; DELETE FROM events; DELETE FROM clades; DELETE FROM stories; DELETE FROM frames;
                  DELETE FROM organisms; DELETE FROM muller; DELETE FROM meta;",
             )
             .map_err(err)
@@ -272,6 +281,16 @@ impl Store {
         if epoch.is_multiple_of(MULLER_EVERY) {
             insert_muller(&tx, rec.world)?;
         }
+        tx.execute(
+            "INSERT OR REPLACE INTO frames (epoch, data) VALUES (?1, ?2)",
+            params![epoch as i64, frame(rec.world)],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "DELETE FROM frames WHERE epoch < ?1",
+            [epoch.saturating_sub(FRAMES_KEPT) as i64],
+        )
+        .map_err(err)?;
         tx.commit().map_err(err)
     }
 
@@ -284,6 +303,7 @@ impl Store {
             "DELETE FROM epochs WHERE epoch > {e};
              DELETE FROM events WHERE epoch > {e};
              DELETE FROM stories WHERE epoch > {e};
+             DELETE FROM frames WHERE epoch > {e};
              DELETE FROM muller WHERE epoch > {e};
              DELETE FROM organisms WHERE born_epoch > {e};
              UPDATE organisms SET died_epoch = NULL, cause = NULL, at_death = NULL WHERE died_epoch > {e};
@@ -347,6 +367,20 @@ fn give_name(
         })
         .map(drop)
         .map_err(err)
+}
+
+/// A compact picture of where every organism stands, for the replay: per organism the low 32 bits
+/// of its id, its cell, clade, hue and archetype, little-endian.
+fn frame(world: &World) -> Vec<u8> {
+    let mut out = Vec::with_capacity(world.organisms.len() * FRAME_ORGANISM);
+    for o in &world.organisms {
+        out.extend_from_slice(&(o.id as u32).to_le_bytes());
+        out.extend_from_slice(&o.cell.to_le_bytes());
+        out.extend_from_slice(&o.clade_id.to_le_bytes());
+        out.extend_from_slice(&o.genome.hue.to_le_bytes());
+        out.push(crate::model::archetype(&o.genome.traits));
+    }
+    out
 }
 
 fn cause_name(cause: DeathCause) -> &'static str {
@@ -700,6 +734,46 @@ pub fn stories(conn: &Connection, since: u64, limit: u32) -> Result<Vec<Value>> 
                 "data": json_col(r.get::<_, String>(7)?),
             }))
         })
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
+}
+
+/// Replay frames from `from` to `to`, every `step`-th epoch: `(epoch, bytes)`.
+pub fn frames(conn: &Connection, from: u64, to: u64, step: u64) -> Result<Vec<(u64, Vec<u8>)>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT epoch, data FROM frames WHERE epoch BETWEEN ?1 AND ?2 AND epoch % ?3 = 0 ORDER BY epoch",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![from as i64, to as i64, step.max(1) as i64], |r| {
+            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Vec<u8>>(1)?))
+        })
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
+}
+
+/// How many events of each kind happened after `since`.
+pub fn event_counts(conn: &Connection, since: u64) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn
+        .prepare("SELECT kind, count(*) FROM events WHERE epoch > ?1 GROUP BY kind")
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([since as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
+}
+
+/// Events of one kind after `since`, oldest first.
+pub fn events_since(conn: &Connection, since: u64, kind: &str) -> Result<Vec<Value>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, epoch, kind, clade_id, organism_id, data FROM events
+             WHERE epoch > ?1 AND kind = ?2 ORDER BY id LIMIT 200",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![since as i64, kind], event_row)
         .map_err(err)?;
     rows.map(|r| r.map_err(err)).collect()
 }

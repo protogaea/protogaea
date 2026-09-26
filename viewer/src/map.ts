@@ -113,6 +113,7 @@ export class WorldMap {
   private faceById = new Map<number, number>();
   private ghosts: Ghost[] = [];
   private moveStart = 0;
+  private moveMs = MOVE_MS;
   private rifts: Rift[] = [];
   private foodMax: number[] = [];
   private eventSprites: EventSprite[] = [];
@@ -283,7 +284,8 @@ export class WorldMap {
   // ---------------------------------------------------------------- states
 
   /** Shows a state; with `animate`, organisms walk from where they were in the previous one. */
-  setState(state: MapState, animate: boolean) {
+  setState(state: MapState, animate: boolean, moveMs = MOVE_MS) {
+    this.moveMs = REDUCED ? 0 : moveMs;
     const prev = this.state;
     const prevPos = this.pos;
     this.state = state;
@@ -292,7 +294,7 @@ export class WorldMap {
     this.born = new Uint8Array(state.organisms.id.length);
     this.face = new Int8Array(state.organisms.id.length);
     this.ghosts = [];
-    if (animate && prev && MOVE_MS > 0) {
+    if (animate && prev && this.moveMs > 0) {
       const index = new Map<number, number>();
       prev.organisms.id.forEach((id, i) => index.set(id, i));
       const still = new Set<number>();
@@ -657,12 +659,12 @@ export class WorldMap {
     }
 
     const now2 = now;
-    const walking = this.moveStart > 0 && now2 - this.moveStart < MOVE_MS;
+    const walking = this.moveStart > 0 && now2 - this.moveStart < this.moveMs;
     const pulsing = this.highlightOrganism !== undefined && !REDUCED;
     if (!this.dirty && !walking && !pulsing) return;
     const wasDirty = this.dirty || walking;
     this.dirty = false;
-    const p = this.moveStart > 0 ? Math.min(1, (now2 - this.moveStart) / MOVE_MS) : 1;
+    const p = this.moveStart > 0 ? Math.min(1, (now2 - this.moveStart) / this.moveMs) : 1;
     const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
     if (wasDirty) {
       this.drawOrganisms(e, p);

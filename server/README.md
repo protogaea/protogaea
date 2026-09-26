@@ -23,7 +23,7 @@ cargo run --release -p protogaea-server -- --seed 5 --data runs/server --listen 
 Each epoch `n` (the state after `n` epochs; 0 is genesis) is written to SQLite in one transaction:
 
 - **the header:** `state_root` and its subtree roots, the season phase, the population by archetype, clades, the dominant clade, births, deaths by cause and natural events;
-- **events:** clades founded, named (reaching 20 living) and extinct, a change of the dominant clade (compared once per world hour), land bridges closing, wildfires, droughts and floods with their place, plague, revivals and season phases. Story detectors (stage B5) will be built on these;
+- **events:** clades founded, named (reaching 20 living) and extinct, a change of the dominant clade (compared once per world hour), land bridges closing, wildfires, droughts and floods with their place, plague, revivals and season phases. the story detectors (stage B4) are built on these;
 - **organisms:** every organism that ever lived, with its parent, clade, genome, birth epoch and, once dead, the epoch, cause, age, energy and cell;
 - **clades:** parent, founding and extinction epochs, living and peak counts, reference genome, and a binomial name (spec §7) given once when the clade first reaches the naming threshold: the genus from its dominant trait, the epithet from its preferred habitat, picked by how many clades of that combination were named before;
 - **the Muller plot:** clade counts once per world hour;
@@ -47,6 +47,8 @@ Nothing the server records is part of consensus (spec §22): all of it can be re
 | `GET /v0/museum` | extinct named clades, most recent first |
 | `GET /v0/muller?from=&step=` | `[epoch, clade, living]` rows, one sample per world hour, small clades counted with their nearest named ancestor |
 | `GET /v0/stories?since=&limit=` | the stories the detectors found since an epoch (the last world day by default), the best of each clade and kind first, with the names of the clades they are about |
+| `GET /v0/digest?since=` | "While you were away": the header then and now, event counts by kind, the land bridges closed and the best stories since an epoch |
+| `GET /v0/replay?from=&step=` | compact frames for the replay (the last world day by default, every second epoch), binary and little-endian: per frame the epoch (u32) and the number of organisms (u32), then per organism the low 32 bits of its id (u32), cell (u16), clade (u32), hue (u16) and archetype (u8). Frames are kept for the last two world days |
 | `GET /v0/tree` | the named clades of the season (and the founders), each with its nearest named ancestor as parent, its founding and extinction, peak, hue and name |
 | `GET /v0/snapshots`, `GET /v0/snapshots/{epoch}` | archived snapshots |
 | `GET /v0/proofs/{epoch}/organism/{id}` | an organism's inclusion proof against the `state_root` of the latest epoch or of an archived one |
