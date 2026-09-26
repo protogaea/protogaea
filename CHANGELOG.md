@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- A welcome for first-time viewers in the viewer, and fixes for phones (the welcome and the digest over the whole screen, the replay button clear of the tabs).
 - The Telegram bot (`server/bot/`, stage B5): the morning digest and the news of followed clades, in Russian and English; stories are now chosen round-robin by kind, so a digest is not six stories of one kind.
 - Anonymous visit counts for the friends test (`POST /v0/visits`, `/v0/visits/summary`): returns on day 1 and day 7 and what visitors did, under a random id per browser, kept apart from the world's data.
 - Stage B5, part 1: "While you were away" (`/v0/digest`), the last world day replayed in about 30 seconds with story captions (`/v0/replay`, compact frames of the last two world days) and predictions for tomorrow in the viewer.

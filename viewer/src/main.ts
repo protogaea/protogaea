@@ -639,6 +639,45 @@ async function poll() {
   }
 }
 
+// ---------------------------------------------------------------- a welcome for first-time viewers
+
+const WELCOMED_KEY = 'protogaea.welcomed';
+const BOT_URL = 'https://t.me/newsbuild_bot';
+
+function showWelcome() {
+  const el = $('digest');
+  const bot = `<a href="${BOT_URL}" target="_blank" rel="noopener">@${BOT_URL.split('/').pop()}</a>`;
+  el.innerHTML = `<div class="digest" role="dialog" aria-modal="true">
+    <h2>${t.welcomeTitle}</h2>
+    <p class="lead">${t.welcomeLead}</p>
+    <ul class="welcome-list">${t.welcomeItems
+      .map(([icon, text]) => `<li><i class="ph ${icon}"></i><span>${text.replace('{bot}', bot)}</span></li>`)
+      .join('')}</ul>
+    <div class="actions"><button class="btn primary" id="digest-close">${t.welcomeGo}</button></div>
+  </div>`;
+  el.hidden = false;
+  const close = () => {
+    el.hidden = true;
+    try {
+      localStorage.setItem(WELCOMED_KEY, '1');
+    } catch {
+      /* shown again next time */
+    }
+  };
+  $('digest-close').addEventListener('click', close);
+  el.addEventListener('click', (ev) => {
+    if (ev.target === el) close();
+  });
+}
+
+function welcomed(): boolean {
+  try {
+    return localStorage.getItem(WELCOMED_KEY) === '1';
+  } catch {
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------- "While you were away"
 
 const SEEN_KEY = 'protogaea.lastSeen';
@@ -788,7 +827,12 @@ async function boot() {
   });
   const seen = lastSeen();
   await onRoute();
-  if (seen !== undefined && world.header.epoch - seen >= 12) showDigest(seen).catch(() => {});
+  const help = $('help-btn');
+  help.title = t.help;
+  help.setAttribute('aria-label', t.help);
+  help.addEventListener('click', () => showWelcome());
+  if (!welcomed()) showWelcome();
+  else if (seen !== undefined && world.header.epoch - seen >= 12) showDigest(seen).catch(() => {});
   rememberSeen();
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && rememberSeen());
   predictions.resolve(world.header.epoch).then(() => renderPredictions());

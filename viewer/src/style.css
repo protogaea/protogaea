@@ -78,6 +78,11 @@ button { font: inherit; color: inherit; }
 .mark { width: 26px; height: 26px; image-rendering: pixelated; }
 .wordmark { font-weight: 650; font-size: 17px; letter-spacing: -0.01em; }
 .world-id { color: var(--text-3); font: 12px var(--mono); }
+.help-btn { color: var(--text-3); margin-left: -4px; }
+.help-btn:hover { color: var(--text); }
+.welcome-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.welcome-list li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; color: var(--text-2); font-size: 14px; line-height: 1.45; }
+.welcome-list i { font-size: 20px; color: var(--accent); margin-top: 1px; }
 
 .season { position: relative; min-width: 0; }
 .season-track { position: relative; display: flex; height: 22px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
@@ -228,7 +233,7 @@ em.latin { font-style: italic; }
 .replay-bar .clock { font-family: var(--mono); color: var(--text-2); min-width: 86px; }
 .replay-caption { position: absolute; z-index: 3; left: 50%; top: 70px; transform: translateX(-50%); max-width: min(560px, calc(100% - 40px)); padding: 12px 16px; border-radius: var(--radius); background: color-mix(in oklab, var(--surface) 92%, transparent); border: 1px solid var(--accent); box-shadow: var(--shadow); font-size: 14px; }
 .replay-caption b { color: var(--accent); margin-right: 6px; }
-.digest-backdrop { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: rgb(5 8 12 / 0.55); padding: 20px; }
+.digest-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgb(5 8 12 / 0.55); padding: 20px; }
 .digest { width: min(560px, 100%); max-height: calc(100% - 20px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 22px 24px; }
 .digest h2 { font-size: 20px; color: var(--text); margin: 0 0 4px; font-weight: 650; }
 .digest .lead { color: var(--text-2); margin: 0 0 16px; }
@@ -294,6 +299,11 @@ em.latin { font-style: italic; }
   .minimap { display: none; }
   .tabs { top: 10px; }
   .tab span { display: none; }
+  .replay-btn { top: 62px; right: 10px; padding: 0 10px; }
+  .replay-btn span { display: none; }
+  .replay-bar { min-width: calc(100% - 28px); bottom: 14px; }
+  .digest { padding: 18px 16px; }
+  .digest .numbers { grid-template-columns: 1fr 1fr; }
   .clock .countdown { display: none; }
   .season-phase:not(.now) { color: transparent; }
   .season-meta span:last-child { text-align: right; }
