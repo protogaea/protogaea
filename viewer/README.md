@@ -24,6 +24,7 @@ npm run build    # dist/, for protogaea-server --viewer viewer/dist
 - **While you were away:** after an absence of an hour of world time or more, a summary of what changed: population, the leading clade then and now, clades named and extinct, land bridges closed and the best stories.
 - **The last day in 30 seconds:** the last world day replayed on the map, organisms walking between frames, with the day's stories as captions when they happen.
 - **Predictions for tomorrow:** on a living clade's card, will it still be alive, or larger, this time tomorrow; checked the next day and scored in "My predictions". Kept in the browser only.
+- **Visit counts:** for the tests of stage B the viewer reports what is done with it (opened, a story followed, a card opened, a prediction made, a day replayed) under a random id kept in the browser; no names or addresses. The server's `/v0/visits/summary` turns them into the test's measures.
 - **The feed** of events: phases, clades named and extinct, a change of the dominant clade, land bridges closing, wildfires, droughts, floods, plague and revivals.
 - **Permanent links** in the hash: `#epoch=N` opens an archived snapshot, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
 
