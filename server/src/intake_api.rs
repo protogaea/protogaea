@@ -99,6 +99,8 @@ pub fn routes() -> Router<Api> {
         .route("/v0/sparks", post(sparks))
         .route("/v0/sth", get(sth))
         .route("/v0/ledger", get(ledger))
+        .route("/v0/headers", get(headers))
+        .route("/v0/headers/{epoch}", get(header_of))
         .route("/v0/miracles", get(miracles))
         .route("/v0/log/{epoch}/inclusion", get(inclusion))
         .route("/v0/log/{epoch}/consistency", get(consistency))
@@ -494,6 +496,29 @@ async fn ledger(State(api): State<Api>) -> Response {
             "per_epoch": crate::intake::PER_EPOCH,
         }))
         .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// Signed epoch headers (spec §9): `from` to `to`, at most 500.
+async fn headers(State(api): State<Api>, Query(q): Query<RangeQuery>) -> Response {
+    let intake = api.intake.lock().expect("the lock is never poisoned");
+    let from = q.from.unwrap_or(0);
+    match intake.headers(from, q.to.unwrap_or(from + 499)) {
+        Ok(rows) => Json(json!({ "headers": rows })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+async fn header_of(State(api): State<Api>, Path(epoch): Path<u64>) -> Response {
+    let intake = api.intake.lock().expect("the lock is never poisoned");
+    match intake.headers(epoch, epoch) {
+        Ok(mut rows) if !rows.is_empty() => Json(rows.remove(0)).into_response(),
+        Ok(_) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "E_NOT_FOUND", "message": "no signed header" })),
+        )
+            .into_response(),
         Err(e) => internal(e),
     }
 }

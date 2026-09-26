@@ -68,6 +68,8 @@ The spark log lives in `sparks.sqlite` in the data directory, apart from the wor
 
 **The ledger (spec §19).** When a window closes, a wish whose work covers `P_E × price_mult / 100` becomes ready (`weather` 100, `migrate` 120, `revive` 200). Ready wishes are ranked by the share of the price they cover (compared by cross-multiplication), ties broken by `BLAKE3("PROTOGAEA/TIEBREAK/V0" ‖ beacon ‖ proposal_id)`, and up to three that do not conflict are selected; a conflicting one waits. The price then rises by an eighth if ready wishes remain, falls by an eighth (not below `--price-min`, 2,900,000 by default) if fewer than three were selected, and holds otherwise. The world applies the selected miracles as it steps into the epoch: an applied one is `executed`; one refused for a reason that passes by itself (an active effect, a cooldown, a crowded start) goes back to the queue; one refused for good is `invalidated` with the reason, and its work is burned. When a window opens, open and queued wishes that can no longer apply for good are invalidated too. Every miracle given to the world is logged with its outcome, so the time machine and any watcher can replay the epoch; after a crash the miracles past the restored snapshot are undone with the world.
 
+**Signed headers.** After each step the epoch is sealed: its header (protocol §9) chains to the previous one, commits to the world's `state_root`, the ledger (the price and every open or queued wish with its work), the final tree head of the epoch's spark log, the beacon and the miracles given to the epoch, and is signed with the operator key. The next window's challenge commits to the header's hash.
+
 Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed`, `expired` (an open wish past its lifetime; queued ones do not expire), `invalidated`.
 
 | Endpoint | What it returns |
@@ -79,6 +81,7 @@ Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed
 | `POST /v0/sparks` | a batch of up to 64 sparks, 72 bytes each (`application/octet-stream`); a receipt or an error for each |
 | `GET /v0/ledger` | the price of a miracle for the next selection, its floor, the multipliers and the miracles per epoch |
 | `GET /v0/miracles?from=&to=` | the miracles given to the world by epoch, as the core applies them, with their outcomes |
+| `GET /v0/headers?from=&to=`, `GET /v0/headers/{epoch}` | signed epoch headers: the chain of header hashes, `state_root`, `ledger_root`, the epoch's final tree head, the beacon, `miracles_root`, the hash and the operator's signature |
 | `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |
 | `GET /v0/log/{epoch}/inclusion?index=&size=`, `GET /v0/log/{epoch}/consistency?first=&second=` | inclusion and consistency proofs in the epoch's log |
 

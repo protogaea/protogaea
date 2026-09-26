@@ -885,7 +885,12 @@ async function travel(epoch: number, animate: boolean) {
     if (!header) banner(null);
     else if (header.state_root === c.state.state_root) {
       const text = cont ? fmt(t.tmContinued, { epoch }) : fmt(t.tmVerified, { epoch, base, n: c.stepped, s: (c.ms / 1000).toFixed(1) });
-      banner(`<i class="ph ph-seal-check ok"></i>${text}`);
+      // The epoch's header signed by the operator, where there is one, must hold the same root.
+      const signed = await api
+        .signedHeader(epoch)
+        .then(async (h) => (h.state_root === c.state.state_root && (await naturalist.checkHeader(h)) ? 'ok' : 'bad'))
+        .catch(() => 'none');
+      banner(`<i class="ph ph-seal-check ok"></i>${text}${signed === 'ok' ? ` ${t.tmSigned}` : signed === 'bad' ? ` ${t.tmSignedBad}` : ''}`, signed === 'bad');
     } else banner(fmt(t.tmMismatch, { epoch, mine: c.state.state_root.slice(0, 16), theirs: header.state_root.slice(0, 16) }), true);
     track('view', 'time-machine');
   } catch (e) {

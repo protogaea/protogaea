@@ -6,11 +6,13 @@
 //!   and the epoch target;
 //! - [`log`]: the spark log, a Merkle tree after RFC 9162 (RFC 6962) with BLAKE3, its inclusion
 //!   and consistency proofs;
-//! - [`sth`]: signed tree heads and receipts.
+//! - [`sth`]: signed tree heads and receipts;
+//! - [`header`]: signed epoch headers with the ledger and miracles roots.
 //!
 //! Everything here is deterministic and builds for WebAssembly, so the server, the spark clients
 //! and independent watchers share one implementation.
 
+pub mod header;
 pub mod log;
 pub mod spark;
 pub mod sth;

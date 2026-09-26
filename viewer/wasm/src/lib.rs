@@ -459,6 +459,25 @@ fn spark_op(req: &serde_json::Value) -> Result<serde_json::Value, String> {
             };
             Ok(json!({ "ok": receipt.verify(&hex_arr(&req["operator"])?) }))
         }
+        "header" => {
+            // A signed epoch header as `/v0/headers/{epoch}` serves it.
+            let h = &req["header"];
+            let header = protogaea_protocol::header::Header {
+                epoch: num(&h["epoch"])?,
+                prev_header_hash: hex_arr(&h["prev_header_hash"])?,
+                ruleset_id: hex_arr(&h["ruleset_id"])?,
+                state_root: hex_arr(&h["state_root"])?,
+                ledger_root: hex_arr(&h["ledger_root"])?,
+                sth_size: num(&h["sth_size"])?,
+                sth_root: hex_arr(&h["sth_root"])?,
+                beacon: hex_arr(&h["beacon"])?,
+                miracles_root: hex_arr(&h["miracles_root"])?,
+                timestamp_ms: num(&h["timestamp_ms"])?,
+            };
+            let hash_ok = hex(&header.hash()) == h["hash"].as_str().unwrap_or("");
+            let signed = header.verify(&hex_arr(&req["operator"])?, &hex_arr(&h["signature"])?);
+            Ok(json!({ "ok": hash_ok && signed }))
+        }
         other => Err(format!("no such operation: {other}")),
     }
 }

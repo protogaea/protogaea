@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use protogaea_core::miracle::{check, is_transient, Outcomes};
 use protogaea_core::{Miracle, Ruleset, World};
+use protogaea_protocol::header::{ledger_leaf, ledger_root, miracle_leaf, Header};
 use protogaea_protocol::log::{consistency_proof, inclusion_proof, leaf_hash, root};
 use protogaea_protocol::spark::{challenge, next_target, Spark};
 use protogaea_protocol::sth::{Receipt, Sth};
@@ -248,7 +249,13 @@ impl Intake {
                  outcome TEXT NOT NULL,
                  PRIMARY KEY (epoch, idx)
              );
-             CREATE TABLE IF NOT EXISTS ledger (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS ledger (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS headers (
+                 epoch INTEGER PRIMARY KEY,
+                 bytes BLOB NOT NULL,
+                 hash BLOB NOT NULL,
+                 signature BLOB NOT NULL
+             );",
         )
         .map_err(err)?;
         // Columns added with the ledger, for a log made before it.
@@ -305,10 +312,134 @@ impl Intake {
         self.conn
             .execute_batch(&format!(
                 "DELETE FROM miracles WHERE epoch > {e};
+                 DELETE FROM headers WHERE epoch > {e};
                  UPDATE wishes SET status = 'ready', executed_epoch = NULL, reason = NULL
                    WHERE executed_epoch > {e} OR status = 'selected';"
             ))
             .map_err(err)
+    }
+
+    /// The hash of the signed header of `epoch`, if there is one.
+    pub fn header_hash(&self, epoch: u64) -> Result<Option<Hash>, String> {
+        self.conn
+            .query_row(
+                "SELECT hash FROM headers WHERE epoch = ?1",
+                [epoch as i64],
+                |r| r.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map(|h| h.map(blob32))
+            .map_err(err)
+    }
+
+    /// The ledger root after the epoch (spec §19, step 8): the price, and every open or queued
+    /// wish with its work, by proposal id.
+    fn ledger_root(&self) -> Result<Hash, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, work, status FROM wishes WHERE status IN ('open', 'ready') ORDER BY id",
+            )
+            .map_err(err)?;
+        let leaves = stmt
+            .query_map([], |r| {
+                Ok(ledger_leaf(
+                    &blob32(r.get(0)?),
+                    r.get::<_, String>(1)?.parse().unwrap_or(0),
+                    r.get::<_, String>(2)? == "ready",
+                ))
+            })
+            .map_err(err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?;
+        Ok(ledger_root(self.price()?, &leaves))
+    }
+
+    /// The miracles given to the world at `epoch` and their outcomes, as a Merkle root.
+    fn miracles_root(&self, epoch: u64) -> Result<Hash, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT proposal_id, outcome FROM miracles WHERE epoch = ?1 ORDER BY idx")
+            .map_err(err)?;
+        let leaves = stmt
+            .query_map([epoch as i64], |r| {
+                let outcome: String = r.get(1)?;
+                let code = if outcome == "applied" {
+                    0
+                } else if outcome.starts_with("deferred") {
+                    1
+                } else {
+                    2
+                };
+                Ok(miracle_leaf(&blob32(r.get(0)?), code))
+            })
+            .map_err(err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?;
+        Ok(root(&leaves))
+    }
+
+    /// Seals an epoch: its header, chained to the previous one and signed. Returns its hash,
+    /// which the next window's challenge commits to.
+    pub fn seal(
+        &mut self,
+        epoch: u64,
+        ruleset_id: Hash,
+        state_root: Hash,
+        beacon: Hash,
+    ) -> Result<Hash, String> {
+        let prev: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT hash FROM headers WHERE epoch < ?1 ORDER BY epoch DESC LIMIT 1",
+                [epoch as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        let sth = self.head(epoch)?;
+        let header = Header {
+            epoch,
+            prev_header_hash: prev.map(blob32).unwrap_or([0; 32]),
+            ruleset_id,
+            state_root,
+            ledger_root: self.ledger_root()?,
+            sth_size: sth.map_or(0, |s| s.tree_size),
+            sth_root: sth.map_or_else(|| root(&[]), |s| s.root),
+            beacon,
+            miracles_root: self.miracles_root(epoch)?,
+            timestamp_ms: now_ms(),
+        };
+        let hash = header.hash();
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO headers (epoch, bytes, hash, signature) VALUES (?1, ?2, ?3, ?4)",
+                params![epoch as i64, header.to_bytes(), hash.to_vec(), header.sign(&self.secret).to_vec()],
+            )
+            .map_err(err)?;
+        Ok(hash)
+    }
+
+    /// Signed headers from `from` to `to`.
+    pub fn headers(&self, from: u64, to: u64) -> Result<Vec<Value>, String> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT bytes, hash, signature FROM headers WHERE epoch BETWEEN ?1 AND ?2 ORDER BY epoch LIMIT 500")
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![from as i64, to.min(i64::MAX as u64) as i64], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, Vec<u8>>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            })
+            .map_err(err)?;
+        rows.map(|r| {
+            let (b, h, s) = r.map_err(err)?;
+            Ok(header_json(&b, &h, &s))
+        })
+        .collect()
     }
 
     /// The soft check when a window opens (spec §5): open and queued wishes that can no longer
@@ -905,6 +1036,28 @@ impl Intake {
     }
 }
 
+/// A header's fields from its bytes (the fixed layout of `protocol::header`), with its hash and
+/// signature, as the API serves it.
+fn header_json(b: &[u8], hash: &[u8], signature: &[u8]) -> Value {
+    let t = protogaea_protocol::header::HEADER_TAG.len();
+    let u64_at = |i: usize| u64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes"));
+    let h32 = |i: usize| hex(&b[i..i + 32]);
+    json!({
+        "epoch": u64_at(t),
+        "prev_header_hash": h32(t + 8),
+        "ruleset_id": h32(t + 40),
+        "state_root": h32(t + 72),
+        "ledger_root": h32(t + 104),
+        "sth_size": u64_at(t + 136),
+        "sth_root": h32(t + 144),
+        "beacon": h32(t + 176),
+        "miracles_root": h32(t + 208),
+        "timestamp_ms": u64_at(t + 240),
+        "hash": hex(hash),
+        "signature": hex(signature),
+    })
+}
+
 fn action_name(code: i64) -> &'static str {
     match code {
         0 => "weather",
@@ -1048,11 +1201,55 @@ mod tests {
         assert_eq!(wishes[0]["work"], (a.1 + b.1).to_string());
         assert_eq!(wishes[0]["status"], "open");
 
+        // A signed header seals the epoch; the next one chains to it.
+        let h10 = intake.seal(10, [2; 32], [7; 32], [8; 32]).unwrap();
+        assert_eq!(intake.header_hash(10).unwrap(), Some(h10));
+        let row = &intake.headers(10, 10).unwrap()[0];
+        assert_eq!(row["sth_size"], 2, "the final tree head of the epoch");
+        assert_eq!(row["state_root"], hex(&[7; 32]));
+        let sig: [u8; 64] = (0..64)
+            .map(|i| {
+                u8::from_str_radix(&row["signature"].as_str().unwrap()[2 * i..2 * i + 2], 16)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+        let header = Header {
+            epoch: 10,
+            prev_header_hash: [0; 32],
+            ruleset_id: [2; 32],
+            state_root: [7; 32],
+            ledger_root: blob32(
+                (0..32)
+                    .map(|i| {
+                        u8::from_str_radix(
+                            &row["ledger_root"].as_str().unwrap()[2 * i..2 * i + 2],
+                            16,
+                        )
+                        .unwrap()
+                    })
+                    .collect(),
+            ),
+            sth_size: 2,
+            sth_root: fin.root,
+            beacon: [8; 32],
+            miracles_root: root(&[]),
+            timestamp_ms: row["timestamp_ms"].as_u64().unwrap(),
+        };
+        assert_eq!(header.hash(), h10);
+        assert!(header.verify(&intake.operator, &sig));
+
         // The next window: a new challenge, and at its close the wish expires.
         intake.open_window(11, &[4; 32]).unwrap();
         assert_ne!(intake.challenge, t.challenge);
         intake.close_window(&[0; 32]).unwrap();
         assert_eq!(intake.wishes(Some("expired"), 10).unwrap().len(), 1);
+        intake.seal(11, [2; 32], [9; 32], [8; 32]).unwrap();
+        assert_eq!(
+            intake.headers(11, 11).unwrap()[0]["prev_header_hash"],
+            hex(&h10)
+        );
         drop(intake);
         let _ = std::fs::remove_dir_all(&dir);
     }

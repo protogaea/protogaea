@@ -281,6 +281,11 @@ export async function mine(): Promise<WishRow[]> {
   return (rows.proposals as WishRow[]).filter((r) => r.author === author);
 }
 
+/** Whether a signed epoch header checks against the operator's key (hash and signature). */
+export async function checkHeader(header: unknown): Promise<boolean> {
+  return (await api({ op: 'header', header, operator: await operatorKey() })).ok as boolean;
+}
+
 export async function ledger(): Promise<{ price: bigint; per_epoch: number }> {
   const l = await getJson('/v0/ledger');
   return { price: BigInt(l.price), per_epoch: l.per_epoch };

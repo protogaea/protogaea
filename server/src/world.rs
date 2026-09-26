@@ -160,7 +160,11 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         opts.price_min,
     )?;
     intake.rollback_after(run.world.epoch)?;
-    intake.open_window(run.world.epoch + 1, &run.state_root())?;
+    // The challenge commits to the last signed header (the state root before headers existed).
+    let prev = intake
+        .header_hash(run.world.epoch)?
+        .unwrap_or_else(|| run.state_root());
+    intake.open_window(run.world.epoch + 1, &prev)?;
     intake.soft_check(&run.world, &run.rules)?;
     let shared = Arc::new(Shared {
         intake: Mutex::new(intake),
@@ -226,12 +230,22 @@ pub fn run_loop(
             live.header = header;
             live.next_epoch_ms = now_ms() + period.as_millis() as u64;
         }
+        let header_hash = shared
+            .intake
+            .lock()
+            .expect("the lock is never poisoned")
+            .seal(
+                run.world.epoch,
+                run.world.ruleset_id,
+                run.state_root(),
+                beacon,
+            )?;
         save(&shared.data, &run, &detectors, shared.archive_every)?;
         shared
             .intake
             .lock()
             .expect("the lock is never poisoned")
-            .open_window(run.world.epoch + 1, &run.state_root())?;
+            .open_window(run.world.epoch + 1, &header_hash)?;
         shared
             .intake
             .lock()

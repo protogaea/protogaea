@@ -239,7 +239,14 @@ Fields ([spec §15](spec/spec-v0.2.md#15-state-snapshots-and-the-log)):
 - the list of applied miracles, `events_root`;
 - an informational timestamp.
 
-Encoding: TBD. Signature (Proposed): `Ed25519_sign(operator_key, BLAKE3("PROTOGAEA/HEADER/V0" ‖ header_bytes))`. Once an hour, the header hash is anchored through OpenTimestamps.
+Encoding (**Proposed**, [`protocol/src/header.rs`](../protocol/src/header.rs)), fixed-width and little-endian:
+
+```
+"PROTOGAEA/HEADER/V0" ‖ epoch u64 ‖ prev_header_hash ‖ ruleset_id ‖ state_root ‖ ledger_root
+‖ sth_size u64 ‖ sth_root ‖ beacon ‖ miracles_root ‖ timestamp_ms u64
+```
+
+`header_hash = BLAKE3(header_bytes)`; the signature is `Ed25519_sign(operator_key, header_hash)`. `ledger_root = BLAKE3("PROTOGAEA/LEDGER/V0" ‖ price u128 ‖ root(leaves))` with a leaf `proposal_id ‖ work u128 ‖ queued u8` for every open or queued wish, sorted by `proposal_id`; `miracles_root` is the root of the leaves `proposal_id ‖ outcome u8` (0 applied, 1 deferred, 2 refused for good) of the miracles given to the epoch, in their order. The events root and the list of applied miracles are not in the header yet. The next window's challenge commits to `header_hash`. The core's epoch seed still commits to the previous `state_root`, not to the header hash (a deviation to remove before the public season). Once an hour, the header hash is anchored through OpenTimestamps.
 
 ## 10. Error codes
 
