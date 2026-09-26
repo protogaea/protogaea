@@ -246,6 +246,40 @@ pub unsafe extern "C" fn verify(ptr: *const u8, len: usize) -> i32 {
     }
 }
 
+thread_local! {
+    static SPARK_HASHER: RefCell<Option<protogaea_pow::Hasher>> = const { RefCell::new(None) };
+}
+
+/// yespower of `len` bytes at `ptr` with the spark parameters (spec §16); the 32-byte hash goes
+/// to the output. The hasher's 8 MiB are kept between calls.
+///
+/// # Safety
+/// `ptr` must point to `len` initialized bytes.
+#[no_mangle]
+pub unsafe extern "C" fn spark_hash(ptr: *const u8, len: usize) {
+    let input = std::slice::from_raw_parts(ptr, len);
+    let hash = SPARK_HASHER.with(|h| {
+        h.borrow_mut()
+            .get_or_insert_with(|| protogaea_pow::Hasher::new(protogaea_pow::SPARK))
+            .hash(input)
+    });
+    put(hash.to_vec());
+}
+
+/// Hashes `count` spark inputs with successive nonces, for measuring the rate in a browser.
+#[no_mangle]
+pub extern "C" fn spark_bench(count: u32) {
+    SPARK_HASHER.with(|h| {
+        let mut h = h.borrow_mut();
+        let hasher = h.get_or_insert_with(|| protogaea_pow::Hasher::new(protogaea_pow::SPARK));
+        for nonce in 0..u64::from(count) {
+            let input =
+                protogaea_pow::spark_input(&[7; 16], 1, &[1; 32], &[2; 32], &[3; 32], nonce);
+            std::hint::black_box(hasher.hash(&input));
+        }
+    });
+}
+
 #[no_mangle]
 pub extern "C" fn out_ptr() -> *const u8 {
     OUT.with(|o| o.borrow().as_ptr())

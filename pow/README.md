@@ -4,17 +4,18 @@ The proof of work behind sparks (spec [§16](../docs/spec/spec-v0.2.md#16-pow-al
 
 ```sh
 cargo test -p protogaea-pow                                   # the reference vectors of yespower 1.0
-cargo run --release -p protogaea-pow --example bench -- 10    # hash rates and the cost of a check
-PROTOGAEA_POW_NATIVE=1 cargo run --release -p protogaea-pow --example bench   # with -march=native
+cargo test -p protogaea-pow --features c                      # and the port against the reference C
+cargo run --release -p protogaea-pow --features c --example bench -- 10   # hash rates of both
+PROTOGAEA_POW_NATIVE=1 cargo run --release -p protogaea-pow --features c --example bench   # C with -march=native
 ```
-
-It needs a C compiler (on Windows, MSYS2's gcc with the GNU toolchain).
 
 ## yespower
 
-[`yespower/`](yespower/) is the reference implementation by Alexander Peslyak (Openwall), [github.com/openwall/yespower](https://github.com/openwall/yespower) at commit `1977c283bc43eed5a2c2579e02d6d996e49866b0`, unchanged. It is under a 2-clause BSD license (see the file headers), which allows its use here next to Apache-2.0 and AGPL-3.0 code. The build is portable: no CPU-specific flags, so one binary runs on every x86-64 and ARM64 machine (spec §16); SIMD comes only from the compiler's baseline.
+The hash is yespower 1.0 by Alexander Peslyak (Openwall), ported to plain Rust ([`src/portable.rs`](src/portable.rs)) from the reference implementation. The port needs no C compiler and builds for WebAssembly, where the spark client in the browser uses it (the viewer's core exports `spark_hash`). Only yespower 1.0 is ported.
 
-The tests check the reference `TESTS-OK` vectors of yespower 1.0, including one with a personalization string.
+[`yespower/`](yespower/) is the reference C implementation, [github.com/openwall/yespower](https://github.com/openwall/yespower) at commit `1977c283bc43eed5a2c2579e02d6d996e49866b0`, unchanged, under a 2-clause BSD license (see the file headers), which allows its use here next to Apache-2.0 and AGPL-3.0 code. It is built only with the `c` feature (it needs a C compiler; on Windows, MSYS2's gcc with the GNU toolchain), to check the port against it and to compare their speed. Its build is portable: no CPU-specific flags.
+
+The tests check the reference `TESTS-OK` vectors of yespower 1.0 (one of them with a personalization string), a Protogaea spark vector, and, with the `c` feature, the port against the C implementation on spark inputs and on inputs of other lengths. The browser build gives the spark vector's hash too.
 
 ## Measurements (2026-09-26)
 
@@ -32,4 +33,16 @@ Hash rates of `yespower(N = 2048, r = 32, "PROTOGAEA/SPARK/V0")` over the spark 
 - **Checking a spark costs 4–7 ms** with fresh memory, most of it the 8 MiB allocation on Linux; a server that keeps one hasher per thread pays about 3.2 ms (one hash). At the reference load of 20,000 sparks an epoch (spec §18), 67 a second, that is about a fifth of one core.
 - **The price floor.** Spec §19 proposes about 8 core-hours of the reference core as `P_min`. On the Ryzen 5 5500 one thread alone does about 310 H/s, 8.9 million work units in 8 hours; with every thread busy each does about 100 H/s, 2.9 million. Which of the two a "core-hour" means is part of roadmap decision 6.
 
-Not measured yet: ARM64 (no machine at hand) and the spark client in the browser (yespower compiled to WebAssembly). GPUs are not measured: yespower is built for CPUs, and the project does not plan for GPU sparks.
+### The Rust port and WebAssembly
+
+One thread on the Ryzen 7 8745HS, the same session:
+
+| Build | Hash rate | Of the C build |
+|---|---|---|
+| reference C, portable | 346 H/s | 1.00 |
+| Rust port, native | 225 H/s | 0.65 |
+| Rust port in WebAssembly under V8 (Node 25, the engine of Chrome and Edge) | 155 H/s | 0.45 |
+
+The port keeps the working memory as pairs of 32-bit words (`u64`), the layout pwxform works on; the first straightforward port did 103 H/s. The C build is faster mainly through SIMD in Salsa20 and fewer bounds checks. So a naturalist in the browser does about half the work per thread of one running the desktop client; the desktop client should use the C build, or a port brought closer to it.
+
+Not measured yet: ARM64 (no machine at hand). GPUs are not measured: yespower is built for CPUs, and the project does not plan for GPU sparks.

@@ -1,9 +1,14 @@
-// Builds the reference yespower implementation (vendored in `yespower/`).
+// Builds the reference yespower implementation (vendored in `yespower/`) when the `c` feature is
+// on; the crate's own hash is the Rust port and needs no C compiler.
 //
 // The build is portable by default: no CPU-specific flags, so one binary runs on every x86-64 or
 // ARM64 machine, as spec §16 requires. PROTOGAEA_POW_NATIVE=1 adds -march=native, for measuring
 // what a tuned build gains.
 
+#[cfg(not(feature = "c"))]
+fn main() {}
+
+#[cfg(feature = "c")]
 fn main() {
     println!("cargo:rerun-if-changed=yespower");
     println!("cargo:rerun-if-env-changed=PROTOGAEA_POW_NATIVE");

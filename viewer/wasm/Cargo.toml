@@ -11,5 +11,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 protogaea-core.workspace = true
+protogaea-pow = { path = "../../pow" }
 serde.workspace = true
 serde_json.workspace = true

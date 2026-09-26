@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- yespower 1.0 ported to plain Rust in `protogaea-pow` (checked against the reference C in CI and a Protogaea spark vector); the viewer's WebAssembly core hashes sparks (`spark_hash`) at about 0.45 of the C speed.
 - Stage C begins: `protogaea-pow`, yespower 1.0 with the spark parameters (the reference implementation vendored, its test vectors), the spark input of spec §18, the target check and work units, and a benchmark; first measurements on two x86-64 CPUs.
 - The Telegram bot follows continents too (`/continent`), and on its first run it starts from the present in one pass.
 - Stage B7, the end: the museum of extinct named clades and the daily chronicle in the viewer; `/v0/digest` takes `until=`.

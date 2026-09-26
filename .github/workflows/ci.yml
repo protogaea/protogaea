@@ -26,6 +26,9 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The Rust port of yespower against the reference C implementation.
+      - run: cargo clippy -p protogaea-pow --all-targets --features c -- -D warnings
+      - run: cargo test -p protogaea-pow --features c
 
   viewer:
     name: Viewer builds

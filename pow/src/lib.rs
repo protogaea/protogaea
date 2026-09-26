@@ -1,14 +1,15 @@
 //! The proof of work behind sparks (spec §16, §18).
 //!
 //! A spark is a nonce that makes yespower 1.0 of the spark input fall below the epoch target. The
-//! hash is the reference C implementation by Alexander Peslyak (Openwall), vendored unchanged in
-//! `yespower/` under its 2-clause BSD license; this crate adds the Protogaea parameters, the
-//! spark input of §18 and the target check.
+//! hash is yespower 1.0 by Alexander Peslyak (Openwall), ported to plain Rust from the reference
+//! implementation (`portable`), so that it builds anywhere, WebAssembly included. The reference C
+//! implementation is vendored unchanged in `yespower/` under its 2-clause BSD license and built
+//! with the `c` feature, to check the port against it. This crate adds the Protogaea parameters,
+//! the spark input of §18 and the target check.
 
-use std::ffi::c_void;
-
-/// yespower 1.0, as opposed to the older yescrypt 0.5 variant.
-const YESPOWER_1_0: u32 = 10;
+#[cfg(feature = "c")]
+pub mod c;
+mod portable;
 
 /// The spark parameters of spec §16: N = 2048, r = 32 (8 MiB of memory per thread) and a
 /// personalization that separates Protogaea's work from any other use of yespower.
@@ -35,79 +36,17 @@ impl Params {
     }
 }
 
-#[repr(C)]
-struct Region {
-    base: *mut c_void,
-    aligned: *mut c_void,
-    base_size: usize,
-    aligned_size: usize,
-}
-
-#[repr(C)]
-struct RawParams {
-    version: u32,
-    n: u32,
-    r: u32,
-    pers: *const u8,
-    perslen: usize,
-}
-
-extern "C" {
-    fn yespower_init_local(local: *mut Region) -> i32;
-    fn yespower_free_local(local: *mut Region) -> i32;
-    fn yespower(
-        local: *mut Region,
-        src: *const u8,
-        srclen: usize,
-        params: *const RawParams,
-        dst: *mut [u8; 32],
-    ) -> i32;
-}
-
-/// A yespower hasher with its working memory, kept between hashes. One per thread.
-pub struct Hasher {
-    local: Region,
-    params: Params,
-}
-
-// The working memory belongs to the hasher alone; it may move between threads but not be shared.
-unsafe impl Send for Hasher {}
+/// A yespower 1.0 hasher with its working memory, kept between hashes. One per thread.
+pub struct Hasher(portable::Hasher);
 
 impl Hasher {
     pub fn new(params: Params) -> Self {
-        let mut local = Region {
-            base: std::ptr::null_mut(),
-            aligned: std::ptr::null_mut(),
-            base_size: 0,
-            aligned_size: 0,
-        };
-        // SAFETY: `local` is a valid region for the library to initialize.
-        let rc = unsafe { yespower_init_local(&mut local) };
-        assert_eq!(rc, 0, "yespower_init_local failed");
-        Self { local, params }
+        Self(portable::Hasher::new(params.n, params.r, params.pers))
     }
 
     /// yespower 1.0 of `input` with this hasher's parameters.
     pub fn hash(&mut self, input: &[u8]) -> [u8; 32] {
-        let raw = RawParams {
-            version: YESPOWER_1_0,
-            n: self.params.n,
-            r: self.params.r,
-            pers: self.params.pers.as_ptr(),
-            perslen: self.params.pers.len(),
-        };
-        let mut out = [0u8; 32];
-        // SAFETY: the pointers are valid for the lengths given; `local` was initialized in `new`.
-        let rc = unsafe { yespower(&mut self.local, input.as_ptr(), input.len(), &raw, &mut out) };
-        assert_eq!(rc, 0, "yespower failed (out of memory?)");
-        out
-    }
-}
-
-impl Drop for Hasher {
-    fn drop(&mut self) {
-        // SAFETY: `local` was initialized in `new` and is freed once.
-        unsafe { yespower_free_local(&mut self.local) };
+        self.0.hash(input)
     }
 }
 
@@ -204,6 +143,39 @@ mod tests {
         }
     }
 
+    /// The port and the reference C implementation agree on the spark parameters and many inputs.
+    #[cfg(feature = "c")]
+    #[test]
+    fn agrees_with_the_reference_c() {
+        let mut rust = Hasher::new(SPARK);
+        let mut c = crate::c::Hasher::new(SPARK);
+        for nonce in 0..40u64 {
+            let input = spark_input(
+                &[9; 16],
+                nonce * 7,
+                &[nonce as u8; 32],
+                &[5; 32],
+                &[6; 32],
+                nonce,
+            );
+            assert_eq!(rust.hash(&input), c.hash(&input), "nonce {nonce}");
+        }
+        let mut rust = Hasher::new(Params {
+            n: 1024,
+            r: 8,
+            pers: b"",
+        });
+        let mut c = crate::c::Hasher::new(Params {
+            n: 1024,
+            r: 8,
+            pers: b"",
+        });
+        for len in [0usize, 1, 63, 64, 65, 200] {
+            let input: Vec<u8> = (0..len).map(|i| (i * 31 + 7) as u8).collect();
+            assert_eq!(rust.hash(&input), c.hash(&input), "length {len}");
+        }
+    }
+
     /// The Protogaea parameters: the personalization changes the hash, and the input layout is
     /// the one of §18.
     #[test]
@@ -223,6 +195,17 @@ mod tests {
             "the personalization separates the domains"
         );
         assert_eq!(SPARK.memory(), 8 << 20);
+    }
+
+    /// A Protogaea spark vector: yespower with the spark parameters of 146 bytes, byte i = 7i + 3.
+    /// The browser build (WebAssembly) gives the same hash.
+    #[test]
+    fn spark_vector() {
+        let input: Vec<u8> = (0..146u32).map(|i| (i * 7 + 3) as u8).collect();
+        assert_eq!(
+            hex(&Hasher::new(SPARK).hash(&input)),
+            "8f4d79040f183a82372d19fe721a71b478ea26b5a6f2b1322bba83040cc9c727"
+        );
     }
 
     #[test]
