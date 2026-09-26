@@ -25,7 +25,7 @@ Each epoch `n` (the state after `n` epochs; 0 is genesis) is written to SQLite i
 - **the header:** `state_root` and its subtree roots, the season phase, the population by archetype, clades, the dominant clade, births, deaths by cause and natural events;
 - **events:** clades founded, named (reaching 20 living) and extinct, a change of the dominant clade (compared once per world hour), land bridges closing, wildfires, droughts and floods with their place, plague, revivals and season phases. Story detectors (stage B5) will be built on these;
 - **organisms:** every organism that ever lived, with its parent, clade, genome, birth epoch and, once dead, the epoch, cause, age, energy and cell;
-- **clades:** parent, founding and extinction epochs, living and peak counts, reference genome;
+- **clades:** parent, founding and extinction epochs, living and peak counts, reference genome, and a binomial name (spec §7) given once when the clade first reaches the naming threshold: the genus from its dominant trait, the epithet from its preferred habitat, picked by how many clades of that combination were named before;
 - **the Muller plot:** clade counts once per world hour.
 
 After the database, `latest.json` is replaced atomically, and every `--archive-every` epochs a copy goes to `snapshots/`. If the server stops between the two writes, the restart drops the database rows past the snapshot and recomputes those epochs; the world is deterministic, so they come out the same (tested by `a_restart_after_a_crash_matches_an_uninterrupted_run`).
@@ -44,7 +44,8 @@ Nothing the server records is part of consensus (spec §22): all of it can be re
 | `GET /v0/clades?living=&named=&limit=`, `GET /v0/clades/{id}` | clades; a clade with its child clades and population history |
 | `GET /v0/organisms/{id}` | an organism, living or dead, with its offspring |
 | `GET /v0/museum` | extinct named clades, most recent first |
-| `GET /v0/muller?from=&step=` | `[epoch, clade, living]` rows, one sample per world hour |
+| `GET /v0/muller?from=&step=` | `[epoch, clade, living]` rows, one sample per world hour, small clades counted with their nearest named ancestor |
+| `GET /v0/tree` | the named clades of the season (and the founders), each with its nearest named ancestor as parent, its founding and extinction, peak, hue and name |
 | `GET /v0/snapshots`, `GET /v0/snapshots/{epoch}` | archived snapshots |
 | `GET /v0/proofs/{epoch}/organism/{id}` | an organism's inclusion proof against the `state_root` of the latest epoch or of an archived one |
 | `GET /health` | `ok` |

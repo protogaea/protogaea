@@ -65,6 +65,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 
 **B1 — the world server (2026-09-26):** `protogaea-server` runs the world on a timer, records every epoch's header, events, organisms and clades in SQLite, keeps snapshots, survives a crash without losing or changing an epoch, and serves the read API with inclusion proofs ([server README](../server/README.md)). It runs on the test server next to the stage A preview until the viewer (B2) replaces the preview.
 
+**B3 — names, the Muller plot and the clade tree (2026-09-26):** clades get an automatic binomial name (genus from the dominant trait, epithet from the preferred habitat) when they first reach 20 organisms; names are stored and never change. The viewer's Muller plot shows clade shares over the season with children inside their parents' bands and the season's phases and land bridge closings on the time axis; the clade tree shows the named clades on a time axis. The server folds the thousands of small clades into their nearest named ancestor.
+
 **B2 — the viewer (2026-09-26, first version):** a TypeScript and PixiJS viewer served by the world server at `/app/`: the map with layers (biomes, food, organisms, rifts and their schedule, natural events), organisms drawn from their genomes when zoomed in, live mode in which organisms walk to their new cells each epoch, the season timeline with land bridge closings, clade and organism cards, the event feed and permanent links ([viewer README](../viewer/README.md)).
 
 Stage B builds what a viewer sees, on top of the stage A core and without changing consensus. The server stays a single authoritative world (spec §22); sparks and wishes wait for stages B′ and C. Each milestone ends with something running on the test server.
