@@ -1,0 +1,18 @@
+[package]
+name = "protogaea-spark"
+description = "The Protogaea spark client: makes wishes and mines sparks for them"
+version.workspace = true
+edition.workspace = true
+license = "AGPL-3.0-only"
+repository.workspace = true
+
+[features]
+# Hash with the reference C yespower, about 1.5 times faster; needs a C compiler.
+c = ["protogaea-pow/c"]
+
+[dependencies]
+getrandom = "0.3"
+protogaea-pow = { path = "../pow" }
+protogaea-protocol = { path = "../protocol" }
+serde_json.workspace = true
+ureq = { version = "3", default-features = false, features = ["json"] }

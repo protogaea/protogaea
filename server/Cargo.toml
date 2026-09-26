@@ -8,7 +8,10 @@ repository.workspace = true
 
 [dependencies]
 axum = "0.8.9"
+getrandom = "0.3"
 protogaea-core.workspace = true
+protogaea-pow = { path = "../pow", features = ["c"] }
+protogaea-protocol = { path = "../protocol" }
 protogaea-stories.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true

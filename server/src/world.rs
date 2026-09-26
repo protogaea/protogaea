@@ -6,7 +6,7 @@
 //! out the same.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use protogaea_core::run::Run;
@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use protogaea_stories::{Context, Detectors};
 
+use crate::intake::Intake;
 use crate::model::{self, Before, Header, DOMINANT_EVERY};
 use crate::store::{EpochRecord, Store};
 
@@ -42,6 +43,8 @@ pub struct Live {
 
 pub struct Shared {
     pub live: RwLock<Live>,
+    /// Wishes and sparks: the open window and the spark log (stage C).
+    pub intake: Mutex<Intake>,
     pub seed: u64,
     pub rules: Ruleset,
     pub data: PathBuf,
@@ -147,7 +150,10 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         .and_then(|c| crate::store::header(&c, hour))?
         .and_then(|h| h["dominant_clade"].as_u64())
         .map_or(header.dominant_clade, |d| d as u32);
+    let mut intake = Intake::open(&opts.data, run.world.world_id, run.world.ruleset_id)?;
+    intake.open_window(run.world.epoch + 1, &run.state_root())?;
     let shared = Arc::new(Shared {
+        intake: Mutex::new(intake),
         live: RwLock::new(Live {
             world: run.world.clone(),
             header,
@@ -183,6 +189,12 @@ pub fn run_loop(
             continue;
         }
         let started = Instant::now();
+        // The window of this epoch closes before the world steps into it (spec §20).
+        shared
+            .intake
+            .lock()
+            .expect("the lock is never poisoned")
+            .close_window()?;
         let header = step(&mut run, &mut detectors, &mut store, &shared)?;
         {
             let mut live = shared.live.write().expect("the lock is never poisoned");
@@ -194,6 +206,11 @@ pub fn run_loop(
             live.next_epoch_ms = now_ms() + period.as_millis() as u64;
         }
         save(&shared.data, &run, &detectors, shared.archive_every)?;
+        shared
+            .intake
+            .lock()
+            .expect("the lock is never poisoned")
+            .open_window(run.world.epoch + 1, &run.state_root())?;
         println!(
             "epoch {}: population {}, {} ms",
             run.world.epoch,

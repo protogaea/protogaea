@@ -88,6 +88,10 @@ Stage B builds what a viewer sees, on top of the stage A core and without changi
 
 Why this order: the riskiest question is whether people come back to watch. Stories, the digest and predictions are what answer it; the time machine matters for trust, which comes later with sparks. So they come first, and a small group of real viewers tests them before the rest of stage B is built.
 
+## Stage C in detail
+
+**C, part 1 — proof of work and the spark protocol (2026-09-26):** yespower 1.0 with the spark parameters, checked against its reference vectors and measured on two x86-64 CPUs, and ported to plain Rust for the browser ([`pow`](../pow/README.md)); the spark protocol v0 in code: wishes and their signatures, sparks, the spark log after RFC 9162 with inclusion and consistency proofs, signed tree heads and receipts, with test vectors ([`protocol`](../protocol/README.md)); spark intake in the world server, with the open window, rate limits, bans, the log in its own database and work added to wishes at each close ([server](../server/README.md#wishes-and-sparks-stage-c)); and a command-line spark client that makes weather wishes and mines sparks, checking every receipt ([`spark`](../spark/README.md)). End to end on a local world: 449 sparks in a minute on four threads, each receipt checked, a forged spark refused and its sender banned. Next: the ledger (price, the queue, selecting up to three wishes an epoch) and the miracles in the core.
+
 ## Not planned
 
 - **A token, NFTs or earnings** — never.

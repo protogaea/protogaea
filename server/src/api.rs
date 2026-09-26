@@ -87,6 +87,7 @@ pub fn router(api: Api, viewer: bool) -> Router {
         .route("/v0/visits/summary", get(visit_summary))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
         .route("/health", get(|| async { "ok" }))
+        .merge(crate::intake_api::routes())
         .with_state(api)
 }
 

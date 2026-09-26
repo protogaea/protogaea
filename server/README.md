@@ -60,6 +60,22 @@ Visit counts are kept in `visits.sqlite` in the data directory, apart from the w
 
 Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
+## Wishes and sparks (stage C)
+
+While the world shows epoch e, the window of epoch e + 1 is open: its challenge commits to the header of e. When the timer fires, the window closes with a final signed tree head, the work of its sparks is added to their wishes, wishes past their lifetime expire and the target moves toward 20,000 sparks an epoch; then the world steps and the next window opens. Sparks are checked in the order of spec §18: format, window, wish, duplicates, rate limits (a bucket of 40 batches per address, 10 a second), then one PoW check with the reference C yespower on at most two threads (`E_OVERLOADED` when 512 sparks wait). An invalid PoW bans the key and the address for an hour.
+
+The spark log lives in `sparks.sqlite` in the data directory, apart from the world's database, and the operator's key in `operator.key` (made on first start). Miracles are not applied yet: the work waits for the ledger and the miracles in the core.
+
+| Endpoint | What it returns |
+|---|---|
+| `GET /v0/operator` | the operator's public key, which signs tree heads |
+| `GET /v0/window` | the open window: epoch, challenge, target (and a spark's weight), world and ruleset ids, when it closes, the latest tree head |
+| `POST /v0/proposals` | a wish with its first spark: `{wish, signature, spark}` in hex; answers the `proposal_id` and the spark's receipt |
+| `GET /v0/proposals?status=&limit=` | wishes with their status and accumulated work |
+| `POST /v0/sparks` | a batch of up to 64 sparks, 72 bytes each (`application/octet-stream`); a receipt or an error for each |
+| `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |
+| `GET /v0/log/{epoch}/inclusion?index=&size=`, `GET /v0/log/{epoch}/consistency?first=&second=` | inclusion and consistency proofs in the epoch's log |
+
 ## The Telegram bot
 
 [`bot/`](bot/README.md): the morning digest and the news of followed clades, from this API.

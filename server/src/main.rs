@@ -2,6 +2,8 @@
 //! event log and snapshots, and serves the read API of spec §23.
 
 mod api;
+mod intake;
+mod intake_api;
 mod model;
 mod names;
 mod store;
@@ -124,12 +126,15 @@ fn run() -> Result<(), String> {
             .await
             .map_err(|e| format!("cannot listen on {listen}: {e}"))?;
         println!("serving on http://{listen}");
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await
-            .map_err(|e| e.to_string())
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+        .map_err(|e| e.to_string())
     })
 }
 
