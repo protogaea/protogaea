@@ -5,3 +5,4 @@
 # The viewer: npm dependencies and the build
 node_modules/
 viewer/dist/
+__pycache__/
