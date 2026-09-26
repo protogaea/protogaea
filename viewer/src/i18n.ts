@@ -51,7 +51,7 @@ const en = {
   welcomeItems: [
     ['ph-dots-nine', 'The dots on the map are organisms. The colour is the clade, a line of relatives. A clade that reaches 20 organisms gets a name.'],
     ['ph-globe-hemisphere-west', 'A season lasts 42 days. In that time the supercontinent Pangea breaks apart: cracks, shallows, straits, and at last the land bridges close.'],
-    ['ph-book-open', '"Today\'s stories" on the right tell what the world did: comebacks, crossings, invasions, falls.'],
+    ['ph-book-open', '"Today\'s stories" tell what the world did: comebacks, crossings, invasions, falls.'],
     ['ph-target', 'Open a clade and predict tomorrow: will it still be alive, will it grow? It is checked the next day.'],
     ['ph-play-circle', '"The last day in 30 s" replays the last world day on the map.'],
     ['ph-paper-plane-tilt', 'The Telegram bot {bot} sends a morning digest and news of the clades you follow.'],
