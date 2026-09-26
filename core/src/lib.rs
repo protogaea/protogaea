@@ -16,6 +16,7 @@ pub mod merkle;
 pub mod rifts;
 pub mod rng;
 pub mod ruleset;
+pub mod run;
 pub mod sim;
 pub mod state;
 

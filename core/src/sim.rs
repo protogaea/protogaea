@@ -13,7 +13,8 @@ use crate::ruleset::Ruleset;
 use crate::state::{Biome, Clade, Effect, EffectKind, MuseumEntry, Organism, RiftPhase, World};
 
 /// Why an organism died.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DeathCause {
     Starvation,
     OldAge,
@@ -56,6 +57,8 @@ pub struct EpochReport {
     pub clades_founded: Vec<u32>,
     /// Clades whose last member died, as they were at that moment.
     pub clades_extinct: Vec<Clade>,
+    /// Every organism that died, as it was at that moment, in the order the deaths happened.
+    pub deaths_list: Vec<(Organism, DeathCause)>,
 }
 
 /// `BLAKE3("PROTOGAEA/EPOCH_SEED/V0" ‖ world_id ‖ E ‖ beacon_E ‖ header_hash_{E−1})` (spec §14).
@@ -1071,6 +1074,7 @@ fn kill(
         DeathCause::Drowned => 0,
     };
     world.cells[cell].detritus = world.cells[cell].detritus.saturating_add(detritus);
+    report.deaths_list.push((o, cause));
     match cause {
         DeathCause::Starvation => report.deaths_starvation += 1,
         DeathCause::OldAge => report.deaths_old_age += 1,
