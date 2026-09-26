@@ -60,6 +60,10 @@ Visit counts are kept in `visits.sqlite` in the data directory, apart from the w
 
 Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
+## The Telegram bot
+
+[`bot/`](bot/README.md): the morning digest and the news of followed clades, from this API.
+
 ## License
 
 The world server is licensed under the GNU Affero General Public License v3.0 only ([LICENSE](LICENSE)); the rest of the repository is under Apache-2.0 ([LICENSING.md](../LICENSING.md)).

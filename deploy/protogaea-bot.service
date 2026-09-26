@@ -1,0 +1,53 @@
+# The Telegram bot (stage B5): the morning digest and the news of followed clades.
+#
+# Install, on a machine that can reach both the world server and api.telegram.org:
+#   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin protogaea
+#   install -D -m 0644 server/bot/protogaea_bot.py /opt/protogaea/protogaea_bot.py
+#   install -D -m 0600 /dev/null /etc/protogaea/bot.env
+#     # in it: TELEGRAM_TOKEN=..., PROTOGAEA_API=..., PROTOGAEA_PASSWORD=..., PROTOGAEA_VIEWER=...
+#     # and, where Telegram is blocked, TELEGRAM_PROXY=http://host:port
+#   cp protogaea-bot.service /etc/systemd/system/ && systemctl daemon-reload
+#   systemctl enable --now protogaea-bot
+#
+# Its subscribers live in /var/lib/protogaea-bot/bot.sqlite.
+
+[Unit]
+Description=Protogaea Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=protogaea
+Group=protogaea
+EnvironmentFile=/etc/protogaea/bot.env
+Environment=BOT_DATA=/var/lib/protogaea-bot/bot.sqlite
+ExecStart=/usr/bin/python3 /opt/protogaea/protogaea_bot.py
+StateDirectory=protogaea-bot
+StateDirectoryMode=0750
+Restart=always
+RestartSec=30
+
+# Resource limits.
+Nice=10
+CPUQuota=10%
+MemoryMax=128M
+TasksMax=8
+
+# Sandboxing.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -493,6 +493,37 @@ struct StoryQuery {
     limit: Option<u32>,
 }
 
+/// A varied selection of stories, most important first (`all` comes sorted by score): the best
+/// story of each kind, then the second best of each kind, and so on. A story about a clade already
+/// in the selection waits until the end.
+fn varied(all: Vec<Value>, limit: usize) -> Vec<Value> {
+    let mut by_kind: Vec<(String, std::collections::VecDeque<Value>)> = Vec::new();
+    for s in all {
+        let kind = s["kind"].as_str().unwrap_or_default().to_string();
+        match by_kind.iter_mut().find(|(k, _)| *k == kind) {
+            Some((_, queue)) => queue.push_back(s),
+            None => by_kind.push((kind, std::collections::VecDeque::from([s]))),
+        }
+    }
+    let (mut out, mut later) = (Vec::new(), Vec::new());
+    let mut clades = std::collections::HashSet::new();
+    while out.len() < limit && by_kind.iter().any(|(_, queue)| !queue.is_empty()) {
+        for (_, queue) in &mut by_kind {
+            while let Some(s) = queue.pop_front() {
+                if s["clade_id"].as_i64().is_some_and(|c| !clades.insert(c)) {
+                    later.push(s);
+                } else {
+                    out.push(s);
+                    break;
+                }
+            }
+        }
+    }
+    out.extend(later);
+    out.truncate(limit);
+    out
+}
+
 /// The stories the detectors found (roadmap B4), the most important first, with the names of
 /// the clades they are about.
 async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
@@ -507,25 +538,7 @@ async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
         .unwrap_or_else(|| latest.saturating_sub(u64::from(api.rules.epochs_per_day)));
     let limit = q.limit.unwrap_or(20).min(200);
     let (rows, names) = read(&api, move |c| {
-        // A varied selection: the best story of each clade and kind, then the rest by score.
-        let all = store::stories(c, since, 500)?;
-        let (mut first, mut rest) = (Vec::new(), Vec::new());
-        let mut clades = std::collections::HashSet::new();
-        let mut kinds = std::collections::HashSet::new();
-        for s in all {
-            let clade = s["clade_id"].as_i64();
-            let kind = s["kind"].as_str().unwrap_or_default().to_string();
-            if clade.is_none_or(|c| !clades.contains(&c)) && !kinds.contains(&kind) {
-                if let Some(c) = clade {
-                    clades.insert(c);
-                }
-                kinds.insert(kind);
-                first.push(s);
-            } else {
-                rest.push(s);
-            }
-        }
-        let rows: Vec<Value> = first.into_iter().chain(rest).take(limit as usize).collect();
+        let rows = varied(store::stories(c, since, 500)?, limit as usize);
         let mut ids: Vec<u32> = rows
             .iter()
             .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
@@ -566,22 +579,7 @@ async fn digest(State(api): State<Api>, Query(q): Query<DigestQuery>) -> Reply {
         let then = store::header(c, since)?;
         let counts = store::event_counts(c, since)?;
         let bridges = store::events_since(c, since, "bridge_closed")?;
-        // The best stories of the time away, one per clade and kind first.
-        let all = store::stories(c, since + 1, 300)?;
-        let (mut first, mut rest) = (Vec::new(), Vec::new());
-        let mut seen = std::collections::HashSet::new();
-        for s in all {
-            let key = (
-                s["clade_id"].as_i64(),
-                s["kind"].as_str().unwrap_or_default().to_string(),
-            );
-            if seen.insert(key) {
-                first.push(s);
-            } else {
-                rest.push(s);
-            }
-        }
-        let stories: Vec<Value> = first.into_iter().chain(rest).take(6).collect();
+        let stories = varied(store::stories(c, since + 1, 300)?, 6);
         let mut ids: Vec<u32> = stories
             .iter()
             .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
