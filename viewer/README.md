@@ -5,7 +5,8 @@ The stage B2 viewer: the map of the world with its layers, live mode, cards and 
 ```
 npm install
 npm run dev      # http://localhost:5173/app/, proxying /v0 to PROTOGAEA_API (http://127.0.0.1:8081)
-npm run build    # dist/, for protogaea-server --viewer viewer/dist
+npm run build    # dist/, for protogaea-server --viewer viewer/dist; builds the core for the browser first
+npm run wasm     # only the core: viewer/wasm to public/core.wasm (needs `rustup target add wasm32-unknown-unknown`)
 ```
 
 ## What it shows
@@ -27,7 +28,8 @@ npm run build    # dist/, for protogaea-server --viewer viewer/dist
 - **Predictions for tomorrow:** on a living clade's card, will it still be alive, or larger, this time tomorrow; checked the next day and scored in "My predictions". Kept in the browser only.
 - **Visit counts:** for the tests of stage B the viewer reports what is done with it (opened, a story followed, a card opened, a prediction made, a day replayed) under a random id kept in the browser; no names or addresses. The server's `/v0/visits/summary` turns them into the test's measures.
 - **The feed** of events: phases, clades named and extinct, a change of the dominant clade, land bridges closing, wildfires, droughts, floods, plague and revivals.
-- **Permanent links** in the hash: `#epoch=N` opens an archived snapshot, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
+- **The time machine:** a click on the season timeline opens that moment, and ←/→ (Shift for an hour) step through epochs. An epoch between the server's snapshots is recomputed in the browser: the core, compiled to WebAssembly from [`wasm/`](wasm/src/lib.rs), resumes the nearest earlier snapshot in a worker and steps it forward exactly as the server did, and the result's `state_root` is compared with the epoch header in the server's log. Stepping forward continues from the last result.
+- **Permanent links** in the hash: `#epoch=N` opens any past epoch, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
 
 The interface is in English and Russian, following the browser's language, and follows the system's light or dark theme.
 

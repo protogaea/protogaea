@@ -52,7 +52,7 @@ Season 1, **The Breaking of Pangea**, begins with a single supercontinent that s
 |---|---|---|
 | Spec | Specification v0.2: English canonical, Russian translation | Done |
 | A | Deterministic core, WASM build, balance harness, Season 1 map generator | Nearly done: the parameter search for Season 1 is running |
-| B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot, the clade tree, the stories of the day, the "While you were away" digest, the replay of the last day and predictions for tomorrow are done; next are subscriptions and a test with friends |
+| B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot, the clade tree, the stories of the day, the "While you were away" digest, the replay of the last day, predictions for tomorrow, the Telegram bot and the time machine (any past epoch recomputed in the browser and checked against the log) are done; next are comparing two moments and the museum |
 | B′ | Closed observation test with invited users, no PoW | Planned |
 | C | Sparks: yespower, desktop app, WASM client, spark log, watchers | Planned |
 | D | Public Season 1 — The Breaking of Pangea | Planned |
@@ -83,9 +83,9 @@ The repository holds four parts:
 - [core/](core/README.md): the deterministic simulation core (Rust, no dependencies beyond BLAKE3 and serde; also builds for WASM), with its status against the specification. Season 1 runs in full: times of year, natural events, the Breaking of Pangea, the museum, the spore bank and a Merkle `state_root` with inclusion proofs.
 - [harness/](harness/README.md): the balance harness that runs thousands of seasons offline and checks the ecosystem health criteria of spec §28, with its findings, the archetype arena, a benchmark and the parameter search.
 - [server/](server/README.md): the world server. It runs the world on a timer, records every epoch, organism, clade and event in SQLite, keeps snapshots, recovers from a crash without losing an epoch, and serves the read API of spec §23.
-- [viewer/](viewer/README.md): the web viewer (TypeScript and PixiJS): the illustrated map with live organisms, the season timeline, clade and organism cards, the Muller plot, the clade tree and the event feed, in English and Russian.
+- [viewer/](viewer/README.md): the web viewer (TypeScript and PixiJS): the illustrated map with live organisms, the season timeline, clade and organism cards, the Muller plot, the clade tree, the event feed and the time machine, with the core compiled to WebAssembly (`viewer/wasm`), in English and Russian.
 
-You need stable Rust, and Node.js for the viewer. The server bundles SQLite, so it needs a C compiler (on Windows, MSVC or MSYS2's gcc); a plain `cargo build` leaves it out.
+You need stable Rust, and Node.js and the `wasm32-unknown-unknown` Rust target for the viewer. The server bundles SQLite, so it needs a C compiler (on Windows, MSVC or MSYS2's gcc); a plain `cargo build` leaves it out.
 
 ```sh
 cargo test --workspace

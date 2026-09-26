@@ -6,7 +6,7 @@ Everything in this repository is licensed under the [Apache License 2.0](LICENSE
 
 The exceptions:
 
-- [`server/`](server/LICENSE) (the world server) and [`viewer/`](viewer/LICENSE) (the web viewer) are licensed under the **GNU Affero General Public License v3.0 only** (`AGPL-3.0-only`), as planned below: anyone who runs a modified copy as a public service must publish their changes.
+- [`server/`](server/LICENSE) (the world server) and [`viewer/`](viewer/LICENSE) (the web viewer, with `viewer/wasm`, the core built for the browser) are licensed under the **GNU Affero General Public License v3.0 only** (`AGPL-3.0-only`), as planned below: anyone who runs a modified copy as a public service must publish their changes.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is the Contributor Covenant 2.1, licensed under CC BY 4.0, with our contact details added.
 - The viewer's third-party parts keep their own licenses: PixiJS (MIT), the Geist fonts (SIL Open Font License 1.1) and Phosphor icons (MIT).
 

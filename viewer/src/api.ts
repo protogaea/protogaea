@@ -192,6 +192,12 @@ export const api = {
     return res.arrayBuffer();
   },
   storiesSince: (since: number) => get<{ stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?since=${since}&limit=60`),
+  epochHeader: (n: number) => get<Header>(`/v0/epochs/${n}`),
+  snapshotBytes: async (n: number): Promise<ArrayBuffer> => {
+    const res = await fetch(`/v0/snapshots/${n}`);
+    if (!res.ok) throw new ApiError(res.status, 'E_NO_SNAPSHOT', `no snapshot at epoch ${n}`);
+    return res.arrayBuffer();
+  },
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),

@@ -11,6 +11,7 @@ import { renderMuller, type Marker, type MullerData, type TreeClade } from './mu
 import { renderTree } from './tree';
 import * as predictions from './predictions';
 import { track } from './visits';
+import * as timeMachine from './timemachine';
 import { parseFrames, stateOf } from './replay';
 
 // Permanent links live in the hash: #epoch=N&clade=ID&organism=ID. Without `epoch` the viewer is
@@ -97,6 +98,8 @@ const map = new WorldMap($('map'));
 let world: WorldInfo;
 let rules: { rifts: Record<string, number>; season_days: number; biomes: { food_max: number }[] };
 let state: MapState | undefined;
+/** The header of the past epoch on the map, in past mode. */
+let pastHeader: Header | undefined;
 let rifts: Rift[] = [];
 let bridgeCloses: [number, number][] = [];
 let route: Route = readRoute();
@@ -152,8 +155,17 @@ function nextBridge(): string {
 function renderClock() {
   const live = route.epoch === undefined;
   if (!live) {
-    $('clock').innerHTML = `<span class="countdown">${fmt(t.past, { epoch: state?.epoch ?? route.epoch ?? '' })}</span><button class="btn primary" id="to-live"><i class="ph ph-play"></i>${t.jumpToLatest}</button>`;
+    const steps: [string, number, string][] = [
+      ['ph-caret-double-left', -12, t.hourBack],
+      ['ph-caret-left', -1, t.stepBack],
+      ['ph-caret-right', 1, t.stepFwd],
+      ['ph-caret-double-right', 12, t.hourFwd],
+    ];
+    $('clock').innerHTML = `<span class="countdown">${fmt(t.past, { epoch: state?.epoch ?? route.epoch ?? '' })}</span><span class="tm-steps">${steps
+      .map(([icon, by, label]) => `<button class="icon-btn" data-by="${by}" title="${esc(label)}" aria-label="${esc(label)}"><i class="ph ${icon}"></i></button>`)
+      .join('')}</span><button class="btn primary" id="to-live"><i class="ph ph-play"></i>${t.jumpToLatest}</button>`;
     $('to-live').addEventListener('click', () => go({ clade: route.clade, organism: route.organism }));
+    $('clock').querySelectorAll<HTMLButtonElement>('.tm-steps .icon-btn').forEach((b) => b.addEventListener('click', () => stepBy(Number(b.dataset.by))));
     return;
   }
   const left = Math.max(0, Math.round((world.next_epoch_ms - Date.now()) / 1000));
@@ -498,9 +510,12 @@ map.onPick = (p) => {
 // ---------------------------------------------------------------- loading
 
 async function showEpoch(epoch: number | undefined, animate: boolean) {
+  if (epoch === undefined) pastHeader = undefined;
+  else if (epoch !== world.header.epoch && epoch % world.archive_every !== 0) return travel(epoch, animate);
   try {
     const next = await api.map(epoch);
     learnNames(next.names);
+    if (epoch !== undefined) pastHeader = await api.epochHeader(epoch).catch(() => undefined);
     state = next;
     map.setState(next, animate);
     banner(null);
@@ -513,6 +528,50 @@ async function showEpoch(epoch: number | undefined, animate: boolean) {
     }
     banner(esc(fmt(t.error, { message: e instanceof Error ? e.message : String(e) })), true);
   }
+}
+
+// ---------------------------------------------------------------- the time machine (B7)
+
+let treeNames: Promise<Record<string, string>> | undefined;
+/** The names of all named clades of the season, for recomputed states. */
+function allNames(): Promise<Record<string, string>> {
+  treeNames ??= api.tree().then(({ clades }) => Object.fromEntries(clades.filter((c) => c[6]).map((c) => [String(c[0]), c[6] as string])));
+  return treeNames;
+}
+
+/** Recomputes a past epoch in the browser from the nearest earlier snapshot and checks it. */
+async function travel(epoch: number, animate: boolean) {
+  const base = Math.floor(epoch / world.archive_every) * world.archive_every;
+  const cont = state !== undefined && state.epoch < epoch && Math.floor(state.epoch / world.archive_every) * world.archive_every === base;
+  banner(fmt(t.tmComputing, { epoch, base, pct: 0 }));
+  try {
+    const c = await timeMachine.compute(epoch, base, api.snapshotBytes, (done, total) =>
+      banner(fmt(t.tmComputing, { epoch, base, pct: total ? Math.round((done / total) * 100) : 100 })),
+    );
+    if (route.epoch !== epoch) return;
+    const [named, header] = await Promise.all([allNames(), api.epochHeader(epoch).catch(() => undefined)]);
+    const present = new Set(c.state.organisms.clade);
+    c.state.names = Object.fromEntries(Object.entries(named).filter(([id]) => present.has(Number(id))));
+    learnNames(c.state.names);
+    pastHeader = header;
+    state = c.state;
+    map.setState(c.state, animate);
+    if (!header) banner(null);
+    else if (header.state_root === c.state.state_root) {
+      const text = cont ? fmt(t.tmContinued, { epoch }) : fmt(t.tmVerified, { epoch, base, n: c.stepped, s: (c.ms / 1000).toFixed(1) });
+      banner(`<i class="ph ph-seal-check ok"></i>${text}`);
+    } else banner(fmt(t.tmMismatch, { epoch, mine: c.state.state_root.slice(0, 16), theirs: header.state_root.slice(0, 16) }), true);
+    track('view', 'time-machine');
+  } catch (e) {
+    banner(esc(fmt(t.tmFailed, { epoch, message: e instanceof Error ? e.message : String(e) })), true);
+  }
+}
+
+/** Moves the map `by` epochs; past the latest epoch it goes live. */
+function stepBy(by: number) {
+  const latest = world.header.epoch;
+  const target = Math.max(0, (route.epoch ?? latest) + by);
+  go({ ...route, epoch: target >= latest ? undefined : target });
 }
 
 // ---------------------------------------------------------------- views: the map, the Muller plot, the clade tree
@@ -610,10 +669,13 @@ async function onRoute() {
   if (route.clade !== undefined && route.clade !== previous.clade) track('card', `clade`);
   if (route.organism !== undefined && route.organism !== previous.organism) track('card', `organism`);
   if (route.view && route.view !== 'map' && route.view !== previous.view) track('view', route.view);
-  if (route.epoch !== previous.epoch || !state) await showEpoch(route.epoch, false);
+  if (route.epoch !== previous.epoch || !state) {
+    const by = (route.epoch ?? world.header.epoch) - (previous.epoch ?? world.header.epoch);
+    await showEpoch(route.epoch, by > 0 && by <= 12);
+  }
   renderClock();
   renderSeason();
-  renderStats(world.header);
+  renderStats(route.epoch !== undefined && pastHeader ? pastHeader : world.header);
   await renderView();
   await renderDetails();
 }
@@ -821,6 +883,26 @@ async function boot() {
   window.addEventListener('hashchange', onRoute);
   $('replay-btn').querySelector('span')!.textContent = t.replayButton;
   $('replay-btn').addEventListener('click', () => playReplay());
+  $('season').addEventListener('click', (ev) => {
+    const track = (ev.target as HTMLElement).closest<HTMLElement>('.season-track');
+    if (!track) return;
+    const box = track.getBoundingClientRect();
+    const day = ((ev.clientX - box.left) / box.width) * rules.season_days;
+    const epoch = Math.round(day * world.epochs_per_day);
+    go({ ...route, epoch: epoch >= world.header.epoch ? undefined : Math.max(0, epoch) });
+  });
+  $('season').addEventListener('mousemove', (ev) => {
+    const track = (ev.target as HTMLElement).closest<HTMLElement>('.season-track');
+    if (!track) return;
+    const box = track.getBoundingClientRect();
+    track.title = fmt(t.seasonJump, { day: (((ev.clientX - box.left) / box.width) * rules.season_days).toFixed(2) });
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.target instanceof HTMLInputElement || ev.target instanceof HTMLTextAreaElement || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+    if (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight') return;
+    ev.preventDefault();
+    stepBy((ev.key === 'ArrowLeft' ? -1 : 1) * (ev.shiftKey ? 12 : 1));
+  });
   track('visit');
   document.addEventListener('click', (ev) => {
     if ((ev.target as HTMLElement).closest?.('.story a, .replay-caption a')) track('story');

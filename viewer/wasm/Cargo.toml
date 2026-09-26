@@ -1,0 +1,15 @@
+[package]
+name = "protogaea-wasm"
+description = "The Protogaea core for the viewer's time machine: resumes a snapshot and steps it in the browser"
+version.workspace = true
+edition.workspace = true
+license = "AGPL-3.0-only"
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+protogaea-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
