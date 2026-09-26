@@ -165,3 +165,20 @@ Measured on 2026-09-26 over full 42-day seasons, 12 seeds per variant.
 - **Every continent now gets founders and all five biomes.** Founder lineages go to the plates in turn and settle at least 4 cells from another plate; with the four per-plate biome mixes as the default, `maps --seeds 1..21` passes 20 of 20 seeds (9 before).
 - **More niches, more clades.** With the per-plate mixes, at least 6 clades of 20+ hold for the whole season on 50% of seeds (10% before), and no clade holds 60% for more than 3 days on 100%. The dips are short and shallow: on the failing seeds the minimum is 5 (sometimes 3), against a mean of 8–10 clades, and they happen in every time of year while the continent breaks up, not only in winter.
 - **Milder winters, earlier plague and more mutations do not help:** winter growth ×1.5 gives 16%, plague from a 20% share 41%, `mutation_ppm` 150,000 50%.
+
+## Findings (stage A3: the size of the world)
+
+Measured on 2026-09-26 over full 42-day seasons on fresh seeds 101 to 113 (12 seeds each), default rules; at 128 × 128 the population cap and the founders were scaled with the area (×4). Twelve threads of an AMD Ryzen 5 5500 on the test server.
+
+| Size | Seeds alive | Checks passed (mean) | 6+ clades of 20+ 95% of the time | Continents apart at the end | Stories per world day | Time for the 12 seasons |
+|---|---|---|---|---|---|---|
+| 64 × 64 | 12 of 12 | 9.8 | 12 of 12 | 58% | 4.5 (2.7–6.6) | 11 min |
+| 128 × 128 | 12 of 12 | 9.6 | 12 of 12 | 58% | 6.4 (4.5–8.8) | 50 min |
+
+- **Health is the same at both sizes.** The larger world does not make continents diverge more.
+- **More stories, but of the routine kinds.** A season at 128 × 128 tells about twice as many crossings (167 against 83) and three times as many comebacks (50 against 15), but fewer of the rarer ones: new leaders 4 against 17, invasions 28 against 45, the last of a great clade 6 against 19. A larger world has a steadier leader.
+- **It costs 4.4 times as much:** about 72 s of one core per world day, against the target of 30 s (spec §29), and four times the snapshots, replay frames and time-machine work in the browser.
+- **Arms races are almost never told** at either size (0.1 and 0 a season): the detector's thresholds or the hunters' balance need a look.
+
+Season 1 stays at 64 × 64 unless the core gets about 2.5 times faster.
+
