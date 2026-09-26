@@ -189,6 +189,19 @@ em.latin { font-style: italic; }
 .banner .ok { color: #6fce7e; margin-right: 6px; }
 .banner code { font: 11px var(--mono); overflow-wrap: anywhere; }
 .tm-steps { display: inline-flex; gap: 2px; }
+.pin-btn { color: var(--text-3); }
+.pin-btn:hover, .pin-btn[aria-pressed="true"] { color: var(--accent); }
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0 4px; }
+.cmp-table td { padding: 4px 0; border-bottom: 1px solid var(--line); color: var(--text-2); }
+.cmp-table td.n { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.cmp-table .up { color: #6fce7e; }
+.cmp-table .down { color: #e07b6a; }
+.cmp-list { margin: 4px 0 10px; font-size: 13px; line-height: 1.6; }
+.proof { margin-top: 14px; font-size: 13px; color: var(--text-2); }
+.proof .btn { margin-bottom: 8px; }
+.proof .ok { color: #6fce7e; margin-right: 4px; }
+.proof .bad { color: #e07b6a; margin-right: 4px; }
+.proof code { font: 11px var(--mono); }
 .tm-steps .icon-btn { width: 30px; height: 30px; font-size: 15px; color: var(--text-2); }
 .tm-steps .icon-btn:hover { color: var(--text); background: var(--surface-2); }
 .banner.error { background: var(--danger-bg); border-color: var(--danger-line); }

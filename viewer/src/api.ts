@@ -170,11 +170,16 @@ export const api = {
   map: (epoch?: number) => get<MapState>(epoch === undefined ? '/v0/map' : `/v0/map?epoch=${epoch}`),
   rifts: () => get<{ rifts: Rift[] }>('/v0/rifts'),
   snapshots: () => get<{ every: number; epochs: number[] }>('/v0/snapshots'),
-  latestEvents: (limit = 60) => get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?before=0&limit=${limit}`),
+  latestEvents: (limit = 60, until?: number) =>
+    get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?before=0&limit=${limit}${until === undefined ? '' : `&until=${until}`}`),
   eventsOfKind: (kind: string) => get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?kind=${kind}&limit=500`),
   tree: () =>
     get<{ clades: [number, number, number, number | null, number, number, string | null][]; name_threshold: number }>('/v0/tree'),
-  stories: (limit = 6) => get<{ since: number; stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?limit=${limit}`),
+  stories: (limit = 6, until?: number) =>
+    get<{ since: number; stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?limit=${limit}${until === undefined ? '' : `&until=${until}`}`),
+  storiesBetween: (since: number, until: number, limit = 3) =>
+    get<{ since: number; stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?since=${since}&until=${until}&limit=${limit}`),
+  proof: (epoch: number, id: number) => get<{ epoch: number; state_root: string; path: string[]; size: number }>(`/v0/proofs/${epoch}/organism/${id}`),
   digest: (since: number) =>
     get<{
       since: number;

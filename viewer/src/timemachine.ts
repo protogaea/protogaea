@@ -19,21 +19,39 @@ let worker: Worker | undefined;
 let loaded: { base: number; epoch: number } | undefined;
 let busy: Promise<unknown> = Promise.resolve();
 
-function run(req: Request, transfer: Transferable[], onProgress: (epoch: number) => void): Promise<{ epoch: number; map: string }> {
+function send(req: Request, transfer: Transferable[], onProgress: (epoch: number) => void): Promise<Reply> {
   worker ??= new Worker(new URL('./timemachine.worker.ts', import.meta.url), { type: 'module' });
   const w = worker;
   return new Promise((resolve, reject) => {
     w.onmessage = (ev: MessageEvent<Reply>) => {
       const r = ev.data;
       if (r.kind === 'progress') onProgress(r.epoch);
-      else if (r.kind === 'done') resolve(r);
-      else {
-        loaded = undefined;
-        reject(new Error(r.message));
-      }
+      else if (r.kind === 'error') reject(new Error(r.message));
+      else resolve(r);
     };
     w.postMessage(req, transfer);
   });
+}
+
+async function run(req: Request, transfer: Transferable[], onProgress: (epoch: number) => void): Promise<{ epoch: number; map: string }> {
+  try {
+    const r = await send(req, transfer, onProgress);
+    if (r.kind !== 'done') throw new Error('unexpected reply');
+    return r;
+  } catch (e) {
+    loaded = undefined;
+    throw e;
+  }
+}
+
+/** Checks an organism's inclusion proof from the server against a `state_root` from the log. */
+export function verifyProof(proof: unknown, stateRoot: string): Promise<boolean> {
+  const job = busy.then(async () => {
+    const r = await send({ kind: 'verify', input: JSON.stringify({ proof, state_root: stateRoot }) }, [], () => {});
+    return r.kind === 'verified' && r.ok;
+  });
+  busy = job.catch(() => undefined);
+  return job;
 }
 
 /**

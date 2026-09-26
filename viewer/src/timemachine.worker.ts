@@ -7,6 +7,7 @@ interface Core {
   dealloc(ptr: number, len: number): void;
   load(ptr: number, len: number): bigint;
   step(n: number): bigint;
+  verify(ptr: number, len: number): number;
   map(): void;
   out_ptr(): number;
   out_len(): number;
@@ -14,11 +15,13 @@ interface Core {
 
 export type Request =
   | { kind: 'load'; snapshot: ArrayBuffer; target: number }
-  | { kind: 'step'; target: number };
+  | { kind: 'step'; target: number }
+  | { kind: 'verify'; input: string };
 
 export type Reply =
   | { kind: 'progress'; epoch: number }
   | { kind: 'done'; epoch: number; map: string }
+  | { kind: 'verified'; ok: boolean }
   | { kind: 'error'; message: string };
 
 let core: Core | undefined;
@@ -44,6 +47,14 @@ self.onmessage = async (ev: MessageEvent<Request>) => {
   try {
     const c = await instance();
     const req = ev.data;
+    if (req.kind === 'verify') {
+      const bytes = new TextEncoder().encode(req.input);
+      const ptr = c.alloc(bytes.length);
+      new Uint8Array(c.memory.buffer, ptr, bytes.length).set(bytes);
+      const r = c.verify(ptr, bytes.length);
+      c.dealloc(ptr, bytes.length);
+      return post(r < 0 ? { kind: 'error', message: output(c) } : { kind: 'verified', ok: r === 1 });
+    }
     if (req.kind === 'load') {
       const bytes = new Uint8Array(req.snapshot);
       const ptr = c.alloc(bytes.length);
@@ -54,7 +65,7 @@ self.onmessage = async (ev: MessageEvent<Request>) => {
       epoch = at;
     }
     if (epoch < 0) return post({ kind: 'error', message: 'no world loaded' });
-    while (epoch < ev.data.target) {
+    while (epoch < req.target) {
       epoch = Number(c.step(1));
       post({ kind: 'progress', epoch });
     }

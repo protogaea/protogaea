@@ -34,6 +34,8 @@ interface Route {
   clade?: number;
   organism?: number;
   view?: View;
+  /** A moment remembered to compare the one on the map with. */
+  cmp?: number;
 }
 
 function readRoute(): Route {
@@ -45,6 +47,7 @@ function readRoute(): Route {
     clade: num('clade'),
     organism: num('organism'),
     view: view === 'muller' || view === 'tree' ? view : undefined,
+    cmp: num('cmp'),
   };
 }
 
@@ -55,6 +58,8 @@ function link(r: Route): string {
   if (r.organism !== undefined) p.set('organism', String(r.organism));
   const view = 'view' in r ? r.view : route.view;
   if (view && view !== 'map') p.set('view', view);
+  const cmp = 'cmp' in r ? r.cmp : route.cmp;
+  if (cmp !== undefined) p.set('cmp', String(cmp));
   return `#${p.toString()}`;
 }
 
@@ -163,14 +168,87 @@ function renderClock() {
     ];
     $('clock').innerHTML = `<span class="countdown">${fmt(t.past, { epoch: state?.epoch ?? route.epoch ?? '' })}</span><span class="tm-steps">${steps
       .map(([icon, by, label]) => `<button class="icon-btn" data-by="${by}" title="${esc(label)}" aria-label="${esc(label)}"><i class="ph ${icon}"></i></button>`)
-      .join('')}</span><button class="btn primary" id="to-live"><i class="ph ph-play"></i>${t.jumpToLatest}</button>`;
+      .join('')}</span>${pinBtn()}<button class="btn primary" id="to-live"><i class="ph ph-play"></i>${t.jumpToLatest}</button>`;
     $('to-live').addEventListener('click', () => go({ clade: route.clade, organism: route.organism }));
+    bindPin();
     $('clock').querySelectorAll<HTMLButtonElement>('.tm-steps .icon-btn').forEach((b) => b.addEventListener('click', () => stepBy(Number(b.dataset.by))));
     return;
   }
   const left = Math.max(0, Math.round((world.next_epoch_ms - Date.now()) / 1000));
   const s = left >= 60 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : `0:${String(left).padStart(2, '0')}`;
-  $('clock').innerHTML = `<span class="countdown">${left > 0 ? fmt(t.nextEpoch, { s: `<span class="num">${s}</span>` }) : t.epochNow}</span><span class="live-pill">${t.live}</span>`;
+  $('clock').innerHTML = `<span class="countdown">${left > 0 ? fmt(t.nextEpoch, { s: `<span class="num">${s}</span>` }) : t.epochNow}</span>${pinBtn()}<span class="live-pill">${t.live}</span>`;
+  bindPin();
+}
+
+// ---------------------------------------------------------------- comparing two moments (B7)
+
+function pinBtn(): string {
+  const here = route.epoch ?? world.header.epoch;
+  return `<button class="icon-btn pin-btn" id="pin-btn" aria-pressed="${route.cmp === here}" title="${esc(t.pinMoment)}" aria-label="${esc(t.pinMoment)}"><i class="ph ph-push-pin"></i></button>`;
+}
+function bindPin() {
+  $('pin-btn').addEventListener('click', () => {
+    const here = route.epoch ?? world.header.epoch;
+    go({ ...route, cmp: route.cmp === here ? undefined : here });
+  });
+}
+
+type TreeRow = [number, number, number, number | null, number, number, string | null];
+let treeRows: { at: number; rows: Promise<TreeRow[]> } | undefined;
+function namedClades(): Promise<TreeRow[]> {
+  if (!treeRows || treeRows.at !== world.header.epoch) treeRows = { at: world.header.epoch, rows: api.tree().then((r) => r.clades) };
+  return treeRows.rows;
+}
+
+async function renderCompare() {
+  const el = $('compare');
+  if (route.cmp === undefined) {
+    el.hidden = true;
+    return;
+  }
+  const here = route.epoch ?? world.header.epoch;
+  const close = `<button class="icon-btn close" aria-label="${t.close}"><i class="ph ph-x"></i></button>`;
+  if (route.cmp === here) {
+    el.innerHTML = `<div class="card-head"><h2>${fmt(t.compareTitle, { a: nf.format(here), b: '…' })}</h2>${close}</div><p class="empty">${t.compareHint}</p>`;
+  } else {
+    const [a, b] = route.cmp < here ? [route.cmp, here] : [here, route.cmp];
+    const header = (e: number) => (e === world.header.epoch ? Promise.resolve(world.header) : api.epochHeader(e));
+    const [ha, hb, rows, told] = await Promise.all([header(a), header(b), namedClades(), api.storiesBetween(a + 1, b, 3)]);
+    learnNames(told.names);
+    for (const r of rows) if (r[6]) names.set(r[0], r[6]);
+    const alive = (r: TreeRow, e: number) => r[2] <= e && (r[3] === null || r[3] > e);
+    const appeared = rows.filter((r) => r[6] && r[1] !== 0 && !alive(r, a) && alive(r, b));
+    const gone = rows.filter((r) => r[6] && alive(r, a) && !alive(r, b));
+    const row = (label: string, x: number, y: number) => {
+      const d = y - x;
+      const sign = d > 0 ? `<span class="up">+${nf.format(d)}</span>` : d < 0 ? `<span class="down">−${nf.format(-d)}</span>` : '±0';
+      return `<tr><td>${label[0].toUpperCase() + label.slice(1)}</td><td class="n">${nf.format(x)} → ${nf.format(y)}</td><td class="n">${sign}</td></tr>`;
+    };
+    const cladeLinks = (list: TreeRow[]) =>
+      list.length === 0
+        ? `<span class="empty">${t.compareNone}</span>`
+        : list
+            .slice(0, 10)
+            .map((r) => `<a href="${link({ ...route, clade: r[0], organism: undefined })}">${cladeLabel(r[0])}</a>`)
+            .join(', ') + (list.length > 10 ? ` +${list.length - 10}` : '');
+    el.innerHTML = `<div class="card-head"><h2>${fmt(t.compareTitle, { a: nf.format(a), b: nf.format(b) })}</h2>${close}</div>
+      <div class="subtitle">${fmt(t.compareSpan, { time: duration(b - a), from: dayOf(a).toFixed(2), to: dayOf(b).toFixed(2) })}</div>
+      <table class="cmp-table">
+        ${row(t.organismsAlive, ha.population, hb.population)}
+        ${row(t.grazers, ha.grazers, hb.grazers)}
+        ${row(t.armored, ha.armored, hb.armored)}
+        ${row(t.hunters, ha.hunters, hb.hunters)}
+        ${row(t.livingClades, ha.clades, hb.clades)}
+        ${row(`${t.clades} ${t.clades20}`, ha.clades_20, hb.clades_20)}
+      </table>
+      <div class="fact">${t.compareLeader}<b>${ha.dominant_clade !== hb.dominant_clade ? `${cladeLabel(ha.dominant_clade)} → ` : ''}${cladeLabel(hb.dominant_clade)}</b></div>
+      <div class="fact" style="margin-top:10px">${t.compareAppeared} (${appeared.length})</div><div class="cmp-list">${cladeLinks(appeared)}</div>
+      <div class="fact">${t.compareGone} (${gone.length})</div><div class="cmp-list">${cladeLinks(gone)}</div>
+      ${told.stories.length ? `<div class="fact">${t.compareStories}</div><div class="stories" style="margin-top:8px">${told.stories.map(storyHtml).join('')}</div>` : ''}
+      <p style="margin:10px 0 0"><a href="${link({ ...route, epoch: route.cmp === world.header.epoch ? undefined : route.cmp })}">${fmt(t.compareOpen, { epoch: nf.format(route.cmp) })}</a></p>`;
+  }
+  el.hidden = false;
+  el.querySelector('.close')?.addEventListener('click', () => go({ ...route, cmp: undefined }));
 }
 
 // ---------------------------------------------------------------- world numbers
@@ -301,7 +379,7 @@ function storyHtml(s: StoryRow): string {
 }
 
 async function renderStories() {
-  const { stories, names: storyNames } = await api.stories(5);
+  const { stories, names: storyNames } = await api.stories(5, route.epoch);
   learnNames(storyNames);
   $('stories').innerHTML =
     `<h2>${t.storiesTitle}</h2>` +
@@ -309,7 +387,7 @@ async function renderStories() {
 }
 
 async function renderFeed() {
-  const { events, names: eventNames } = await api.latestEvents(120);
+  const { events, names: eventNames } = await api.latestEvents(120, route.epoch);
   learnNames(eventNames);
   // New clades split off all the time; the feed keeps the bigger news and a sample of foundings.
   const shown = events
@@ -443,7 +521,33 @@ function renderOrganism(o: OrganismInfo) {
       <div class="fact">${t.habitat}<b>${t.habitats[o.genome.habitat] ?? '?'}</b></div>
     </div>
     ${kids ? `<div class="fact" style="margin-top:14px">${t.offspring}<div class="links" style="margin-top:4px">${kids}</div></div>` : ''}
+    <div class="proof"><button class="btn" id="proof-btn"><i class="ph ph-seal-check"></i>${t.proofCheck}</button><div id="proof-out"></div></div>
     ${traitsTable(o.genome.traits)}`;
+}
+
+/** Checks in the browser that an organism is part of the state on the map (spec §15). */
+async function checkProof(id: number) {
+  const out = $('proof-out');
+  const epoch = route.epoch ?? world.header.epoch;
+  if (epoch !== world.header.epoch && epoch % world.archive_every !== 0) {
+    out.innerHTML = fmt(t.proofNotHere, { every: world.archive_every });
+    return;
+  }
+  out.textContent = t.proofChecking;
+  try {
+    const proof = await api.proof(epoch, id);
+    const header = await api.epochHeader(proof.epoch);
+    const ok = await timeMachine.verifyProof(proof, header.state_root);
+    out.innerHTML = ok
+      ? `<i class="ph ph-seal-check ok"></i>${fmt(t.proofOk, { id, epoch: nf.format(proof.epoch), n: proof.path.length, size: nf.format(proof.size) })}`
+      : `<i class="ph ph-warning bad"></i>${t.proofBad}`;
+    track('view', 'proof');
+  } catch (e) {
+    out.innerHTML =
+      e instanceof ApiError && e.status === 404 && e.code === 'E_NOT_FOUND'
+        ? fmt(t.proofNotAlive, { id, epoch: nf.format(epoch) })
+        : esc(fmt(t.error, { message: e instanceof Error ? e.message : String(e) }));
+  }
 }
 
 async function renderDetails() {
@@ -452,6 +556,7 @@ async function renderDetails() {
     if (route.organism !== undefined) {
       const o = await api.organism(route.organism);
       el.innerHTML = renderOrganism(o);
+      $('proof-btn').addEventListener('click', () => checkProof(o.id));
       map.highlight(undefined, o.id);
       const cell = map.cellOfOrganism(o.id);
       if (cell !== undefined) map.focus(cell);
@@ -676,8 +781,8 @@ async function onRoute() {
   renderClock();
   renderSeason();
   renderStats(route.epoch !== undefined && pastHeader ? pastHeader : world.header);
-  await renderView();
-  await renderDetails();
+  const moved = route.epoch !== previous.epoch;
+  await Promise.all([renderView(), renderDetails(), renderCompare(), moved ? renderStories() : null, moved ? renderFeed() : null]);
 }
 
 /** Live mode: when the world moves on, the map follows and the organisms walk to their new cells. */
@@ -695,6 +800,7 @@ async function poll() {
       await Promise.all([renderStories(), renderFeed()]);
       if (route.view && route.view !== 'map' && world.header.epoch % 12 === 0) await renderView();
       if (route.clade !== undefined || route.organism !== undefined) await renderDetails();
+      if (route.cmp !== undefined) await renderCompare();
     }
   } catch (e) {
     banner(esc(fmt(t.error, { message: e instanceof Error ? e.message : String(e) })), true);

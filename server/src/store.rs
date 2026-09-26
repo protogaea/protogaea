@@ -538,16 +538,19 @@ pub fn events_before(
     limit: u32,
     kind: Option<&str>,
     clade: Option<u32>,
+    until: Option<u64>,
 ) -> Result<Vec<Value>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, epoch, kind, clade_id, organism_id, data FROM events
              WHERE (?1 = 0 OR id < ?1) AND (?2 IS NULL OR kind = ?2) AND (?3 IS NULL OR clade_id = ?3)
+               AND (?5 IS NULL OR epoch <= ?5)
              ORDER BY id DESC LIMIT ?4",
         )
         .map_err(err)?;
+    let until = until.map(|u| u.min(i64::MAX as u64) as i64);
     let rows = stmt
-        .query_map(params![before, kind, clade, limit], event_row)
+        .query_map(params![before, kind, clade, limit, until], event_row)
         .map_err(err)?;
     rows.map(|r| r.map_err(err)).collect()
 }
@@ -713,16 +716,17 @@ pub fn tree(conn: &Connection) -> Result<Vec<TreeRow>> {
     rows.map(|r| r.map_err(err)).collect()
 }
 
-/// Stories from epoch `since` on, the most important first, then the newest.
-pub fn stories(conn: &Connection, since: u64, limit: u32) -> Result<Vec<Value>> {
+/// Stories from epoch `since` to `until`, the most important first, then the newest.
+pub fn stories(conn: &Connection, since: u64, until: u64, limit: u32) -> Result<Vec<Value>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, epoch, kind, clade_id, other_id, plate, score, data FROM stories
-             WHERE epoch >= ?1 ORDER BY score DESC, epoch DESC, id LIMIT ?2",
+             WHERE epoch >= ?1 AND epoch <= ?2 ORDER BY score DESC, epoch DESC, id LIMIT ?3",
         )
         .map_err(err)?;
+    let until = until.min(i64::MAX as u64) as i64;
     let rows = stmt
-        .query_map(params![since as i64, limit], |r| {
+        .query_map(params![since as i64, until, limit], |r| {
             Ok(json!({
                 "id": r.get::<_, i64>(0)?,
                 "epoch": r.get::<_, i64>(1)?,

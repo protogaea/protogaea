@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Stage B7, part 2: comparing two moments, inclusion proofs checked in the browser by the WebAssembly core, and the stories and the event feed of a past epoch (`until=` on `/v0/stories` and `/v0/events`).
 - Stage B7, part 1: the time machine. The core compiled to WebAssembly (`viewer/wasm`, `protogaea-wasm`) recomputes any past epoch in the browser from the nearest earlier snapshot and checks its `state_root` against the server's log; the season timeline opens any moment, and arrow keys step through epochs.
 - A welcome for first-time viewers in the viewer, and fixes for phones (the welcome and the digest over the whole screen, the replay button clear of the tabs).
 - The Telegram bot (`server/bot/`, stage B5): the morning digest and the news of followed clades, in Russian and English; stories are now chosen round-robin by kind, so a digest is not six stories of one kind.

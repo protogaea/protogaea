@@ -436,6 +436,8 @@ async fn museum(State(api): State<Api>, Query(q): Query<Limit>) -> Reply {
 struct EventQuery {
     /// The newest events first, older than this id (`before=0` for the latest).
     before: Option<i64>,
+    /// With `before`: only events up to this epoch, for the time machine.
+    until: Option<u64>,
     cursor: Option<i64>,
     limit: Option<u32>,
     kind: Option<String>,
@@ -450,7 +452,9 @@ async fn events(State(api): State<Api>, Query(q): Query<EventQuery>) -> Reply {
     let newest_first = q.before.is_some();
     let (rows, refs) = read(&api, move |c| {
         let rows = match q.before {
-            Some(before) => store::events_before(c, before, limit, q.kind.as_deref(), q.clade)?,
+            Some(before) => {
+                store::events_before(c, before, limit, q.kind.as_deref(), q.clade, q.until)?
+            }
             None => store::events(c, cursor, limit, q.kind.as_deref(), q.clade)?,
         };
         let mut ids: Vec<u32> = rows
@@ -488,8 +492,10 @@ async fn events(State(api): State<Api>, Query(q): Query<EventQuery>) -> Reply {
 
 #[derive(Deserialize)]
 struct StoryQuery {
-    /// From this epoch on; by default, the last world day.
+    /// From this epoch on; by default, the world day before `until`.
     since: Option<u64>,
+    /// Up to this epoch; by default, the latest (the time machine asks for the past).
+    until: Option<u64>,
     limit: Option<u32>,
 }
 
@@ -533,12 +539,13 @@ async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
         .expect("the lock is never poisoned")
         .world
         .epoch;
+    let until = q.until.unwrap_or(latest).min(latest);
     let since = q
         .since
-        .unwrap_or_else(|| latest.saturating_sub(u64::from(api.rules.epochs_per_day)));
+        .unwrap_or_else(|| until.saturating_sub(u64::from(api.rules.epochs_per_day)));
     let limit = q.limit.unwrap_or(20).min(200);
     let (rows, names) = read(&api, move |c| {
-        let rows = varied(store::stories(c, since, 500)?, limit as usize);
+        let rows = varied(store::stories(c, since, until, 500)?, limit as usize);
         let mut ids: Vec<u32> = rows
             .iter()
             .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
@@ -556,7 +563,7 @@ async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
         .map(|(id, n)| (id.to_string(), Value::String(n)))
         .collect();
     Ok(Json(
-        json!({ "since": since, "stories": rows, "names": names }),
+        json!({ "since": since, "until": until, "stories": rows, "names": names }),
     ))
 }
 
@@ -579,7 +586,7 @@ async fn digest(State(api): State<Api>, Query(q): Query<DigestQuery>) -> Reply {
         let then = store::header(c, since)?;
         let counts = store::event_counts(c, since)?;
         let bridges = store::events_since(c, since, "bridge_closed")?;
-        let stories = varied(store::stories(c, since + 1, 300)?, 6);
+        let stories = varied(store::stories(c, since + 1, u64::MAX, 300)?, 6);
         let mut ids: Vec<u32> = stories
             .iter()
             .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])

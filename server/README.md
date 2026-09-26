@@ -41,12 +41,12 @@ Nothing the server records is part of consensus (spec §22): all of it can be re
 | `GET /v0/ruleset`, `GET /v0/rifts` | the rules; the rift schedule fixed at genesis |
 | `GET /v0/map` | the latest state for the map: one array per field (biome, food, moisture, rift phase; organisms' id, cell, clade, hue, archetype, energy, age; active effects) |
 | `GET /v0/epochs?from=&to=&step=&limit=`, `GET /v0/epochs/{n}` | headers |
-| `GET /v0/events?cursor=&limit=&kind=&clade=` | events after a cursor (an event id), oldest first; `next` continues |
+| `GET /v0/events?cursor=&limit=&kind=&clade=` | events after a cursor (an event id), oldest first; `next` continues. With `before=` (an id, 0 for the latest) the newest first instead, and `until=` keeps them to epochs up to a past one |
 | `GET /v0/clades?living=&named=&limit=`, `GET /v0/clades/{id}` | clades; a clade with its child clades and population history |
 | `GET /v0/organisms/{id}` | an organism, living or dead, with its offspring |
 | `GET /v0/museum` | extinct named clades, most recent first |
 | `GET /v0/muller?from=&step=` | `[epoch, clade, living]` rows, one sample per world hour, small clades counted with their nearest named ancestor |
-| `GET /v0/stories?since=&limit=` | the stories the detectors found since an epoch (the last world day by default), the best of each clade and kind first, with the names of the clades they are about |
+| `GET /v0/stories?since=&until=&limit=` | the stories the detectors found between two epochs (by default the world day up to the latest epoch), the best of each clade and kind first, with the names of the clades they are about |
 | `GET /v0/digest?since=` | "While you were away": the header then and now, event counts by kind, the land bridges closed and the best stories since an epoch |
 | `GET /v0/replay?from=&step=` | compact frames for the replay (the last world day by default, every second epoch), binary and little-endian: per frame the epoch (u32) and the number of organisms (u32), then per organism the low 32 bits of its id (u32), cell (u16), clade (u32), hue (u16) and archetype (u8). Frames are kept for the last two world days |
 | `GET /v0/tree` | the named clades of the season (and the founders), each with its nearest named ancestor as parent, its founding and extinction, peak, hue and name |
