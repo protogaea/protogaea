@@ -1,0 +1,12 @@
+[package]
+name = "protogaea-pow"
+description = "The proof of work of Protogaea sparks: yespower 1.0 with the spark personalization, the spark input and the target check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"

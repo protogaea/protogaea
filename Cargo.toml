@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "harness", "server", "stories", "viewer/wasm"]
+members = ["core", "harness", "pow", "server", "stories", "viewer/wasm"]
 # The server needs a C compiler for SQLite (on Windows: MSVC, or MSYS2's gcc and dlltool with the
 # GNU toolchain); a plain `cargo build` leaves it out so the core and the harness build anywhere.
 # CI builds the whole workspace.

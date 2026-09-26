@@ -519,6 +519,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "protogaea-pow"
+version = "0.0.1"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "protogaea-server"
 version = "0.0.1"
 dependencies = [

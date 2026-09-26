@@ -21,7 +21,7 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 
 | # | Decision | Status |
 |---|---|---|
-| 1 | Final PoW algorithm and parameters, after benchmarks on x86-64, ARM64 and GPUs | Open |
+| 1 | Final PoW algorithm and parameters, after benchmarks on x86-64, ARM64 and GPUs | yespower 1.0 (N = 2048, r = 32) measured on two x86-64 CPUs with its reference vectors ([pow](../pow/README.md)); ARM64 and WebAssembly open. GPUs are not measured: yespower is built for CPUs |
 | 2 | `ruleset` numbers from the balance harness; Season 1 seed selection criteria | Numbers chosen from the harness on 2026-09-26 ([findings](../harness/README.md#findings-stage-a3-the-season-1-numbers)); the world stays 64 × 64. Seed selection criteria open |
 | 3 | Beacon network, the "window close → round number" rule, the delay rule; independent watchers | Open |
 | 4 | Formats of receipts, STHs and headers; log mirrors; OpenTimestamps cadence | Open — see the [protocol draft](protocol.md) |
