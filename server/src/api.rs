@@ -1,5 +1,6 @@
 //! The read API v0 (spec §23). Reads come from the live world or from SQLite; nothing here can
-//! change the world.
+//! change the world. The one write is anonymous visit counts for the early tests, kept apart from
+//! the world's data (`visits`).
 
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use protogaea_core::run::hex;
 use protogaea_core::World;
@@ -16,6 +17,7 @@ use serde_json::{json, Value};
 
 use crate::model::{archetype, Roots};
 use crate::store;
+use crate::visits;
 use crate::world::{load_world, Shared};
 
 type Api = Arc<Shared>;
@@ -81,6 +83,8 @@ pub fn router(api: Api, viewer: bool) -> Router {
         .route("/v0/stories", get(stories))
         .route("/v0/digest", get(digest))
         .route("/v0/replay", get(replay))
+        .route("/v0/visits", post(visit))
+        .route("/v0/visits/summary", get(visit_summary))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
         .route("/health", get(|| async { "ok" }))
         .with_state(api)
@@ -651,6 +655,45 @@ async fn replay(
         out.extend_from_slice(&data);
     }
     Ok(([(header::CONTENT_TYPE, "application/octet-stream")], out).into_response())
+}
+
+#[derive(Deserialize)]
+struct Visit {
+    visitor: String,
+    kind: String,
+    detail: Option<String>,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// A visitor's action, from the viewer. Unknown kinds and malformed ids are dropped quietly.
+async fn visit(State(api): State<Api>, Json(v): Json<Visit>) -> Result<StatusCode, ApiError> {
+    let path = api.data.join(visits::DB);
+    tokio::task::spawn_blocking(move || {
+        let conn = visits::open(&path)?;
+        visits::record(&conn, &v.visitor, &v.kind, v.detail.as_deref(), unix_now())
+    })
+    .await
+    .map_err(|e| internal(e.to_string()))?
+    .map_err(internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The measures of the friends test: returns on day 1 and day 7, what visitors did, visitors by day.
+async fn visit_summary(State(api): State<Api>) -> Reply {
+    let path = api.data.join(visits::DB);
+    let summary = tokio::task::spawn_blocking(move || {
+        let conn = visits::open(&path)?;
+        visits::summary(&conn, unix_now())
+    })
+    .await
+    .map_err(|e| internal(e.to_string()))?
+    .map_err(internal)?;
+    Ok(Json(summary))
 }
 
 #[derive(Deserialize)]

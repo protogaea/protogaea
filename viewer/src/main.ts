@@ -10,6 +10,7 @@ import { WorldMap, type Layers } from './map';
 import { renderMuller, type Marker, type MullerData, type TreeClade } from './muller';
 import { renderTree } from './tree';
 import * as predictions from './predictions';
+import { track } from './visits';
 import { parseFrames, stateOf } from './replay';
 
 // Permanent links live in the hash: #epoch=N&clade=ID&organism=ID. Without `epoch` the viewer is
@@ -378,6 +379,7 @@ function bindPredict(el: HTMLElement) {
   el.querySelectorAll<HTMLButtonElement>('.predict .btn').forEach((b) =>
     b.addEventListener('click', async () => {
       const box = b.closest<HTMLElement>('.predict')!;
+      track('prediction', b.dataset.q);
       predictions.make(
         Number(box.dataset.clade),
         b.dataset.q as predictions.Question,
@@ -605,6 +607,9 @@ async function renderView() {
 async function onRoute() {
   const previous = route;
   route = readRoute();
+  if (route.clade !== undefined && route.clade !== previous.clade) track('card', `clade`);
+  if (route.organism !== undefined && route.organism !== previous.organism) track('card', `organism`);
+  if (route.view && route.view !== 'map' && route.view !== previous.view) track('view', route.view);
   if (route.epoch !== previous.epoch || !state) await showEpoch(route.epoch, false);
   renderClock();
   renderSeason();
@@ -655,6 +660,7 @@ function lastSeen(): number | undefined {
 
 async function showDigest(since: number) {
   const d = await api.digest(since);
+  track('digest');
   learnNames(d.names);
   const el = $('digest');
   const minutes = ((d.now - d.since) * 24 * 60) / world.epochs_per_day;
@@ -694,6 +700,7 @@ let stopReplay = () => {};
 
 async function playReplay() {
   if (replaying) return stopReplay();
+  track('replay');
   const bar = $('replay-bar');
   const caption = $('replay-caption');
   bar.hidden = false;
@@ -775,6 +782,10 @@ async function boot() {
   window.addEventListener('hashchange', onRoute);
   $('replay-btn').querySelector('span')!.textContent = t.replayButton;
   $('replay-btn').addEventListener('click', () => playReplay());
+  track('visit');
+  document.addEventListener('click', (ev) => {
+    if ((ev.target as HTMLElement).closest?.('.story a, .replay-caption a')) track('story');
+  });
   const seen = lastSeen();
   await onRoute();
   if (seen !== undefined && world.header.epoch - seen >= 12) showDigest(seen).catch(() => {});

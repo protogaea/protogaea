@@ -52,7 +52,11 @@ Nothing the server records is part of consensus (spec §22): all of it can be re
 | `GET /v0/tree` | the named clades of the season (and the founders), each with its nearest named ancestor as parent, its founding and extinction, peak, hue and name |
 | `GET /v0/snapshots`, `GET /v0/snapshots/{epoch}` | archived snapshots |
 | `GET /v0/proofs/{epoch}/organism/{id}` | an organism's inclusion proof against the `state_root` of the latest epoch or of an archived one |
+| `POST /v0/visits` | an anonymous visit count from the viewer: `{visitor, kind, detail}`, where `visitor` is a random id kept in the browser and `kind` one of `visit`, `digest`, `story`, `card`, `prediction`, `replay`, `view`; at most 300 per visitor an hour |
+| `GET /v0/visits/summary` | the measures of the friends test: visitors, returns on day 1 and day 7, the share who opened a story or a card, made a prediction or replayed a day, and visitors by day (UTC) |
 | `GET /health` | `ok` |
+
+Visit counts are kept in `visits.sqlite` in the data directory, apart from the world's data: no addresses, no user agents, only the random id, the time and the kind. The summary is for the tests of stage B and must not be public once the world is.
 
 Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 

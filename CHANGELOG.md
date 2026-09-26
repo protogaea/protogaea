@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Anonymous visit counts for the friends test (`POST /v0/visits`, `/v0/visits/summary`): returns on day 1 and day 7 and what visitors did, under a random id per browser, kept apart from the world's data.
 - Stage B5, part 1: "While you were away" (`/v0/digest`), the last world day replayed in about 30 seconds with story captions (`/v0/replay`, compact frames of the last two world days) and predictions for tomorrow in the viewer.
 - Stage B4, part 1: story detectors (`protogaea-stories`) in the harness, the world server (`/v0/stories`, kept across restarts) and the viewer ("Today's stories").
 - Stage B3: automatic binomial clade names, stored once a clade reaches the naming threshold; the Muller plot and the clade tree in the viewer; `/v0/tree` and a Muller plot folded to named clades on the server.

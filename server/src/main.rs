@@ -5,6 +5,7 @@ mod api;
 mod model;
 mod names;
 mod store;
+mod visits;
 mod world;
 
 use std::path::PathBuf;

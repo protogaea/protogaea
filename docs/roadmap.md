@@ -27,7 +27,7 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 4 | Formats of receipts, STHs and headers; log mirrors; OpenTimestamps cadence | Open — see the [protocol draft](protocol.md) |
 | 5 | The root dictionary for names and the hypothesis templates | Open |
 | 6 | The reference core and `P_min` in work units | Open |
-| 7 | Target values of the product metrics for B′ and D | Open — must be fixed before the tests, and first for the early test with friends (B6) |
+| 7 | Target values of the product metrics for B′ and D | Proposed for B6, to be confirmed before it starts: of those who open the viewer, at least 40% come back the next day and 20% are still coming after a week; at least 60% follow a story or open a card; at least half make a prediction. Measured by the server's anonymous visit counts (`/v0/visits/summary`). Targets for B′ and D open |
 | 8 | Legal review: wording, distribution of the spark client, app store rules, consent | Open |
 | 9 | The name | Working name chosen: Protogaea. Legal check and registrations open |
 | 10 | Licenses and contributions | Split decided; the data license and CLA vs DCO are open |
