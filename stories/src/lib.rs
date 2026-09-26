@@ -30,8 +30,12 @@ fn great(rules: &Ruleset) -> u32 {
     (rules.max_organisms * GREAT_PERMILLE / 1000).max(GREAT_MIN)
 }
 /// Arms race: both mean hunting of hunters and mean defense of their prey grew by this much
-/// (tenths of a trait point) over a world day, about 30 generations.
-const ARMS_RACE_X10: i64 = 20;
+/// (tenths of a trait point) from one window of world days to the next. Daily means swing with
+/// the hunters' booms and busts, so the windows are several days long and both must hold enough
+/// hunters (this share of the world's capacity, per day).
+const ARMS_RACE_X10: i64 = 5;
+const ARMS_WINDOW_DAYS: usize = 3;
+const ARMS_HUNTERS_PERMILLE: i64 = 8;
 /// A clade split by a closing land bridge has at least this many on each side.
 const SPLIT_MEMBERS: u32 = 5;
 /// Dominance is compared once per world hour, so that two clades trading the lead back and
@@ -150,8 +154,10 @@ pub struct Detectors {
     clades: BTreeMap<u32, CladeTrack>,
     world_leader: Option<u32>,
     plate_leaders: BTreeMap<u8, u32>,
-    /// Mean hunting of hunters and mean defense of the rest, ×10, a world day ago.
-    arms_then: Option<(i64, i64)>,
+    /// For each of the last world days: the hunters' hunting summed, the hunters, the rest's
+    /// defense summed, the rest. Cleared when an arms race is told.
+    #[serde(default)]
+    arms_days: std::collections::VecDeque<[i64; 4]>,
 }
 
 /// What the detectors need to know about the world beyond its state: the plate of every cell.
@@ -370,14 +376,39 @@ impl Detectors {
                     prey += 1;
                 }
             }
-            if hunters > 0 && prey > 0 {
-                let now = (hunt * 10 / hunters, def * 10 / prey);
-                if let Some(then) = self.arms_then {
-                    if now.0 - then.0 >= ARMS_RACE_X10 && now.1 - then.1 >= ARMS_RACE_X10 {
-                        out.push(Story::new(Kind::ArmsRace, epoch, None, hunters as u32, json!({ "hunting_x10": [then.0, now.0], "defense_x10": [then.1, now.1] })));
+            self.arms_days.push_back([hunt, hunters, def, prey]);
+            if self.arms_days.len() > 2 * ARMS_WINDOW_DAYS {
+                self.arms_days.pop_front();
+            }
+            if self.arms_days.len() == 2 * ARMS_WINDOW_DAYS {
+                let window = |days: &[[i64; 4]]| {
+                    days.iter().fold([0i64; 4], |mut a, d| {
+                        a.iter_mut().zip(d).for_each(|(x, y)| *x += y);
+                        a
+                    })
+                };
+                let days: Vec<[i64; 4]> = self.arms_days.iter().copied().collect();
+                let (then, now) = (
+                    window(&days[..ARMS_WINDOW_DAYS]),
+                    window(&days[ARMS_WINDOW_DAYS..]),
+                );
+                let min = i64::from(ctx.rules.max_organisms) * ARMS_HUNTERS_PERMILLE / 1000
+                    * ARMS_WINDOW_DAYS as i64;
+                if then[1] >= min && now[1] >= min && then[3] > 0 && now[3] > 0 {
+                    let h = (then[0] * 10 / then[1], now[0] * 10 / now[1]);
+                    let d = (then[2] * 10 / then[3], now[2] * 10 / now[3]);
+                    if h.1 - h.0 >= ARMS_RACE_X10 && d.1 - d.0 >= ARMS_RACE_X10 {
+                        let score = (now[1] / ARMS_WINDOW_DAYS as i64) as u32;
+                        out.push(Story::new(
+                            Kind::ArmsRace,
+                            epoch,
+                            None,
+                            score,
+                            json!({ "hunting_x10": [h.0, h.1], "defense_x10": [d.0, d.1] }),
+                        ));
+                        self.arms_days.clear();
                     }
                 }
-                self.arms_then = Some(now);
             }
         }
         out
