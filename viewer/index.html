@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Protogaea</title>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="wordmark">Protogaea</span>
+    <span class="world-id" id="world-id"></span>
+  </div>
+  <div class="season" id="season" aria-label="Season timeline"></div>
+  <div class="clock" id="clock"></div>
+</header>
+<main class="layout">
+  <div class="stage" id="stage">
+    <div id="map" class="map"></div>
+    <div class="banner" id="banner" hidden></div>
+    <div class="overlay layers" id="layers"></div>
+    <div class="overlay legend" id="legend"></div>
+    <div class="overlay zoom">
+      <button class="icon-btn" id="zoom-in" aria-label="Zoom in"><i class="ph ph-plus"></i></button>
+      <button class="icon-btn" id="zoom-out" aria-label="Zoom out"><i class="ph ph-minus"></i></button>
+      <button class="icon-btn" id="zoom-fit" aria-label="Fit the map"><i class="ph ph-corners-out"></i></button>
+    </div>
+    <div class="tip" id="tip" hidden></div>
+  </div>
+  <aside class="rail" id="rail">
+    <section class="selection" id="details" hidden></section>
+    <section id="stats"><div class="skeleton" style="height:132px"></div></section>
+    <section id="feed"><div class="skeleton" style="height:220px"></div></section>
+  </aside>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

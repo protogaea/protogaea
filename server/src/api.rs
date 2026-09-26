@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::Next;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use protogaea_core::run::hex;
@@ -54,9 +54,15 @@ where
     .map_err(internal)
 }
 
-pub fn router(api: Api, credentials: Option<String>) -> Router {
+/// With a viewer, `/` leads to it; without one, to a page listing the API.
+pub fn router(api: Api, credentials: Option<String>, viewer: bool) -> Router {
+    let home = if viewer {
+        get(|| async { Redirect::temporary("/app/") })
+    } else {
+        get(index)
+    };
     let routes = Router::new()
-        .route("/", get(index))
+        .route("/", home)
         .route("/v0/world", get(world))
         .route("/v0/ruleset", get(ruleset))
         .route("/v0/map", get(map))
@@ -133,14 +139,46 @@ async fn ruleset(State(api): State<Api>) -> Reply {
     ))
 }
 
-/// The latest state in a compact form for the map: one array per field.
-async fn map(State(api): State<Api>) -> Reply {
-    let live = api.live.read().expect("the lock is never poisoned");
-    Ok(Json(map_json(&live.world)))
+#[derive(Deserialize)]
+struct MapQuery {
+    epoch: Option<u64>,
+}
+
+/// A state in a compact form for the map, one array per field: the latest one, or an archived
+/// snapshot's with `?epoch=`.
+async fn map(State(api): State<Api>, Query(q): Query<MapQuery>) -> Reply {
+    {
+        let live = api.live.read().expect("the lock is never poisoned");
+        if q.epoch.is_none_or(|e| e == live.world.epoch) {
+            return Ok(Json(map_json(&live.world)));
+        }
+    }
+    let epoch = q.epoch.unwrap_or_default();
+    let path = api.archived(epoch);
+    if !path.exists() {
+        return Err(no_snapshot(&api, epoch));
+    }
+    let world = tokio::task::spawn_blocking(move || load_world(&path))
+        .await
+        .map_err(|e| internal(e.to_string()))?
+        .map_err(internal)?;
+    Ok(Json(map_json(&world)))
+}
+
+fn no_snapshot(api: &Api, epoch: u64) -> ApiError {
+    ApiError(
+        StatusCode::NOT_FOUND,
+        "E_NO_SNAPSHOT",
+        format!(
+            "no snapshot at epoch {epoch}; snapshots are kept every {} epochs",
+            api.archive_every
+        ),
+    )
 }
 
 fn map_json(w: &World) -> Value {
     let n = w.organisms.len();
+    let mut traits = Vec::with_capacity(n * 6);
     let (mut id, mut cell, mut clade, mut hue, mut kind, mut energy, mut age) = (
         Vec::with_capacity(n),
         Vec::with_capacity(n),
@@ -158,6 +196,7 @@ fn map_json(w: &World) -> Value {
         kind.push(archetype(&o.genome.traits));
         energy.push(o.energy);
         age.push(o.age);
+        traits.extend_from_slice(&o.genome.traits);
     }
     json!({
         "epoch": w.epoch,
@@ -171,6 +210,8 @@ fn map_json(w: &World) -> Value {
         "organisms": {
             "id": id, "cell": cell, "clade": clade, "hue": hue,
             "kind": kind, "energy": energy, "age": age,
+            // Six traits per organism, in the order M P G H D F.
+            "traits": traits,
         },
     })
 }
@@ -293,15 +334,26 @@ async fn museum(State(api): State<Api>, Query(q): Query<Limit>) -> Reply {
 
 #[derive(Deserialize)]
 struct EventQuery {
+    /// The newest events first, older than this id (`before=0` for the latest).
+    before: Option<i64>,
     cursor: Option<i64>,
     limit: Option<u32>,
     kind: Option<String>,
     clade: Option<u32>,
 }
 
-/// Events after a cursor. The cursor is the id of the last event seen; `next` continues.
+/// Events after a cursor, oldest first: the cursor is the id of the last event seen and `next`
+/// continues. With `before`, the newest events first instead, for a feed.
 async fn events(State(api): State<Api>, Query(q): Query<EventQuery>) -> Reply {
     let (cursor, limit) = (q.cursor.unwrap_or(0), q.limit.unwrap_or(200).min(1000));
+    if let Some(before) = q.before {
+        let rows = read(&api, move |c| {
+            store::events_before(c, before, limit, q.kind.as_deref(), q.clade)
+        })
+        .await?;
+        let next = rows.last().and_then(|e| e["id"].as_i64()).unwrap_or(0);
+        return Ok(Json(json!({ "events": rows, "next": next })));
+    }
     let rows = read(&api, move |c| {
         store::events(c, cursor, limit, q.kind.as_deref(), q.clade)
     })
@@ -342,14 +394,7 @@ async fn proof(State(api): State<Api>, Path((epoch, id)): Path<(u64, u64)>) -> R
         None => {
             let path = api.archived(epoch);
             if !path.exists() {
-                return Err(ApiError(
-                    StatusCode::NOT_FOUND,
-                    "E_NO_SNAPSHOT",
-                    format!(
-                        "no snapshot at epoch {epoch}; snapshots are kept every {} epochs",
-                        api.archive_every
-                    ),
-                ));
+                return Err(no_snapshot(&api, epoch));
             }
             let world = tokio::task::spawn_blocking(move || load_world(&path))
                 .await

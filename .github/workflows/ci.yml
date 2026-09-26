@@ -27,6 +27,22 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  viewer:
+    name: Viewer builds
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
   # Spec §14: the same seeds must give the same state hashes on every platform.
   determinism:
     name: Hashes (${{ matrix.os }})

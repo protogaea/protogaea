@@ -366,6 +366,27 @@ pub fn events(
     rows.map(|r| r.map_err(err)).collect()
 }
 
+/// The newest events older than `before` (any, if 0), newest first.
+pub fn events_before(
+    conn: &Connection,
+    before: i64,
+    limit: u32,
+    kind: Option<&str>,
+    clade: Option<u32>,
+) -> Result<Vec<Value>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, epoch, kind, clade_id, organism_id, data FROM events
+             WHERE (?1 = 0 OR id < ?1) AND (?2 IS NULL OR kind = ?2) AND (?3 IS NULL OR clade_id = ?3)
+             ORDER BY id DESC LIMIT ?4",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![before, kind, clade, limit], event_row)
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
+}
+
 fn clade_row(r: &rusqlite::Row) -> rusqlite::Result<Value> {
     Ok(json!({
         "id": r.get::<_, i64>(0)?,

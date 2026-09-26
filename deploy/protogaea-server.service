@@ -3,6 +3,7 @@
 # Install:
 #   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin protogaea
 #   install -D -m 0755 protogaea-server /opt/protogaea/protogaea-server
+#   cp -r viewer/dist /opt/protogaea/viewer                   # the built viewer (npm run build)
 #   install -D -m 0600 /dev/null /etc/protogaea/server.env   # optionally PROTOGAEA_PASSWORD=... in it
 #   cp protogaea-server.service /etc/systemd/system/ && systemctl daemon-reload
 #   systemctl enable --now protogaea-server
@@ -19,7 +20,7 @@ Wants=network-online.target
 User=protogaea
 Group=protogaea
 EnvironmentFile=-/etc/protogaea/server.env
-ExecStart=/opt/protogaea/protogaea-server --seed 5 --data /var/lib/protogaea-server --listen 0.0.0.0:8081 --epoch-seconds 300
+ExecStart=/opt/protogaea/protogaea-server --seed 5 --data /var/lib/protogaea-server --listen 0.0.0.0:8081 --epoch-seconds 300 --viewer /opt/protogaea/viewer
 StateDirectory=protogaea-server
 StateDirectoryMode=0750
 Restart=on-failure
