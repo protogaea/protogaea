@@ -47,7 +47,7 @@ const go = (r: Route) => (location.hash = link(r));
 
 const LAYERS_KEY = 'protogaea.layers';
 function loadLayers(): Layers {
-  const fallback: Layers = { biomes: true, food: false, organisms: true, rifts: true, events: true };
+  const fallback: Layers = { biomes: true, territories: false, food: false, organisms: true, rifts: true, events: true };
   try {
     return { ...fallback, ...JSON.parse(localStorage.getItem(LAYERS_KEY) ?? '{}') };
   } catch {
@@ -162,6 +162,7 @@ function renderStats(h: Header) {
 function renderLayers() {
   const items: [keyof Layers, string, string][] = [
     ['biomes', t.layerBiomes, 'ph-mountains'],
+    ['territories', t.layerTerritories, 'ph-polygon'],
     ['food', t.layerFood, 'ph-plant'],
     ['organisms', t.layerOrganisms, 'ph-bug-beetle'],
     ['rifts', t.layerRifts, 'ph-waves'],
@@ -180,11 +181,12 @@ function renderLayers() {
     }),
   );
   $('legend').innerHTML = `
-    <span><i class="chip" style="background:var(--grazer)"></i>${t.legendGrazer}</span>
-    <span><i class="chip" style="background:transparent;outline:1.5px solid var(--armored);outline-offset:-2px"></i>${t.legendArmored}</span>
-    <span><i class="chip" style="background:var(--hunter)"></i>${t.legendHunter}</span>
-    <span><i class="chip" style="background:#e0503c;transform:scale(.55)"></i>${t.legendSinks}</span>
-    <span><i class="chip" style="background:#f2c14e;transform:scale(.55)"></i>${t.legendBridge}</span>`;
+    <span><i class="dot" style="background:#7fb3d9"></i>${t.legendGrazer}</span>
+    <span><i class="dot" style="background:#7fb3d9;box-shadow:0 0 0 1.5px rgb(11 16 22 / .6)"></i>${t.legendArmored}</span>
+    <span><i class="dot" style="background:#7fb3d9;box-shadow:0 0 0 2px #d9412c"></i>${t.legendHunter}</span>
+    <span><i class="seam"></i>${t.legendSeam}</span>
+    <span><i class="fault"></i>${t.legendFault}</span>
+    <span><i class="dot" style="background:#f2c14e;box-shadow:0 0 0 1.5px #fff1c9"></i>${t.legendBridge}</span>`;
 }
 
 // ---------------------------------------------------------------- the feed
@@ -232,9 +234,15 @@ async function renderFeed() {
       : `<ul class="feed">${shown
           .map(
             (e) =>
-              `<li class="${MAJOR.has(e.kind) ? 'major' : ''}"><i class="ph ${EVENT_ICONS[e.kind] ?? 'ph-dot-outline'}"></i><span>${eventText(e)}</span><span class="when">${dayOf(e.epoch).toFixed(2)}</span></li>`,
+              `<li class="${MAJOR.has(e.kind) ? 'major' : ''}${typeof e.data.cell === 'number' ? ' place' : ''}"${typeof e.data.cell === 'number' ? ` data-cell="${e.data.cell}" title="${t.showOnMap}"` : ''}><i class="ph ${EVENT_ICONS[e.kind] ?? 'ph-dot-outline'}"></i><span>${eventText(e)}</span><span class="when">${dayOf(e.epoch).toFixed(2)}</span></li>`,
           )
           .join('')}</ul>`);
+  $('feed').querySelectorAll<HTMLElement>('li.place').forEach((li) =>
+    li.addEventListener('click', (ev) => {
+      if ((ev.target as HTMLElement).closest('a')) return;
+      map.focus(Number(li.dataset.cell), 18);
+    }),
+  );
 }
 
 // ---------------------------------------------------------------- cards
@@ -303,6 +311,7 @@ async function renderDetails() {
     } else if (route.clade !== undefined) {
       el.innerHTML = renderClade(await api.clade(route.clade));
       map.highlight(route.clade, undefined);
+      map.focusClade(route.clade);
     } else {
       el.hidden = true;
       map.highlight();
@@ -319,15 +328,22 @@ async function renderDetails() {
 
 // ---------------------------------------------------------------- the hover tip
 
-map.onHover = (cell, x, y) => {
+map.onHover = (hover, x, y) => {
   const tip = $('tip');
-  if (cell === null || !state) {
+  if (hover === null || !state) {
     tip.hidden = true;
     return;
   }
+  const cell = hover.cell;
+  const o = state.organisms;
+  const i = hover.organism !== undefined ? o.id.indexOf(hover.organism) : -1;
+  const who =
+    i >= 0
+      ? `<div class="tip-org"><span class="swatch" style="background:${css(hueColor(o.hue[i]))}"></span><b>${fmt(t.organism, { id: o.id[i] })}</b><span>${[t.legendGrazer, t.legendArmored, t.legendHunter][o.kind[i]]}, ${fmt(t.cladeOf, { id: o.clade[i] })}</span></div>`
+      : '';
   const count = state.organisms.cell.filter((c) => c === cell).length;
   const rift = state.rift[cell] ? `<div class="row"><span>${t.layerRifts.split(' ')[0]}</span><span>${t.riftPhases[state.rift[cell]]}</span></div>` : '';
-  tip.innerHTML = `<strong>${t.biomes[state.biome[cell]]}</strong>
+  tip.innerHTML = `${who}<strong>${t.biomes[state.biome[cell]]}</strong>
     <div class="row"><span>${fmt(t.cell, { x: cell % state.width, y: Math.floor(cell / state.width) })}</span><span></span></div>
     <div class="row"><span>${t.food}</span><span>${(state.food[cell] / 10).toFixed(0)}</span></div>
     <div class="row"><span>${t.moisture}</span><span>${state.moisture[cell]}</span></div>
@@ -393,7 +409,14 @@ async function poll() {
 async function boot() {
   document.documentElement.lang = lang;
   await map.init();
+  map.attachMinimap($<HTMLCanvasElement>('minimap'));
   map.setLayers(layers);
+  window.addEventListener('keydown', (ev) => {
+    if ((ev.target as HTMLElement).closest('input, textarea')) return;
+    if (ev.key === '+' || ev.key === '=') map.zoomBy(1.5);
+    else if (ev.key === '-') map.zoomBy(1 / 1.5);
+    else if (ev.key === '0') map.fit();
+  });
   world = await api.world();
   $('world-id').textContent = fmt(t.worldId, { seed: world.seed });
   rules = await (await fetch('/v0/ruleset')).json();

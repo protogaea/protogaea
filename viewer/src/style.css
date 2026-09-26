@@ -16,7 +16,7 @@
   --accent: #e8a33d;
   --accent-ink: #1d1407;
   --link: #e8a33d;
-  --map-bg: #0a0f14;
+  --map-bg: #10263d;
   --grazer: #6fae5b;
   --armored: #93a0b4;
   --hunter: #c4553f;
@@ -38,7 +38,7 @@
     --accent: #b86f0e;
     --accent-ink: #fff8ee;
     --link: #a3620c;
-    --map-bg: #dde3e8;
+    --map-bg: #10263d;
     --danger-bg: #fbe9e6;
     --danger-line: #e2a197;
     --shadow: 0 10px 30px rgb(30 45 60 / 0.14);
@@ -126,11 +126,20 @@ button { font: inherit; color: inherit; }
 .layer[aria-pressed='true'] { color: var(--text); }
 .layer[aria-pressed='true'] i { color: var(--accent); }
 
-.legend { left: 14px; bottom: 14px; padding: 9px 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); max-width: calc(100% - 120px); }
+.legend { left: 14px; bottom: 14px; padding: 9px 12px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-2); max-width: calc(100% - 240px); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .chip { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
 .zoom { right: 14px; bottom: 14px; padding: 4px; display: grid; gap: 2px; }
+.minimap { right: 62px; bottom: 14px; width: 132px; height: 132px; padding: 0; cursor: crosshair; image-rendering: auto; overflow: hidden; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.seam { width: 16px; height: 0; border-top: 3px dotted #2a1d10; display: inline-block; filter: drop-shadow(0 0 1px rgb(255 255 255 / .5)); }
+.fault { width: 16px; height: 4px; border-radius: 2px; display: inline-block; background: #f0a23a; box-shadow: 0 0 6px #f0a23a; }
+.feed li.place { cursor: pointer; border-radius: 6px; }
+.feed li.place:hover { background: var(--surface-2); }
+.tip-org { display: grid; grid-template-columns: 12px auto; gap: 0 7px; align-items: center; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.tip-org .swatch { width: 11px; height: 11px; }
+.tip-org span:last-child { grid-column: 2; color: var(--text-2); }
 .icon-btn { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 17px; }
 .icon-btn:hover { background: var(--surface-2); }
 .icon-btn:active { transform: translateY(1px); }
@@ -212,6 +221,7 @@ button { font: inherit; color: inherit; }
   .layer span { display: none; }
   .layer { grid-template-columns: 18px; padding: 0 8px; }
   .legend { display: none; }
+  .minimap { display: none; }
   .clock .countdown { display: none; }
   .season-phase:not(.now) { color: transparent; }
   .season-meta span:last-child { text-align: right; }
