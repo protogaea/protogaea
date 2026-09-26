@@ -1,7 +1,6 @@
 # The Telegram bot (stage B5): the morning digest and the news of followed clades.
 #
 # Install, on a machine that can reach both the world server and api.telegram.org:
-#   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin protogaea
 #   install -D -m 0644 server/bot/protogaea_bot.py /opt/protogaea/protogaea_bot.py
 #   install -D -m 0600 /dev/null /etc/protogaea/bot.env
 #     # in it: TELEGRAM_TOKEN=..., PROTOGAEA_API=..., PROTOGAEA_PASSWORD=..., PROTOGAEA_VIEWER=...
@@ -9,7 +8,8 @@
 #   cp protogaea-bot.service /etc/systemd/system/ && systemctl daemon-reload
 #   systemctl enable --now protogaea-bot
 #
-# Its subscribers live in /var/lib/protogaea-bot/bot.sqlite.
+# Its subscribers live in /var/lib/protogaea-bot/bot.sqlite. It runs as a dynamic user, so it
+# needs no account of its own on the machine.
 
 [Unit]
 Description=Protogaea Telegram bot
@@ -17,8 +17,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=protogaea
-Group=protogaea
+DynamicUser=yes
 EnvironmentFile=/etc/protogaea/bot.env
 Environment=BOT_DATA=/var/lib/protogaea-bot/bot.sqlite
 ExecStart=/usr/bin/python3 /opt/protogaea/protogaea_bot.py
