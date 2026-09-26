@@ -16,6 +16,11 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`;
 const nf = new Intl.NumberFormat(lang);
 
+/** The archetype portraits, generated for the viewer; counted as the harness counts them. */
+type Kind = 'grazer' | 'armored' | 'hunter';
+const kindOf = (traits: number[]): Kind => (traits[3] >= 4 ? 'hunter' : traits[4] >= 6 ? 'armored' : 'grazer');
+const portrait = (kind: Kind, cls = 'portrait') => `<img class="${cls}" src="${import.meta.env.BASE_URL}archetypes/${kind}.webp" alt="" width="36" height="36">`;
+
 interface Route {
   epoch?: number;
   clade?: number;
@@ -140,9 +145,9 @@ function renderStats(h: Header) {
       <i style="flex-grow:${h.hunters};background:var(--hunter)"></i>
     </div>
     <div class="kinds">
-      <div class="kind">${t.grazers}<b>${nf.format(h.grazers)}</b></div>
-      <div class="kind">${t.armored}<b>${nf.format(h.armored)}</b></div>
-      <div class="kind">${t.hunters}<b>${nf.format(h.hunters)}</b></div>
+      <div class="kind">${portrait('grazer')}<span>${t.grazers}<b>${nf.format(h.grazers)}</b></span></div>
+      <div class="kind">${portrait('armored')}<span>${t.armored}<b>${nf.format(h.armored)}</b></span></div>
+      <div class="kind">${portrait('hunter')}<span>${t.hunters}<b>${nf.format(h.hunters)}</b></span></div>
     </div>
     <div class="facts">
       <div class="fact">${t.clades}<b class="num">${h.clades} <span style="color:var(--text-3)">/ ${h.clades_20} ${t.clades20}</span></b></div>
@@ -254,8 +259,8 @@ const closeBtn = `<button class="icon-btn close" aria-label="${t.close}"><i clas
 function renderClade(c: CladeInfo) {
   const status = c.extinct_epoch !== null ? fmt(t.extinctShort, { epoch: c.extinct_epoch }) : `${nf.format(c.living)}`;
   const kids = (c.children ?? []).slice(0, 20).map((id) => `<a href="${link({ ...route, clade: id, organism: undefined })}">${id}</a>`).join('');
-  return `<div class="card-head"><h3><span class="swatch" style="background:${css(hueColor(c.reference.hue))}"></span>${fmt(t.clade, { id: c.id })}</h3>${closeBtn}</div>
-    <div class="subtitle">${t.habitat}: ${t.habitats[c.reference.habitat] ?? '?'}</div>
+  return `<div class="card-head"><div class="who">${portrait(kindOf(c.reference.traits), 'avatar')}<div><h3><span class="swatch" style="background:${css(hueColor(c.reference.hue))}"></span>${fmt(t.clade, { id: c.id })}</h3>
+    <div class="subtitle">${t[`legend${kindOf(c.reference.traits)[0].toUpperCase()}${kindOf(c.reference.traits).slice(1)}` as 'legendGrazer']}, ${t.habitat}: ${t.habitats[c.reference.habitat] ?? '?'}</div></div></div>${closeBtn}</div>
     ${sparkline(c.history ?? [])}
     <div class="facts">
       <div class="fact">${c.extinct_epoch !== null ? t.statusLabel : t.living_}<b class="num">${status}</b></div>
@@ -274,8 +279,8 @@ function renderOrganism(o: OrganismInfo) {
       ? fmt(t.died, { epoch: o.died_epoch, cause: t.causes[o.cause ?? ''] ?? o.cause ?? '?' })
       : '';
   const kids = o.offspring.slice(0, 16).map((id) => `<a href="${link({ ...route, organism: id, clade: undefined })}">${id}</a>`).join('');
-  return `<div class="card-head"><h3><span class="swatch" style="background:${css(hueColor(o.genome.hue))}"></span>${fmt(t.organism, { id: o.id })}</h3>${closeBtn}</div>
-    <div class="subtitle">${status}</div>
+  return `<div class="card-head"><div class="who">${portrait(kindOf(o.genome.traits), 'avatar')}<div><h3><span class="swatch" style="background:${css(hueColor(o.genome.hue))}"></span>${fmt(t.organism, { id: o.id })}</h3>
+    <div class="subtitle">${status}</div></div></div>${closeBtn}</div>
     <div class="facts">
       <div class="fact">${t.clade.replace(' {id}', '')}<b><a href="${link({ ...route, clade: o.clade_id, organism: undefined })}">${fmt(t.clade, { id: o.clade_id })}</a></b></div>
       <div class="fact">${t.bornLabel}<b>${t.epoch} <span class="num">${o.born_epoch}</span></b></div>
