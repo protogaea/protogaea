@@ -1,6 +1,6 @@
 # Roadmap
 
-**Where we are (2026-09-25):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Stage A3 (tuning) has started: the continents end the season with their own fauna — different lineages and different colors — while their traits converge, and the divergence check in spec §28 now measures the former ([harness findings](../harness/README.md#findings-stage-a3-why-the-continents-traits-do-not-diverge)). Every candidate seed now meets the map criteria (founders and all five biomes on each future continent). Still open: on half of the seeds the number of clades of 20+ briefly dips to 5 during the breakup. Performance meets its targets (a world day in about 13 s on one core), the state is committed by a Merkle `state_root` with organism proofs, and the archetype arena confirms the grazer–armored–hunter cycle on 19 of 20 seeds. Left in stage A: the parameter search and the brief dips in the number of clades.
+**Where we are (2026-09-26):** specification v0.2 is complete, and stage A is in progress. Milestones A1 (a deterministic core and a balance harness) and A2 (times of year, natural events, the Breaking of Pangea, the museum and the spore bank) are done. A full 42-day season runs on every tested seed: the continent breaks apart as scheduled, and the world stays alive and diverse. Stage A3 (tuning) has started: the continents end the season with their own fauna — different lineages and different colors — while their traits converge, and the divergence check in spec §28 now measures the former ([harness findings](../harness/README.md#findings-stage-a3-why-the-continents-traits-do-not-diverge)). Every candidate seed now meets the map criteria (founders and all five biomes on each future continent). Diversity is now judged by its share of the season: at least 6 clades of 20+ during 95% of the time after day 3, so a brief dip during the breakup no longer fails a season. Performance meets its targets (a world day in about 13 s on one core), the state is committed by a Merkle `state_root` with organism proofs, and the archetype arena confirms the grazer–armored–hunter cycle on 19 of 20 seeds. Left in stage A: the parameter search, which is running; stage B (observation) has started with the world server.
 
 The riskiest question is not technical: *will people come back to watch?* The stages are ordered so that it is tested (stage B′) before the most expensive part, the spark infrastructure (stage C), is built.
 
@@ -8,8 +8,8 @@ The riskiest question is not technical: *will people come back to watch?* The st
 
 | Stage | Deliverables | Exit criteria | Status |
 |---|---|---|---|
-| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | In progress: A1 and A2 done |
-| B. Observation | Map, Muller plot, clade tree, cards, the WASM time machine, story detectors, museum, automatic names, "While you were away", subscriptions | In a usability test, 5–8 people explain the consequences of a mutation or an event without looking at server logs | Planned |
+| A. Core and balance harness | Deterministic Rust core with a WASM build, cross-platform CI, the balance harness with metrics, the Season 1 map generator and rift schedule | The ecosystem health metrics ([spec §28](spec/spec-v0.2.md#28-ecosystem-health-the-balance-harness)) are met; roots match on all platforms; performance targets are reached | Nearly done: A1 and A2 done, A3 tuning in its last step |
+| B. Observation | Map, Muller plot, clade tree, cards, the WASM time machine, story detectors, museum, automatic names, "While you were away", subscriptions | In a usability test, 5–8 people explain the consequences of a mutation or an event without looking at server logs | Started: B1, the world server |
 | B′. Closed observation test | 2–3 weeks, 30–100 invited participants; the full wish mechanic with a daily allowance of work units instead of PoW | The product metrics declared before the test are reached. If viewers do not come back, we improve the world, not the sparks | Planned |
 | C. Sparks | yespower; the desktop app for Windows, Linux, macOS arm64 and Linux ARM64; the WASM spark client; the spark log with STHs and receipts; the ledger; the beacon; the watcher; load tests; signed builds | Sparks and miracle selection are verified independently; the engineering checks ([spec §29](spec/spec-v0.2.md#29-engineering-and-product-checks)) pass | Planned |
 | D. Public Season 1 — The Breaking of Pangea | 42 world days; counterfactuals, chronicle, stream, hall of fame | No state divergence; real people create and discuss stories; product metrics | Planned |
@@ -35,6 +35,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 
 ## Stage A in detail
 
+**A3 — diversity over time, and the parameter search (2026-09-26):** spec §28 now asks for at least 6 clades of 20+ during 95% of the time after day 3 rather than at every moment, so a brief dip while the continent breaks up no longer fails a diverse season. `harness/search.py` runs full seasons for ruleset variants on the same seeds and ranks them by the §28 checks; the first screen varies twelve parameters one at a time.
+
 **A3 — the archetype arena (2026-09-26):** part of item 5. The harness `arena` command pits the grazer, armored and hunter founders against each other in pairs; the intended cycle of spec §11.3 holds on 19 of 20 seeds ([findings](../harness/README.md#findings-stage-a3-the-archetype-arena)).
 
 **A3 — the Merkle state root (2026-09-26):** item 3. The state is hashed as one Merkle tree per kind of data (cells, organisms, clades, museum, effects, rifts, spore bank, revivals, plus a leaf of global fields), shaped as in RFC 9162; an organism can be proven against `state_root` without the rest of the state. It costs about 3.5 ms per epoch, and native and WASM agree ([core README](../core/README.md#the-state-root)).
@@ -58,6 +60,18 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 5. **The balance harness.** A batch runner, the ecosystem health metrics, the archetype arena and a parameter search.
 6. **Season 1 map generator.** Rift lines and schedule, and the published seed selection criteria.
 7. **Performance.** Benchmarks against the targets: a world day in under 30 s on one reference core, an epoch in under 100 ms (p95), WASM at most 3× slower than native.
+
+## Stage B in detail
+
+Stage B builds what a viewer sees, on top of the stage A core and without changing consensus. The server stays a single authoritative world (spec §22); sparks and wishes wait for stages B′ and C. Each milestone ends with something running on the test server.
+
+1. **B1 — the world server and the event log.** A Rust server that runs the world on a timer and replaces the stage A live preview. Every epoch it records a header (epoch, `state_root` and its subtree roots, headline numbers), structured events (clades founded, named and extinct, land bridges closing, natural events, revivals) and, every few world hours, a snapshot. Indexes of clades and organisms, dead ones included, live in SQLite. It serves the read API of spec §23: world, ruleset, epochs, snapshots, clades, organisms, museum, events with stable cursors, and inclusion proofs. It resumes after a restart without losing an epoch.
+2. **B2 — the viewer and the map.** A TypeScript viewer with a WebGL renderer (spec §22): the map with its layers (biomes, food, population, clade colors, rifts and their schedule, natural events), live mode that replays the latest epoch, a "jump to latest" button, and permanent links to every epoch, clade and organism. Organisms are drawn as procedural glyphs from the genome when zoomed in (spec §7).
+3. **B3 — the Muller plot, the clade tree, cards and names.** The Muller plot for the whole season with natural events on the time axis; the phylogeny of clades; organism and clade cards; automatic binomial names from a screened dictionary of Latin roots.
+4. **B4 — the time machine.** The core built for the browser: open any past epoch from the nearest snapshot, recompute the ticks in WASM, compare two states, and check an organism's inclusion proof against the published `state_root`.
+5. **B5 — stories.** The story detectors of spec §7 (comeback, crossing, invasion, arms race, last of its kind, changing of the guard, records), the feed, the museum page and the daily chronicle from templates.
+6. **B6 — "While you were away" and subscriptions.** The personal digest, subscriptions to a clade, a region or an organism, web push and a Telegram bot with rate limits and a digest mode.
+7. **B7 — the usability test.** 5–8 people explain the consequences of a mutation or an event without server logs (the stage B exit criterion); what they stumble on is fixed before stage B′.
 
 ## Not planned
 
