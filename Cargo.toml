@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["core", "harness"]
+members = ["core", "harness", "server"]
+# The server needs a C compiler for SQLite and, on Windows, the MSVC tools; a plain `cargo build`
+# leaves it out so the core and the harness build anywhere. CI builds the whole workspace.
+default-members = ["core", "harness"]
 
 [workspace.package]
 version = "0.0.1"

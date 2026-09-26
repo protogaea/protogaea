@@ -63,6 +63,8 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 
 ## Stage B in detail
 
+**B1 — the world server (2026-09-26):** `protogaea-server` runs the world on a timer, records every epoch's header, events, organisms and clades in SQLite, keeps snapshots, survives a crash without losing or changing an epoch, and serves the read API with inclusion proofs ([server README](../server/README.md)). It runs on the test server next to the stage A preview until the viewer (B2) replaces the preview.
+
 Stage B builds what a viewer sees, on top of the stage A core and without changing consensus. The server stays a single authoritative world (spec §22); sparks and wishes wait for stages B′ and C. Each milestone ends with something running on the test server.
 
 1. **B1 — the world server and the event log.** A Rust server that runs the world on a timer and replaces the stage A live preview. Every epoch it records a header (epoch, `state_root` and its subtree roots, headline numbers), structured events (clades founded, named and extinct, land bridges closing, natural events, revivals) and, every few world hours, a snapshot. Indexes of clades and organisms, dead ones included, live in SQLite. It serves the read API of spec §23: world, ruleset, epochs, snapshots, clades, organisms, museum, events with stable cursors, and inclusion proofs. It resumes after a restart without losing an epoch.

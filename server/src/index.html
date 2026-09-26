@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Protogaea world server</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; color: #1d232b; background: #f6f7f9; }
+  code { background: #e7eaef; padding: 1px 5px; border-radius: 4px; }
+  li { margin: 4px 0; }
+  #now { padding: 12px 14px; background: #fff; border: 1px solid #dde2e8; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>Protogaea world server</h1>
+<p id="now">Loading…</p>
+<p>The viewer comes in stage B2. Until then, the read API (spec §23):</p>
+<ul>
+  <li><a href="/v0/world"><code>/v0/world</code></a> — the world and its latest header</li>
+  <li><a href="/v0/ruleset"><code>/v0/ruleset</code></a>, <a href="/v0/rifts"><code>/v0/rifts</code></a></li>
+  <li><a href="/v0/map"><code>/v0/map</code></a> — the latest state for the map</li>
+  <li><a href="/v0/epochs?step=12"><code>/v0/epochs?from=&amp;to=&amp;step=</code></a>, <code>/v0/epochs/{n}</code></li>
+  <li><a href="/v0/events"><code>/v0/events?cursor=&amp;kind=&amp;clade=</code></a></li>
+  <li><a href="/v0/clades?living=true"><code>/v0/clades?living=&amp;named=</code></a>, <code>/v0/clades/{id}</code></li>
+  <li><code>/v0/organisms/{id}</code>, <code>/v0/proofs/{epoch}/organism/{id}</code></li>
+  <li><a href="/v0/museum"><code>/v0/museum</code></a>, <a href="/v0/muller"><code>/v0/muller</code></a></li>
+  <li><a href="/v0/snapshots"><code>/v0/snapshots</code></a>, <code>/v0/snapshots/{epoch}</code></li>
+</ul>
+<script>
+fetch('/v0/world').then(r => r.json()).then(w => {
+  const h = w.header;
+  document.getElementById('now').textContent =
+    `Seed ${w.seed}, epoch ${h.epoch} (day ${h.day.toFixed(2)}, ${h.phase_name}): ` +
+    `${h.population} organisms, ${h.hunters} hunters, ${h.clades_20} clades of 20+. ` +
+    `state_root ${h.state_root.slice(0, 16)}…`;
+});
+</script>
+</body>
+</html>

@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Stage B1, the world server (`protogaea-server`): runs the world on a timer, records every epoch's header, events, organisms (the dead included), clades and Muller samples in SQLite, keeps snapshots, recovers from a crash without losing or changing an epoch, and serves the read API of spec §23 with inclusion proofs; a systemd unit in `deploy/`.
+- The world run with its stand-in beacon moved from the harness into the core (`protogaea_core::run`), and the epoch report lists every death with its cause.
+- Harness: `diverse_pct_after_day_3`, the share of the time after day 3 with at least 6 clades of 20+, and `harness/search.py`, a parameter search over full seasons.
 - Stage A1 code:
   - `protogaea-core`, the deterministic simulation core;
   - `protogaea-harness`, the balance harness with HTML reports;
@@ -29,6 +32,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- Specification §28: at least 6 clades of 20+ must hold during 95% of the time after day 3 instead of at every moment, so a brief dip while the continent breaks up does not fail a diverse season.
 - Specification §28: divergence after the breakup is judged by the continents' fauna — clade makeup at least 80% apart and mean hues at least 30° apart at the end of the season — instead of the growth of the distance between dominant clades' traits, which converge under the same rules.
 
 - Specification §10 describes the rift generator, rescue and drowning, and floods in detail; §12 says revived genomes found new clades; §15 lists the rift schedule and the revivals in the state.
