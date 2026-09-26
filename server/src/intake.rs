@@ -936,7 +936,7 @@ impl Intake {
         self.conn
             .query_row(
                 "SELECT tree_size, root, at, signature FROM sths WHERE epoch = ?1
-                 ORDER BY final DESC, tree_size DESC, at DESC LIMIT 1",
+                 ORDER BY final DESC, at DESC, tree_size DESC LIMIT 1",
                 [epoch as i64],
                 |r| {
                     Ok(Sth {

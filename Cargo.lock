@@ -969,6 +969,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "protogaea-watcher"
+version = "0.0.1"
+dependencies = [
+ "protogaea-core",
+ "protogaea-protocol",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

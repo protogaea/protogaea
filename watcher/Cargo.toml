@@ -1,0 +1,13 @@
+[package]
+name = "protogaea-watcher"
+description = "An independent watcher of a Protogaea world: follows the spark log and the signed headers, and replays the world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+protogaea-core.workspace = true
+protogaea-protocol = { path = "../protocol" }
+serde_json.workspace = true
+ureq = { version = "3", default-features = false, features = ["json"] }

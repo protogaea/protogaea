@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- `protogaea-watcher`, an independent watcher: it follows the spark log's signed tree heads and checks each extends the last, checks the signed headers and their chain, and replays the world from genesis with the logged miracles; tested against a cheating operator. The server serves the latest tree head of an epoch, not the largest.
 - Signed epoch headers (`protocol::header`, `/v0/headers`): chained by hash, committing to the state root, the ledger root (the price and the open and queued wishes), the final tree head of the spark log, the beacon and the miracles root, signed with the operator key; the next window's challenge commits to the header hash, and the time machine checks the signed header in the browser.
 - Migration and revival wishes: from a clade's card and a museum exhibit in the viewer, and `wish migrate` / `wish revive` in the spark client. An epoch with no accepted sparks leaves the spark target unchanged, so a quiet world does not drift to sparks worth one hash.
 - Wishes and sparks in the viewer: a naturalist key in the browser, rain and drought wishes by a click on the map, sparks kindled on web workers with yespower in WebAssembly, every receipt checked, and "My wishes" with their status and work against the price. A spark for the window that just closed is refused as late (`E_WINDOW_CLOSED`) instead of banning its sender.
