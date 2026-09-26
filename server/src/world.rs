@@ -95,7 +95,7 @@ fn now_ms() -> u64 {
 pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
     std::fs::create_dir_all(opts.data.join("snapshots"))
         .map_err(|e| format!("cannot create {}: {e}", opts.data.display()))?;
-    let mut store = Store::open(&opts.data.join(DB))?;
+    let mut store = Store::open(&opts.data.join(DB), opts.rules.clade_name_threshold)?;
     let latest = opts.data.join(LATEST);
     let (run, header) = match std::fs::read_to_string(&latest) {
         Ok(text) => {
@@ -129,6 +129,10 @@ pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
         }
         Err(e) => return Err(format!("cannot read {}: {e}", latest.display())),
     };
+    let named = store.backfill_names()?;
+    if named > 0 {
+        println!("named {named} clades recorded before names were stored");
+    }
     // The hourly dominant clade, from the last full hour's header (or the current one).
     let hour = run.world.epoch / DOMINANT_EVERY * DOMINANT_EVERY;
     let hour_dominant = crate::store::reader(&opts.data.join(DB))

@@ -7,6 +7,8 @@ import { api, ApiError, type CladeInfo, type Header, type MapState, type Organis
 import { hueColor } from './glyph';
 import { fmt, lang, t } from './i18n';
 import { WorldMap, type Layers } from './map';
+import { renderMuller, type Marker, type MullerData, type TreeClade } from './muller';
+import { renderTree } from './tree';
 
 // Permanent links live in the hash: #epoch=N&clade=ID&organism=ID. Without `epoch` the viewer is
 // live and follows the world epoch by epoch.
@@ -21,16 +23,25 @@ type Kind = 'grazer' | 'armored' | 'hunter';
 const kindOf = (traits: number[]): Kind => (traits[3] >= 4 ? 'hunter' : traits[4] >= 6 ? 'armored' : 'grazer');
 const portrait = (kind: Kind, cls = 'portrait') => `<img class="${cls}" src="${import.meta.env.BASE_URL}archetypes/${kind}.webp" alt="" width="36" height="36">`;
 
+type View = 'map' | 'muller' | 'tree';
+
 interface Route {
   epoch?: number;
   clade?: number;
   organism?: number;
+  view?: View;
 }
 
 function readRoute(): Route {
   const p = new URLSearchParams(location.hash.slice(1));
   const num = (k: string) => (p.get(k) ? Number(p.get(k)) : undefined);
-  return { epoch: num('epoch'), clade: num('clade'), organism: num('organism') };
+  const view = p.get('view');
+  return {
+    epoch: num('epoch'),
+    clade: num('clade'),
+    organism: num('organism'),
+    view: view === 'muller' || view === 'tree' ? view : undefined,
+  };
 }
 
 function link(r: Route): string {
@@ -38,7 +49,22 @@ function link(r: Route): string {
   if (r.epoch !== undefined) p.set('epoch', String(r.epoch));
   if (r.clade !== undefined) p.set('clade', String(r.clade));
   if (r.organism !== undefined) p.set('organism', String(r.organism));
+  const view = 'view' in r ? r.view : route.view;
+  if (view && view !== 'map') p.set('view', view);
   return `#${p.toString()}`;
+}
+
+// ---------------------------------------------------------------- clade names
+
+/** Names of named clades seen so far, from the map, the feed and cards. */
+const names = new Map<number, string>();
+function learnNames(record: Record<string, string> | undefined) {
+  for (const [id, name] of Object.entries(record ?? {})) names.set(Number(id), name);
+}
+/** A clade as the interface shows it: its Latin name in italics, or "clade N" before it is named. */
+function cladeLabel(id: number): string {
+  const name = names.get(id);
+  return name ? `<em class="latin">${esc(name)}</em>` : fmt(t.clade, { id });
 }
 
 const go = (r: Route) => (location.hash = link(r));
@@ -151,7 +177,7 @@ function renderStats(h: Header) {
     </div>
     <div class="facts">
       <div class="fact">${t.clades}<b class="num">${h.clades} <span style="color:var(--text-3)">/ ${h.clades_20} ${t.clades20}</span></b></div>
-      <div class="fact">${t.dominant}<b><a href="${link({ ...route, clade: h.dominant_clade, organism: undefined })}">${fmt(t.clade, { id: h.dominant_clade })}</a> <span class="num" style="color:var(--text-3)">${(h.dominant_permille / 10).toFixed(0)}%</span></b></div>
+      <div class="fact">${t.dominant}<b><a href="${link({ ...route, clade: h.dominant_clade, organism: undefined })}">${cladeLabel(h.dominant_clade)}</a> <span class="num" style="color:var(--text-3)">${(h.dominant_permille / 10).toFixed(0)}%</span></b></div>
       <div class="fact">${t.bornCount}, ${t.thisEpoch}<b class="num">${nf.format(h.births)}</b></div>
       <div class="fact">${t.diedCount}, ${t.thisEpoch}<b class="num">${nf.format(deaths)}</b></div>
     </div>`;
@@ -208,7 +234,7 @@ const MAJOR = new Set(['phase', 'bridge_closed', 'dominant_changed', 'revival', 
 
 function eventText(e: WorldEvent): string {
   const d = e.data as Record<string, number | string | boolean>;
-  const cladeLink = (id: unknown) => `<a href="${link({ ...route, clade: Number(id), organism: undefined })}">${fmt(t.clade, { id: String(id) })}</a>`;
+  const cladeLink = (id: unknown) => `<a href="${link({ ...route, clade: Number(id), organism: undefined })}">${cladeLabel(Number(id))}</a>`;
   return fmt(t.events[e.kind] ?? e.kind, {
     clade: e.clade_id !== null ? cladeLink(e.clade_id) : '',
     parent: cladeLink(d.parent_id),
@@ -222,7 +248,8 @@ function eventText(e: WorldEvent): string {
 }
 
 async function renderFeed() {
-  const { events } = await api.latestEvents(120);
+  const { events, names: eventNames } = await api.latestEvents(120);
+  learnNames(eventNames);
   // New clades split off all the time; the feed keeps the bigger news and a sample of foundings.
   const shown = events
     .filter((e) => (e.kind === 'clade_founded' ? e.id % 8 === 0 : e.kind !== 'clade_extinct' || e.data.named === true))
@@ -267,14 +294,18 @@ const closeBtn = `<button class="icon-btn close" aria-label="${t.close}"><i clas
 function renderClade(c: CladeInfo) {
   const status = c.extinct_epoch !== null ? fmt(t.extinctShort, { epoch: c.extinct_epoch }) : `${nf.format(c.living)}`;
   const kids = (c.children ?? []).slice(0, 20).map((id) => `<a href="${link({ ...route, clade: id, organism: undefined })}">${id}</a>`).join('');
-  return `<div class="card-head"><div class="who">${portrait(kindOf(c.reference.traits), 'avatar')}<div><h3><span class="swatch" style="background:${css(hueColor(c.reference.hue))}"></span>${fmt(t.clade, { id: c.id })}</h3>
-    <div class="subtitle">${t[`legend${kindOf(c.reference.traits)[0].toUpperCase()}${kindOf(c.reference.traits).slice(1)}` as 'legendGrazer']}, ${t.habitat}: ${t.habitats[c.reference.habitat] ?? '?'}</div></div></div>${closeBtn}</div>
+  if (c.name) names.set(c.id, c.name);
+  if (c.parent_name) names.set(c.parent_id, c.parent_name);
+  const kind = kindOf(c.reference.traits);
+  const kindName = { grazer: t.legendGrazer, armored: t.legendArmored, hunter: t.legendHunter }[kind];
+  return `<div class="card-head"><div class="who">${portrait(kind, 'avatar')}<div><h3><span class="swatch" style="background:${css(hueColor(c.reference.hue))}"></span>${c.name ? `<em class="latin">${esc(c.name)}</em>` : fmt(t.clade, { id: c.id })}</h3>
+    <div class="subtitle">${c.name ? `${fmt(t.cladeNumber, { id: c.id })}, ` : ''}${kindName}, ${t.habitat}: ${t.habitats[c.reference.habitat] ?? '?'}</div></div></div>${closeBtn}</div>
     ${sparkline(c.history ?? [])}
     <div class="facts">
       <div class="fact">${c.extinct_epoch !== null ? t.statusLabel : t.living_}<b class="num">${status}</b></div>
       <div class="fact">${t.peakLabel}<b class="num">${nf.format(c.peak_living)}</b></div>
       <div class="fact">${t.foundedLabel}<b>${t.day} <span class="num">${dayOf(c.founded_epoch).toFixed(2)}</span></b></div>
-      <div class="fact">${t.parent}<b>${c.parent_id ? `<a href="${link({ ...route, clade: c.parent_id, organism: undefined })}">${fmt(t.clade, { id: c.parent_id })}</a>` : '-'}</b></div>
+      <div class="fact">${t.parent}<b>${c.parent_id ? `<a href="${link({ ...route, clade: c.parent_id, organism: undefined })}">${cladeLabel(c.parent_id)}</a>` : '-'}</b></div>
     </div>
     ${kids ? `<div class="fact" style="margin-top:14px">${t.children}<div class="links" style="margin-top:4px">${kids}</div></div>` : ''}
     ${traitsTable(c.reference.traits)}`;
@@ -290,7 +321,7 @@ function renderOrganism(o: OrganismInfo) {
   return `<div class="card-head"><div class="who">${portrait(kindOf(o.genome.traits), 'avatar')}<div><h3><span class="swatch" style="background:${css(hueColor(o.genome.hue))}"></span>${fmt(t.organism, { id: o.id })}</h3>
     <div class="subtitle">${status}</div></div></div>${closeBtn}</div>
     <div class="facts">
-      <div class="fact">${t.clade.replace(' {id}', '')}<b><a href="${link({ ...route, clade: o.clade_id, organism: undefined })}">${fmt(t.clade, { id: o.clade_id })}</a></b></div>
+      <div class="fact">${t.clade.replace(' {id}', '')}<b><a href="${link({ ...route, clade: o.clade_id, organism: undefined })}">${cladeLabel(o.clade_id)}</a></b></div>
       <div class="fact">${t.bornLabel}<b>${t.epoch} <span class="num">${o.born_epoch}</span></b></div>
       <div class="fact">${t.parentLabel}<b>${o.parent_id ? `<a href="${link({ ...route, organism: o.parent_id, clade: undefined })}">#${o.parent_id}</a>` : '-'}</b></div>
       <div class="fact">${t.habitat}<b>${t.habitats[o.genome.habitat] ?? '?'}</b></div>
@@ -311,7 +342,7 @@ async function renderDetails() {
     } else if (route.clade !== undefined) {
       el.innerHTML = renderClade(await api.clade(route.clade));
       map.highlight(route.clade, undefined);
-      map.focusClade(route.clade);
+      if ((route.view ?? 'map') === 'map') map.focusClade(route.clade);
     } else {
       el.hidden = true;
       map.highlight();
@@ -339,7 +370,7 @@ map.onHover = (hover, x, y) => {
   const i = hover.organism !== undefined ? o.id.indexOf(hover.organism) : -1;
   const who =
     i >= 0
-      ? `<div class="tip-org"><span class="swatch" style="background:${css(hueColor(o.hue[i]))}"></span><b>${fmt(t.organism, { id: o.id[i] })}</b><span>${[t.legendGrazer, t.legendArmored, t.legendHunter][o.kind[i]]}, ${fmt(t.cladeOf, { id: o.clade[i] })}</span></div>`
+      ? `<div class="tip-org"><span class="swatch" style="background:${css(hueColor(o.hue[i]))}"></span><b>${fmt(t.organism, { id: o.id[i] })}</b><span>${[t.legendGrazer, t.legendArmored, t.legendHunter][o.kind[i]]}, ${names.has(o.clade[i]) ? `<em class="latin">${esc(names.get(o.clade[i])!)}</em>` : fmt(t.cladeOf, { id: o.clade[i] })}</span></div>`
       : '';
   const count = state.organisms.cell.filter((c) => c === cell).length;
   const rift = state.rift[cell] ? `<div class="row"><span>${t.layerRifts.split(' ')[0]}</span><span>${t.riftPhases[state.rift[cell]]}</span></div>` : '';
@@ -364,6 +395,7 @@ map.onPick = (p) => {
 async function showEpoch(epoch: number | undefined, animate: boolean) {
   try {
     const next = await api.map(epoch);
+    learnNames(next.names);
     state = next;
     map.setState(next, animate);
     banner(null);
@@ -378,6 +410,95 @@ async function showEpoch(epoch: number | undefined, animate: boolean) {
   }
 }
 
+// ---------------------------------------------------------------- views: the map, the Muller plot, the clade tree
+
+let treeData: Map<number, TreeClade> | undefined;
+let mullerData: MullerData | undefined;
+let chartsAt = -1;
+
+async function loadCharts() {
+  const epoch = world.header.epoch;
+  if (chartsAt === epoch && treeData && mullerData) return;
+  const [tree, muller, phases, bridges, revivals] = await Promise.all([
+    api.tree(),
+    api.muller(),
+    api.eventsOfKind('phase'),
+    api.eventsOfKind('bridge_closed'),
+    api.eventsOfKind('revival'),
+  ]);
+  treeData = new Map(
+    tree.clades.map(([id, parent, founded, extinct, peak, hue, name]) => {
+      if (name) names.set(id, name);
+      return [id, { id, parent, founded, extinct, peak, hue, name }];
+    }),
+  );
+  const markers: Marker[] = [
+    ...phases.events.map((e) => ({ epoch: e.epoch, kind: 'phase' as const, label: esc(t.phases[Number(e.data.phase) - 1] ?? '') })),
+    ...bridges.events.map((e) => ({ epoch: e.epoch, kind: 'bridge' as const, label: esc(fmt(t.bridgeMark, { bridge: String(e.data.bridge) })) })),
+    ...revivals.events.map((e) => ({ epoch: e.epoch, kind: 'revival' as const, label: esc(t.revivalMark) })),
+  ];
+  mullerData = { clades: treeData, rows: muller.rows, markers, epochsPerDay: world.epochs_per_day, seasonDays: world.season_days };
+  chartsAt = epoch;
+}
+
+function renderTabs() {
+  const view = route.view ?? 'map';
+  const tabs: [View, string, string][] = [
+    ['map', t.tabMap, 'ph-map-trifold'],
+    ['muller', t.tabMuller, 'ph-chart-line'],
+    ['tree', t.tabTree, 'ph-tree-structure'],
+  ];
+  $('tabs').innerHTML = tabs
+    .map(([v, name, icon]) => `<a class="tab" role="tab" aria-selected="${v === view}" href="${link({ ...route, view: v })}"><i class="ph ${icon}"></i><span>${name}</span></a>`)
+    .join('');
+}
+
+async function renderView() {
+  const view = route.view ?? 'map';
+  renderTabs();
+  $('muller').hidden = view !== 'muller';
+  $('tree').hidden = view !== 'tree';
+  for (const id of ['layers', 'legend', 'minimap']) $(id).style.visibility = view === 'map' ? '' : 'hidden';
+  document.querySelector<HTMLElement>('.zoom')!.style.visibility = view === 'map' ? '' : 'hidden';
+  if (view === 'map') return;
+  await loadCharts();
+  const pick = (clade: number) => go({ ...route, clade, organism: undefined });
+  const dayLabel = (day: number) => `${t.day} ${day}`;
+  if (view === 'muller') {
+    const host = $('muller');
+    host.innerHTML = `<p class="hint">${t.mullerHint}</p><div class="chart" id="muller-chart"></div>`;
+    renderMuller($('muller-chart'), mullerData!, {
+      selected: route.clade,
+      now: world.header.epoch,
+      onPick: pick,
+      dayLabel,
+      onHover: (clade, share, x, y) => {
+        const tip = $('tip');
+        if (clade === null) {
+          tip.hidden = true;
+          return;
+        }
+        tip.innerHTML = `<strong>${cladeLabel(clade)}</strong><div class="row"><span>${fmt(t.shareNow, { share: (share * 100).toFixed(1) })}</span></div>`;
+        tip.hidden = false;
+        tip.style.left = `${x + 14}px`;
+        tip.style.top = `${y + 14}px`;
+      },
+    });
+  } else {
+    const host = $('tree');
+    host.innerHTML = `<p class="hint">${t.treeHint}</p><div id="tree-chart"></div>`;
+    renderTree($('tree-chart'), treeData!, {
+      now: world.header.epoch,
+      epochsPerDay: world.epochs_per_day,
+      seasonDays: world.season_days,
+      selected: route.clade,
+      onPick: pick,
+      dayLabel,
+      label: (c) => (c.name ? esc(c.name) : fmt(t.clade, { id: c.id })),
+    });
+  }
+}
+
 async function onRoute() {
   const previous = route;
   route = readRoute();
@@ -385,6 +506,7 @@ async function onRoute() {
   renderClock();
   renderSeason();
   renderStats(world.header);
+  await renderView();
   await renderDetails();
 }
 
@@ -399,6 +521,7 @@ async function poll() {
       renderStats(world.header);
       renderSeason();
       await renderFeed();
+      if (route.view && route.view !== 'map' && world.header.epoch % 12 === 0) await renderView();
       if (route.clade !== undefined || route.organism !== undefined) await renderDetails();
     }
   } catch (e) {

@@ -3,6 +3,7 @@
 
 mod api;
 mod model;
+mod names;
 mod store;
 mod world;
 

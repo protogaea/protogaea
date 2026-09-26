@@ -77,6 +77,7 @@ pub fn router(api: Api, viewer: bool) -> Router {
         .route("/v0/museum", get(museum))
         .route("/v0/events", get(events))
         .route("/v0/muller", get(muller))
+        .route("/v0/tree", get(tree))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
         .route("/health", get(|| async { "ok" }))
         .with_state(api)
@@ -150,11 +151,16 @@ struct MapQuery {
 /// A state in a compact form for the map, one array per field: the latest one, or an archived
 /// snapshot's with `?epoch=`.
 async fn map(State(api): State<Api>, Query(q): Query<MapQuery>) -> Reply {
-    {
+    // The lock is released before any await.
+    let latest = {
         let live = api.live.read().expect("the lock is never poisoned");
-        if q.epoch.is_none_or(|e| e == live.world.epoch) {
-            return Ok(Json(map_json(&live.world)));
-        }
+        q.epoch
+            .is_none_or(|e| e == live.world.epoch)
+            .then(|| live.world.clone())
+    };
+    if let Some(world) = latest {
+        let names = living_names(&api, &world).await?;
+        return Ok(Json(map_json(&world, &names)));
     }
     let epoch = q.epoch.unwrap_or_default();
     let path = api.archived(epoch);
@@ -165,7 +171,27 @@ async fn map(State(api): State<Api>, Query(q): Query<MapQuery>) -> Reply {
         .await
         .map_err(|e| internal(e.to_string()))?
         .map_err(internal)?;
-    Ok(Json(map_json(&world)))
+    let names = living_names(&api, &world).await?;
+    Ok(Json(map_json(&world, &names)))
+}
+
+/// The stored names of the world's living named clades.
+async fn living_names(
+    api: &Api,
+    world: &World,
+) -> Result<serde_json::Map<String, Value>, ApiError> {
+    let threshold = api.rules.clade_name_threshold;
+    let ids: Vec<u32> = world
+        .clades
+        .values()
+        .filter(|c| c.peak_living >= threshold)
+        .map(|c| c.id)
+        .collect();
+    let names = read(api, move |c| store::clade_names(c, &ids)).await?;
+    Ok(names
+        .into_iter()
+        .map(|(id, n)| (id.to_string(), Value::String(n)))
+        .collect())
 }
 
 fn no_snapshot(api: &Api, epoch: u64) -> ApiError {
@@ -179,7 +205,7 @@ fn no_snapshot(api: &Api, epoch: u64) -> ApiError {
     )
 }
 
-fn map_json(w: &World) -> Value {
+fn map_json(w: &World, names: &serde_json::Map<String, Value>) -> Value {
     let n = w.organisms.len();
     let mut traits = Vec::with_capacity(n * 6);
     let (mut id, mut cell, mut clade, mut hue, mut kind, mut energy, mut age) = (
@@ -210,6 +236,8 @@ fn map_json(w: &World) -> Value {
         "moisture": w.cells.iter().map(|c| c.moisture).collect::<Vec<_>>(),
         "rift": w.cells.iter().map(|c| c.rift as u8).collect::<Vec<_>>(),
         "effects": w.effects,
+        // Names of the living clades that have reached the naming threshold.
+        "names": names,
         "organisms": {
             "id": id, "cell": cell, "clade": clade, "hue": hue,
             "kind": kind, "energy": energy, "age": age,
@@ -304,10 +332,72 @@ async fn clades(State(api): State<Api>, Query(q): Query<CladeQuery>) -> Reply {
 }
 
 async fn clade(State(api): State<Api>, Path(id): Path<u32>) -> Reply {
-    read(&api, move |c| store::clade(c, id))
-        .await?
-        .map(Json)
-        .ok_or_else(|| not_found(format!("no clade {id}")))
+    let (clade, parent) = read(&api, move |c| {
+        let clade = store::clade(c, id)?;
+        let parent = match clade.as_ref().and_then(|v| v["parent_id"].as_u64()) {
+            Some(p) if p > 0 => store::clade_names(c, &[p as u32])?,
+            _ => Vec::new(),
+        };
+        Ok((clade, parent))
+    })
+    .await?;
+    let mut clade = clade.ok_or_else(|| not_found(format!("no clade {id}")))?;
+    clade["parent_name"] = parent
+        .into_iter()
+        .next()
+        .map_or(Value::Null, |(_, n)| Value::String(n));
+    Ok(Json(clade))
+}
+
+/// Which shown clade each clade belongs to: itself if it is named or a founder, otherwise its
+/// nearest named ancestor. Thousands of clades split off in a season and most stay tiny; folding
+/// them keeps the tree and the Muller plot about lineages.
+fn fold(rows: &[store::TreeRow], threshold: u32) -> std::collections::HashMap<u32, u32> {
+    use std::collections::HashMap;
+    let info: HashMap<u32, (u32, bool)> = rows
+        .iter()
+        .map(|r| (r.0, (r.1, r.4 >= threshold || r.1 == 0)))
+        .collect();
+    let mut shown: HashMap<u32, u32> = HashMap::with_capacity(rows.len());
+    // Rows come in id order, and a parent always has a smaller id than its children.
+    for r in rows {
+        let (id, parent) = (r.0, r.1);
+        let (_, named) = info[&id];
+        let target = if named {
+            id
+        } else {
+            shown.get(&parent).copied().unwrap_or(id)
+        };
+        shown.insert(id, target);
+    }
+    shown
+}
+
+/// The named clades of the season (and the founders), each with its nearest named ancestor as
+/// parent: the clade tree and the Muller plot are drawn from it.
+async fn tree(State(api): State<Api>) -> Reply {
+    let rows = read(&api, store::tree).await?;
+    let threshold = api.rules.clade_name_threshold;
+    let shown = fold(&rows, threshold);
+    let clades: Vec<Value> = rows
+        .iter()
+        .filter(|(id, ..)| shown.get(id) == Some(id))
+        .map(|(id, parent, founded, extinct, peak, reference, name)| {
+            let genome: Option<protogaea_core::Genome> = serde_json::from_str(reference).ok();
+            let hue = genome.map_or(0, |g| g.hue);
+            let parent = if *parent == 0 {
+                0
+            } else {
+                shown.get(parent).copied().unwrap_or(0)
+            };
+            json!([id, parent, founded, extinct, peak, hue, name])
+        })
+        .collect();
+    Ok(Json(json!({
+        "fields": ["id", "parent", "founded", "extinct", "peak", "hue", "name"],
+        "name_threshold": threshold,
+        "clades": clades,
+    })))
 }
 
 async fn organism(State(api): State<Api>, Path(id): Path<u64>) -> Reply {
@@ -346,23 +436,47 @@ struct EventQuery {
 }
 
 /// Events after a cursor, oldest first: the cursor is the id of the last event seen and `next`
-/// continues. With `before`, the newest events first instead, for a feed.
+/// continues. With `before`, the newest events first instead, for a feed. `names` gives the
+/// names of the named clades the events mention.
 async fn events(State(api): State<Api>, Query(q): Query<EventQuery>) -> Reply {
     let (cursor, limit) = (q.cursor.unwrap_or(0), q.limit.unwrap_or(200).min(1000));
-    if let Some(before) = q.before {
-        let rows = read(&api, move |c| {
-            store::events_before(c, before, limit, q.kind.as_deref(), q.clade)
-        })
-        .await?;
-        let next = rows.last().and_then(|e| e["id"].as_i64()).unwrap_or(0);
-        return Ok(Json(json!({ "events": rows, "next": next })));
-    }
-    let rows = read(&api, move |c| {
-        store::events(c, cursor, limit, q.kind.as_deref(), q.clade)
+    let newest_first = q.before.is_some();
+    let (rows, refs) = read(&api, move |c| {
+        let rows = match q.before {
+            Some(before) => store::events_before(c, before, limit, q.kind.as_deref(), q.clade)?,
+            None => store::events(c, cursor, limit, q.kind.as_deref(), q.clade)?,
+        };
+        let mut ids: Vec<u32> = rows
+            .iter()
+            .flat_map(|e| {
+                [
+                    e["clade_id"].as_u64(),
+                    e["data"]["parent_id"].as_u64(),
+                    e["data"]["from"].as_u64(),
+                ]
+            })
+            .flatten()
+            .filter(|&id| id > 0)
+            .map(|id| id as u32)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let refs = store::clade_names(c, &ids)?;
+        Ok((rows, refs))
     })
     .await?;
-    let next = rows.last().and_then(|e| e["id"].as_i64()).unwrap_or(cursor);
-    Ok(Json(json!({ "events": rows, "next": next })))
+    let names: serde_json::Map<String, Value> = refs
+        .into_iter()
+        .map(|(id, n)| (id.to_string(), Value::String(n)))
+        .collect();
+    let fallback = if newest_first { 0 } else { cursor };
+    let next = rows
+        .last()
+        .and_then(|e| e["id"].as_i64())
+        .unwrap_or(fallback);
+    Ok(Json(
+        json!({ "events": rows, "next": next, "names": names }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -375,7 +489,23 @@ struct MullerQuery {
 /// (or per `step` hours).
 async fn muller(State(api): State<Api>, Query(q): Query<MullerQuery>) -> Reply {
     let (from, step) = (q.from.unwrap_or(0), q.step.unwrap_or(1));
-    let rows = read(&api, move |c| store::muller(c, from, step)).await?;
+    let threshold = api.rules.clade_name_threshold;
+    let rows = read(&api, move |c| {
+        let rows = store::muller(c, from, step)?;
+        let shown = fold(&store::tree(c)?, threshold);
+        // Unnamed clades count toward their nearest named ancestor.
+        let mut folded: std::collections::BTreeMap<(i64, i64), i64> =
+            std::collections::BTreeMap::new();
+        for [epoch, clade, living] in rows {
+            let to = shown.get(&(clade as u32)).map_or(clade, |&s| i64::from(s));
+            *folded.entry((epoch, to)).or_default() += living;
+        }
+        Ok(folded
+            .into_iter()
+            .map(|((e, c), n)| [e, c, n])
+            .collect::<Vec<_>>())
+    })
+    .await?;
     Ok(Json(
         json!({ "every": store::MULLER_EVERY * step.max(1), "rows": rows }),
     ))

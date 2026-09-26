@@ -60,6 +60,8 @@ export interface MapState {
   moisture: number[];
   rift: number[];
   effects: Effect[];
+  /** Names of the living named clades, by id. */
+  names: Record<string, string>;
   organisms: {
     id: number[];
     cell: number[];
@@ -105,6 +107,8 @@ export interface CladeInfo {
   living: number;
   peak_living: number;
   reference: Genome;
+  name: string | null;
+  parent_name?: string | null;
   children?: number[];
   history?: [number, number][];
 }
@@ -155,7 +159,11 @@ export const api = {
   map: (epoch?: number) => get<MapState>(epoch === undefined ? '/v0/map' : `/v0/map?epoch=${epoch}`),
   rifts: () => get<{ rifts: Rift[] }>('/v0/rifts'),
   snapshots: () => get<{ every: number; epochs: number[] }>('/v0/snapshots'),
-  latestEvents: (limit = 60) => get<{ events: WorldEvent[] }>(`/v0/events?before=0&limit=${limit}`),
+  latestEvents: (limit = 60) => get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?before=0&limit=${limit}`),
+  eventsOfKind: (kind: string) => get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?kind=${kind}&limit=500`),
+  tree: () =>
+    get<{ clades: [number, number, number, number | null, number, number, string | null][]; name_threshold: number }>('/v0/tree'),
+  muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),
 };

@@ -9,6 +9,7 @@ use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
 
 use crate::model::{Event, Header};
+use crate::names;
 
 /// Clade counts for the Muller plot are kept once per world hour.
 pub const MULLER_EVERY: u64 = 12;
@@ -83,13 +84,53 @@ pub struct EpochRecord<'a> {
 
 pub struct Store {
     conn: Connection,
+    name_threshold: u32,
 }
 
 impl Store {
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, name_threshold: u32) -> Result<Self> {
         let conn = Connection::open(path).map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
-        Ok(Self { conn })
+        // Columns added after the first worlds were recorded; adding one twice is harmless.
+        for column in ["name TEXT", "combo INTEGER", "named_epoch INTEGER"] {
+            let _ = conn.execute(&format!("ALTER TABLE clades ADD COLUMN {column}"), []);
+        }
+        conn.execute_batch("CREATE INDEX IF NOT EXISTS clades_combo ON clades (combo);")
+            .map_err(err)?;
+        Ok(Self {
+            conn,
+            name_threshold,
+        })
+    }
+
+    /// Names the clades that have reached the threshold and have no name yet, oldest first
+    /// (by when they were named in the event log, else when they were founded). For worlds
+    /// recorded before names were stored, and after a rollback.
+    pub fn backfill_names(&mut self) -> Result<usize> {
+        let tx = self.conn.transaction().map_err(err)?;
+        let pending: Vec<(u32, String, i64)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT c.id, c.reference, COALESCE(
+                         (SELECT min(e.epoch) FROM events e WHERE e.kind = 'clade_named' AND e.clade_id = c.id),
+                         c.founded_epoch) AS named
+                     FROM clades c WHERE c.name IS NULL AND c.peak_living >= ?1 ORDER BY named, c.id",
+                )
+                .map_err(err)?;
+            let rows = stmt
+                .query_map([self.name_threshold], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+                })
+                .map_err(err)?;
+            rows.collect::<rusqlite::Result<_>>().map_err(err)?
+        };
+        for (id, reference, epoch) in &pending {
+            if let Ok(genome) = serde_json::from_str(reference) {
+                give_name(&tx, *id, &genome, *epoch as u64)?;
+            }
+        }
+        tx.commit().map_err(err)?;
+        Ok(pending.len())
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
@@ -120,6 +161,7 @@ impl Store {
         for c in world.clades.values() {
             insert_clade(&tx, c)?;
         }
+        name_new(&tx, world.clades.values(), 0, self.name_threshold)?;
         for o in &world.organisms {
             insert_organism(&tx, o, 0)?;
         }
@@ -168,6 +210,12 @@ impl Store {
             )
             .map_err(err)?;
         }
+        name_new(
+            &tx,
+            rec.world.clades.values().chain(rec.extinct.iter()),
+            epoch,
+            self.name_threshold,
+        )?;
         for o in &rec.newborn {
             insert_organism(&tx, o, epoch)?;
         }
@@ -205,7 +253,8 @@ impl Store {
              DELETE FROM organisms WHERE born_epoch > {e};
              UPDATE organisms SET died_epoch = NULL, cause = NULL, at_death = NULL WHERE died_epoch > {e};
              DELETE FROM clades WHERE founded_epoch > {e};
-             UPDATE clades SET extinct_epoch = NULL WHERE extinct_epoch > {e};"
+             UPDATE clades SET extinct_epoch = NULL WHERE extinct_epoch > {e};
+             UPDATE clades SET name = NULL, combo = NULL, named_epoch = NULL WHERE named_epoch > {e};"
         ))
         .map_err(err)?;
         for c in world.clades.values() {
@@ -217,6 +266,52 @@ impl Store {
         }
         tx.commit().map_err(err)
     }
+}
+
+/// Names every clade among `clades` that has reached the threshold and has no name yet.
+fn name_new<'a>(
+    tx: &Connection,
+    clades: impl Iterator<Item = &'a Clade>,
+    epoch: u64,
+    threshold: u32,
+) -> Result<()> {
+    let mut candidates: Vec<&Clade> = clades.filter(|c| c.peak_living >= threshold).collect();
+    candidates.sort_by_key(|c| c.id);
+    for c in candidates {
+        let unnamed: Option<bool> = tx
+            .prepare_cached("SELECT name IS NULL FROM clades WHERE id = ?1")
+            .and_then(|mut s| s.query_row([c.id], |r| r.get(0)).optional())
+            .map_err(err)?;
+        if unnamed == Some(true) {
+            give_name(tx, c.id, &c.reference, epoch)?;
+        }
+    }
+    Ok(())
+}
+
+/// The next free name in the clade's combination.
+fn give_name(
+    tx: &Connection,
+    id: u32,
+    reference: &protogaea_core::Genome,
+    epoch: u64,
+) -> Result<()> {
+    let combo = names::combo(reference);
+    let taken: u32 = tx
+        .prepare_cached("SELECT count(*) FROM clades WHERE combo = ?1")
+        .and_then(|mut s| s.query_row([combo], |r| r.get(0)))
+        .map_err(err)?;
+    tx.prepare_cached("UPDATE clades SET name = ?2, combo = ?3, named_epoch = ?4 WHERE id = ?1")
+        .and_then(|mut s| {
+            s.execute(params![
+                id,
+                names::name_in(combo, taken),
+                combo,
+                epoch as i64
+            ])
+        })
+        .map(drop)
+        .map_err(err)
 }
 
 fn cause_name(cause: DeathCause) -> &'static str {
@@ -244,8 +339,9 @@ fn insert_header(tx: &Connection, h: &Header) -> Result<()> {
 
 fn insert_clade(tx: &Connection, c: &Clade) -> Result<()> {
     tx.execute(
-        "INSERT OR REPLACE INTO clades (id, parent_id, founded_epoch, extinct_epoch, living, peak_living, reference)
-         VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)",
+        "INSERT INTO clades (id, parent_id, founded_epoch, extinct_epoch, living, peak_living, reference)
+         VALUES (?1, ?2, ?3, NULL, ?4, ?5, ?6)
+         ON CONFLICT (id) DO UPDATE SET living = excluded.living, peak_living = excluded.peak_living",
         params![
             c.id,
             c.parent_id,
@@ -396,11 +492,12 @@ fn clade_row(r: &rusqlite::Row) -> rusqlite::Result<Value> {
         "living": r.get::<_, i64>(4)?,
         "peak_living": r.get::<_, i64>(5)?,
         "reference": json_col(r.get::<_, String>(6)?),
+        "name": r.get::<_, Option<String>>(7)?,
     }))
 }
 
 const CLADE_COLUMNS: &str =
-    "id, parent_id, founded_epoch, extinct_epoch, living, peak_living, reference";
+    "id, parent_id, founded_epoch, extinct_epoch, living, peak_living, reference, name";
 
 pub fn clade(conn: &Connection, id: u32) -> Result<Option<Value>> {
     let Some(mut c) = conn
@@ -500,6 +597,51 @@ pub fn organism(conn: &Connection, id: u64) -> Result<Option<Value>> {
         .map_err(err)?;
     o["offspring"] = json!(offspring);
     Ok(Some(o))
+}
+
+/// The stored names of the given clades; unnamed clades are left out.
+pub fn clade_names(conn: &Connection, ids: &[u32]) -> Result<Vec<(u32, String)>> {
+    let mut stmt = conn
+        .prepare_cached("SELECT name FROM clades WHERE id = ?1 AND name IS NOT NULL")
+        .map_err(err)?;
+    let mut out = Vec::with_capacity(ids.len());
+    for &id in ids {
+        if let Some(name) = stmt
+            .query_row([id], |r| r.get::<_, String>(0))
+            .optional()
+            .map_err(err)?
+        {
+            out.push((id, name));
+        }
+    }
+    Ok(out)
+}
+
+/// One row per clade of the season, for the clade tree and the Muller plot:
+/// `(id, parent, founded, extinct, peak, reference JSON, name)`.
+pub type TreeRow = (u32, u32, i64, Option<i64>, u32, String, Option<String>);
+
+pub fn tree(conn: &Connection) -> Result<Vec<TreeRow>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, parent_id, founded_epoch, extinct_epoch, peak_living, reference, name
+             FROM clades ORDER BY id",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
 }
 
 /// Clade counts over time for the Muller plot: `[epoch, clade, living]` from `from` on.
