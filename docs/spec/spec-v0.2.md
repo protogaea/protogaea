@@ -852,7 +852,7 @@ The harness is a program that runs thousands of seasons offline with different s
 |---|---|
 | Total extinction without players before the season ends | At most 5% of seeds |
 | Spore bank triggers | A median of at most once per season |
-| Coexisting clades of ≥ 20 organisms | At least 6 at any time after the third day |
+| Coexisting clades of ≥ 20 organisms | At least 6 during at least 95% of the time after the third day (a brief dip while the continent breaks up is allowed) |
 | Change of the world's dominant clade | A median of at least once every 3 days. No clade holds more than 60% of the population for longer than 3 days |
 | Predator–prey population oscillations | Detected on at least half of the seeds |
 | Diversity across biomes | Different archetypes dominate in at least 3 biomes |

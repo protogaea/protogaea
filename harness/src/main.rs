@@ -253,13 +253,14 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         .collect();
 
     println!(
-        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5} {:>6}",
+        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>7} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5} {:>6}",
         "seed",
         "extinct",
         "final",
         "hunters",
         "equil%",
         "min cl20",
+        "cl20≥6%",
         "chg/3d",
         "dom days",
         "cap%",
@@ -274,7 +275,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
     );
     for s in &summaries {
         println!(
-            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5.0} {:>4}/{}",
+            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>7} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5.0} {:>4}/{}",
             s.seed,
             if s.extinct { "yes" } else { "no" },
             s.final_population,
@@ -282,6 +283,8 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             s.equilibrium_pct,
             s.min_clades_20_after_day_3
                 .map_or("—".to_string(), |m| m.to_string()),
+            s.diverse_pct_after_day_3
+                .map_or("—".to_string(), |p| format!("{p:.1}")),
             s.dominant_changes_per_3_days,
             s.longest_dominance_days,
             s.cap_ticks_pct,
@@ -325,13 +328,13 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
     if let Some(path) = opts.value("out") {
         let mut csv = String::from(
             "seed,extinct,final_population,min_population,equilibrium_pct,min_clades_20_after_day_3,\
-             dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
+             diverse_pct_after_day_3,dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
              revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,\
              centroid_divergence_growth,final_composition_permille,final_hue_divergence,checks_passed\n",
         );
         for s in &summaries {
             csv.push_str(&format!(
-                "{},{},{},{},{:.2},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{},{},{:.1},{}\n",
+                "{},{},{},{},{:.2},{},{},{:.2},{:.3},{:.3},{:.2},{},{},{},{},{},{},{},{},{:.1},{}\n",
                 s.seed,
                 s.extinct,
                 s.final_population,
@@ -339,6 +342,8 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 s.equilibrium_pct,
                 s.min_clades_20_after_day_3
                     .map_or(String::new(), |m| m.to_string()),
+                s.diverse_pct_after_day_3
+                    .map_or(String::new(), |p| format!("{p:.2}")),
                 s.dominant_changes_per_3_days,
                 s.longest_dominance_days,
                 s.cap_ticks_pct,

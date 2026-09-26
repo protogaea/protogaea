@@ -11,6 +11,12 @@ use serde::{Deserialize, Serialize};
 /// A share of the population above which a clade counts as dominant (spec §28).
 const DOMINANCE_PERMILLE: u32 = 600;
 
+/// Diversity (spec §28): at least this many clades of 20+ during this share of the time after
+/// day 3. A share rather than every moment, so a brief dip while the continent breaks up does not
+/// fail a season that is diverse throughout.
+const MIN_CLADES_20: u32 = 6;
+const DIVERSE_TIME_PCT: f64 = 95.0;
+
 /// A group of passable cells counts as a continent if it has at least this many land cells.
 const CONTINENT_MIN_LAND: u32 = 40;
 
@@ -494,6 +500,10 @@ impl Tracker {
             final_clades_20: last.map_or(0, |s| s.clades_20),
             equilibrium_pct: mean_last_day * 100.0 / f64::from(rules.max_organisms),
             min_clades_20_after_day_3: after_day_3.iter().copied().min(),
+            diverse_pct_after_day_3: (!after_day_3.is_empty()).then(|| {
+                let diverse = after_day_3.iter().filter(|&&c| c >= MIN_CLADES_20).count();
+                diverse as f64 * 100.0 / after_day_3.len() as f64
+            }),
             dominant_changes_per_3_days: if days > 0.0 {
                 changes as f64 / days * 3.0
             } else {
@@ -540,6 +550,8 @@ pub struct Summary {
     /// Mean population over the last world day, as a share of `max_organisms`.
     pub equilibrium_pct: f64,
     pub min_clades_20_after_day_3: Option<u32>,
+    /// The share of epochs after day 3 with at least 6 clades of 20+, in percent.
+    pub diverse_pct_after_day_3: Option<f64>,
     pub dominant_changes_per_3_days: f64,
     /// The longest stretch with one clade above 60% of the population.
     pub longest_dominance_days: f64,
@@ -587,8 +599,8 @@ impl Summary {
                 Some(self.revivals <= 1),
             ),
             check(
-                "at least 6 clades of 20+ after day 3",
-                self.min_clades_20_after_day_3.map(|m| m >= 6),
+                "at least 6 clades of 20+ during 95% of the time after day 3",
+                self.diverse_pct_after_day_3.map(|p| p >= DIVERSE_TIME_PCT),
             ),
             check(
                 "dominant clade changes at least once per 3 days",

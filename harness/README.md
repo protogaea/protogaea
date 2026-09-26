@@ -70,7 +70,7 @@ These are the checks of spec §28 measured so far. The thresholds are candidates
 - no total extinction: the population never falls to zero;
 - predators survive to the end;
 - the spore bank revives the world at most once;
-- at least 6 clades of 20+ organisms after day 3;
+- at least 6 clades of 20+ organisms during 95% of the time after day 3;
 - the dominant clade changes at least once per 3 days;
 - no clade holds more than 60% of the population for more than 3 days;
 - under 1% of ticks at the global limit;
