@@ -167,8 +167,45 @@ fn cmd_run(args: &[String]) -> Result<(), String> {
         hex(&run.state_root())
     );
     print_checks(&summary);
+    print_stories(&tracker, &run.rules);
     println!("\nreport: {}", report_path.display());
     Ok(())
+}
+
+/// What the story detectors found: counts by kind and the best stories of the run.
+fn print_stories(tracker: &Tracker, rules: &Ruleset) {
+    let total: u32 = tracker.story_counts.values().sum();
+    println!("\nstories: {total} ({:.1} per world day)", {
+        let days = tracker
+            .series
+            .last()
+            .map_or(0.0, |s| s.epoch as f64 / f64::from(rules.epochs_per_day));
+        if days > 0.0 {
+            f64::from(total) / days
+        } else {
+            0.0
+        }
+    });
+    for kind in protogaea_stories::Kind::ALL {
+        let n = tracker.story_counts.get(kind.name()).copied().unwrap_or(0);
+        if n > 0 {
+            println!("  {:>5}  {}", n, kind.name());
+        }
+    }
+    let best = protogaea_stories::best_of(&tracker.stories, 12);
+    if !best.is_empty() {
+        println!("  the best of them:");
+        for s in best {
+            println!(
+                "    day {:>5.2}  {:<22} clade {:>6}  score {:>3}  {}",
+                s.epoch as f64 / f64::from(rules.epochs_per_day),
+                s.kind.name(),
+                s.clade.map_or("-".to_string(), |c| c.to_string()),
+                s.score,
+                s.data
+            );
+        }
+    }
 }
 
 /// One line per plate: its population, dominant clade and mean traits.
@@ -253,7 +290,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         .collect();
 
     println!(
-        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>7} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5} {:>6}",
+        "\n{:>6} {:>7} {:>6} {:>7} {:>7} {:>9} {:>7} {:>8} {:>9} {:>6} {:>8} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5} {:>6} {:>6}",
         "seed",
         "extinct",
         "final",
@@ -271,11 +308,12 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
         "cdiv+",
         "comp%→",
         "hue°",
+        "st/day",
         "pass"
     );
     for s in &summaries {
         println!(
-            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>7} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5.0} {:>4}/{}",
+            "{:>6} {:>7} {:>6} {:>7} {:>7.1} {:>9} {:>7} {:>8.1} {:>9.2} {:>6.2} {:>8.1} {:>4} {:>6} {:>5} {:>6} {:>8} {:>5.0} {:>6.1} {:>4}/{}",
             s.seed,
             if s.extinct { "yes" } else { "no" },
             s.final_population,
@@ -302,6 +340,7 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 s.final_composition_permille / 10
             ),
             s.final_hue_divergence,
+            s.stories_per_day,
             passed(s),
             s.checks().len(),
         );
@@ -330,7 +369,9 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
             "seed,extinct,final_population,min_population,equilibrium_pct,min_clades_20_after_day_3,\
              diverse_pct_after_day_3,dominant_changes_per_3_days,longest_dominance_days,cap_ticks_pct,generations_per_day,\
              revivals,ended_by_extinction,drowned,plates,final_continents,divergence_growth,\
-             centroid_divergence_growth,final_composition_permille,final_hue_divergence,checks_passed\n",
+             centroid_divergence_growth,final_composition_permille,final_hue_divergence,checks_passed,\
+             stories_per_day,story_comeback,story_crossing,story_invasion,story_arms_race,\
+             story_last_of_its_kind,story_changing_of_the_guard,story_split_by_sea,story_fall\n",
         );
         for s in &summaries {
             csv.push_str(&format!(
@@ -361,6 +402,13 @@ fn cmd_sweep(args: &[String]) -> Result<(), String> {
                 s.final_hue_divergence,
                 passed(s),
             ));
+            csv.pop();
+            csv.push_str(&format!(",{:.2}", s.stories_per_day));
+            for kind in protogaea_stories::Kind::ALL {
+                let n = s.story_counts.get(kind.name()).copied().unwrap_or(0);
+                csv.push_str(&format!(",{n}"));
+            }
+            csv.push('\n');
         }
         write(&PathBuf::from(path), &csv)?;
         println!("results: {path}");

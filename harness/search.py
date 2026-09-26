@@ -114,6 +114,7 @@ def score(rows):
         "comp_mean": mean([int(r["final_composition_permille"]) / 10 for r in rows]),
         "alive": sum(alive) / n * 100,
         "equil_mean": mean(num("equilibrium_pct")),
+        "stories": mean(num("stories_per_day")) if rows and "stories_per_day" in rows[0] else float("nan"),
     }
 
 
@@ -125,10 +126,10 @@ def report(opts):
         changes = json.loads((out / f"{f.stem}.changes.json").read_text())
         table.append((f.stem, changes, score(rows)))
     table.sort(key=lambda t: (-t[2]["alive"], -t[2]["all_checks"], -t[2]["diverse_mean"]))
-    print(f"{'variant':34} {'checks':>6} {'div95%':>6} {'div%':>6} {'fauna%':>6} {'comp%':>6} {'alive%':>6} {'equil':>6}")
+    print(f"{'variant':34} {'checks':>6} {'div95%':>6} {'div%':>6} {'fauna%':>6} {'comp%':>6} {'alive%':>6} {'equil':>6} {'st/day':>6}")
     for name, _, s in table:
         print(f"{name:34} {s['all_checks']:6.2f} {s['diverse_95']:6.0f} {s['diverse_mean']:6.1f} "
-              f"{s['fauna_apart']:6.0f} {s['comp_mean']:6.1f} {s['alive']:6.0f} {s['equil_mean']:6.1f}")
+              f"{s['fauna_apart']:6.0f} {s['comp_mean']:6.1f} {s['alive']:6.0f} {s['equil_mean']:6.1f} {s['stories']:6.1f}")
 
 
 def main():

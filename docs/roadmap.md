@@ -27,7 +27,7 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | 4 | Formats of receipts, STHs and headers; log mirrors; OpenTimestamps cadence | Open — see the [protocol draft](protocol.md) |
 | 5 | The root dictionary for names and the hypothesis templates | Open |
 | 6 | The reference core and `P_min` in work units | Open |
-| 7 | Target values of the product metrics for B′ and D | Open — must be fixed before the tests |
+| 7 | Target values of the product metrics for B′ and D | Open — must be fixed before the tests, and first for the early test with friends (B6) |
 | 8 | Legal review: wording, distribution of the spark client, app store rules, consent | Open |
 | 9 | The name | Working name chosen: Protogaea. Legal check and registrations open |
 | 10 | Licenses and contributions | Split decided; the data license and CLA vs DCO are open |
@@ -57,7 +57,7 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 2. **Deterministic core.** State and tick order, counter-based randomness, genome and mutation, energy, hunting, movement choice, reproduction, death and decomposition, clades, museum and spore bank, times of year, natural events, rifts.
 3. **Canonical serialization and the Merkle state root.**
 4. **Determinism checks.** 500-epoch replays on several seeds, compared across all platforms on every commit.
-5. **The balance harness.** A batch runner, the ecosystem health metrics, the archetype arena and a parameter search.
+5. **The balance harness.** A batch runner, the ecosystem health metrics, the archetype arena and a parameter search. Season 1 numbers are chosen for stories as well as for health: the harness counts what the story detectors of B4 find in every season (comebacks, invasions, crossings, changes of the dominant clade), and a world whose health checks pass but where nothing happens is not good enough.
 6. **Season 1 map generator.** Rift lines and schedule, and the published seed selection criteria.
 7. **Performance.** Benchmarks against the targets: a world day in under 30 s on one reference core, an epoch in under 100 ms (p95), WASM at most 3× slower than native.
 
@@ -74,10 +74,13 @@ Stage B builds what a viewer sees, on top of the stage A core and without changi
 1. **B1 — the world server and the event log.** A Rust server that runs the world on a timer and replaces the stage A live preview. Every epoch it records a header (epoch, `state_root` and its subtree roots, headline numbers), structured events (clades founded, named and extinct, land bridges closing, natural events, revivals) and, every few world hours, a snapshot. Indexes of clades and organisms, dead ones included, live in SQLite. It serves the read API of spec §23: world, ruleset, epochs, snapshots, clades, organisms, museum, events with stable cursors, and inclusion proofs. It resumes after a restart without losing an epoch.
 2. **B2 — the viewer and the map.** A TypeScript viewer with a WebGL renderer (spec §22): the map with its layers (biomes, food, population, clade colors, rifts and their schedule, natural events), live mode that replays the latest epoch, a "jump to latest" button, and permanent links to every epoch, clade and organism. Organisms are drawn as procedural glyphs from the genome when zoomed in (spec §7).
 3. **B3 — the Muller plot, the clade tree, cards and names.** The Muller plot for the whole season with natural events on the time axis; the phylogeny of clades; organism and clade cards; automatic binomial names from a screened dictionary of Latin roots.
-4. **B4 — the time machine.** The core built for the browser: open any past epoch from the nearest snapshot, recompute the ticks in WASM, compare two states, and check an organism's inclusion proof against the published `state_root`.
-5. **B5 — stories.** The story detectors of spec §7 (comeback, crossing, invasion, arms race, last of its kind, changing of the guard, records), the feed, the museum page and the daily chronicle from templates.
-6. **B6 — "While you were away" and subscriptions.** The personal digest, subscriptions to a clade, a region or an organism, web push and a Telegram bot with rate limits and a digest mode.
-7. **B7 — the usability test.** 5–8 people explain the consequences of a mutation or an event without server logs (the stage B exit criterion); what they stumble on is fixed before stage B′.
+4. **B4 — stories.** The story detectors of spec §7 (comeback, crossing, invasion, arms race, last of its kind, changing of the guard, records), plus the stories the Breaking of Pangea makes possible (a lineage crossing a land bridge before it closes, the last population of a clade on a continent). The feed shows one to three chosen stories a day, each with a named protagonist, what is at stake and when it will be decided; routine events stay available but out of the way. The same detectors run in the harness, so that every season can be scored for its stories as well as its health (stage A, item 5).
+5. **B5 — coming back.** What makes a viewer return the next day: the "While you were away" digest, the last world day replayed in about 30 seconds with captions from the stories, and predictions for tomorrow (a simple form of the hypothesis journal of spec §7: "will this clade still be alive at this time tomorrow?", scored the next day, with no keys or signatures yet). Subscriptions to a clade or a region, delivered by a Telegram bot first.
+6. **B6 — an early test with friends.** 10–20 invited people follow the world for a week with the digest in Telegram. The measures and their targets are fixed before it starts (decision 7 below): return on day 1 and day 7, the share who open a story or a card, predictions made. What they say shapes the rest of stage B and the stories of B4.
+7. **B7 — the time machine and the archive.** The core built for the browser: open any past epoch from the nearest snapshot, recompute the ticks in WASM, compare two states, and check an organism's inclusion proof against the published `state_root`; the museum page and the daily chronicle from templates.
+8. **B8 — the usability test.** 5–8 people explain the consequences of a mutation or an event without server logs (the stage B exit criterion); what they stumble on is fixed before stage B′.
+
+Why this order: the riskiest question is whether people come back to watch. Stories, the digest and predictions are what answer it; the time machine matters for trust, which comes later with sparks. So they come first, and a small group of real viewers tests them before the rest of stage B is built.
 
 ## Not planned
 

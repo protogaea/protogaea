@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use protogaea_core::genome::{DEFENSE, HUNTING, TRAIT_COUNT};
 use protogaea_core::rifts::Plan;
 use protogaea_core::{EpochReport, Genome, Ruleset, World};
+use protogaea_stories::{Context, Detectors, Story};
 use serde::{Deserialize, Serialize};
 
 /// A share of the population above which a clade counts as dominant (spec §28).
@@ -362,7 +363,17 @@ pub struct Tracker {
     revivals: u32,
     drowned: u32,
     ended: bool,
+    /// The story detectors and what they found (roadmap B4): counts by kind, and the stories.
+    #[serde(default)]
+    detectors: Detectors,
+    #[serde(default)]
+    pub story_counts: BTreeMap<String, u32>,
+    #[serde(default)]
+    pub stories: Vec<Story>,
 }
+
+/// The harness keeps at most this many stories per run; the counts cover all of them.
+const STORIES_KEPT: usize = 2000;
 
 impl Tracker {
     pub fn new(world: &World, rules: &Ruleset, plan: &Plan) -> Self {
@@ -380,10 +391,26 @@ impl Tracker {
             revivals: 0,
             drowned: 0,
             ended: world.ended,
+            detectors: Detectors::new(),
+            story_counts: BTreeMap::new(),
+            stories: Vec::new(),
         }
     }
 
     pub fn record(&mut self, world: &World, report: &EpochReport, rules: &Ruleset) {
+        let ctx = Context {
+            rules,
+            plates: &self.plates,
+        };
+        for story in self.detectors.observe(world, report, &ctx) {
+            *self
+                .story_counts
+                .entry(story.kind.name().to_string())
+                .or_default() += 1;
+            if self.stories.len() < STORIES_KEPT {
+                self.stories.push(story);
+            }
+        }
         for &(parent, child) in &report.births_list {
             let g = self.generation.get(&parent).copied().unwrap_or(0) + 1;
             self.generation.insert(child, g);
@@ -531,6 +558,12 @@ impl Tracker {
             divergence_judged: has_rifts && reached_season_end,
             final_composition_permille: last.map_or(0, |s| s.composition_permille),
             final_hue_divergence: last.map_or(0.0, |s| f64::from(s.hue_divergence_x10) / 10.0),
+            stories_per_day: if days_since_genesis > 0.0 {
+                f64::from(self.story_counts.values().sum::<u32>()) / days_since_genesis
+            } else {
+                0.0
+            },
+            story_counts: self.story_counts.clone(),
         }
     }
 }
@@ -578,6 +611,9 @@ pub struct Summary {
     /// The clade makeup difference when the rifts began to turn into shallows.
     pub start_composition_permille: Option<u32>,
     pub final_hue_divergence: f64,
+    /// Stories the detectors found per world day, and how many of each kind (roadmap B4).
+    pub stories_per_day: f64,
+    pub story_counts: BTreeMap<String, u32>,
 }
 
 #[derive(Clone, Debug, Serialize)]

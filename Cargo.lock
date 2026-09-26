@@ -513,6 +513,7 @@ name = "protogaea-harness"
 version = "0.0.1"
 dependencies = [
  "protogaea-core",
+ "protogaea-stories",
  "serde",
  "serde_json",
 ]
@@ -528,6 +529,15 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-http",
+]
+
+[[package]]
+name = "protogaea-stories"
+version = "0.0.1"
+dependencies = [
+ "protogaea-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 [package]
-name = "protogaea-harness"
-description = "The balance harness of Protogaea: runs worlds offline and measures them"
+name = "protogaea-stories"
+description = "Story detectors for Protogaea: find the moments worth telling in a running world"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,5 @@ repository.workspace = true
 
 [dependencies]
 protogaea-core.workspace = true
-protogaea-stories.workspace = true
 serde.workspace = true
 serde_json.workspace = true

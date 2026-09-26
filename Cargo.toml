@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["core", "harness", "server"]
+members = ["core", "harness", "server", "stories"]
 # The server needs a C compiler for SQLite (on Windows: MSVC, or MSYS2's gcc and dlltool with the
 # GNU toolchain); a plain `cargo build` leaves it out so the core and the harness build anywhere.
 # CI builds the whole workspace.
-default-members = ["core", "harness"]
+default-members = ["core", "harness", "stories"]
 
 [workspace.package]
 version = "0.0.1"
@@ -17,6 +17,7 @@ blake3 = { version = "1", features = ["pure"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 protogaea-core = { path = "core" }
+protogaea-stories = { path = "stories" }
 
 # Overflow checks stay on in every profile: overflow must never wrap silently in consensus
 # code, and debug and release builds must behave the same (spec §14).
