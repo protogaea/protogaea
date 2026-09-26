@@ -457,6 +457,7 @@ function renderClade(c: CladeInfo) {
     </div>
     ${kids ? `<div class="fact" style="margin-top:14px">${t.children}<div class="links" style="margin-top:4px">${kids}</div></div>` : ''}
     ${c.extinct_epoch === null && route.epoch === undefined ? predictHtml(c) : ''}
+    ${c.extinct_epoch === null && route.epoch === undefined ? `<button class="btn" data-migrate="${c.id}" style="margin-top:12px"><i class="ph ph-sparkle"></i>${t.migrateButton}</button><div class="st" id="migrate-note"></div>` : ''}
     ${traitsTable(c.reference.traits)}`;
 }
 
@@ -581,6 +582,15 @@ async function renderDetails() {
     el.hidden = false;
     el.querySelector('.close')?.addEventListener('click', () => go({ epoch: route.epoch }));
     bindPredict(el);
+    el.querySelector<HTMLButtonElement>('[data-migrate]')?.addEventListener('click', (ev) => {
+      const clade = Number((ev.currentTarget as HTMLElement).dataset.migrate);
+      const d = densest(clade);
+      if (!d || d.n < 10) {
+        $('migrate-note').textContent = fmt(t.migrateTooFew, { n: d?.n ?? 0 });
+        return;
+      }
+      plan({ kind: 'migrate', clade, from: d.at });
+    });
   } catch (e) {
     el.hidden = false;
     el.innerHTML = `<div class="card-head"><span class="subtitle">${esc(e instanceof Error ? e.message : String(e))}</span>${closeBtn}</div>`;
@@ -617,11 +627,11 @@ map.onHover = (hover, x, y) => {
 };
 
 map.onPick = (p) => {
-  if (nat.picking !== undefined) {
+  if (nat.picking && nat.plan) {
     const cell = p.kind === 'cell' ? p.cell : map.cellOfOrganism(p.id);
     if (cell !== undefined) {
-      nat.chosen = { x: cell % world.width, y: Math.floor(cell / world.width), rain: nat.picking };
-      nat.picking = undefined;
+      nat.at = [cell % world.width, Math.floor(cell / world.width)];
+      nat.picking = false;
       banner(null);
       renderNaturalist();
     }
@@ -633,16 +643,60 @@ map.onPick = (p) => {
 
 // ---------------------------------------------------------------- the naturalist (stage C)
 
+/** What the naturalist is about to wish for, before the place is picked on the map. */
+type Plan = { kind: 'weather'; rain: boolean } | { kind: 'migrate'; clade: number; from: [number, number] } | { kind: 'revive'; entry: number };
+
 const nat: {
   open: boolean;
-  picking?: boolean;
-  chosen?: { x: number; y: number; rain: boolean };
+  plan?: Plan;
+  /** Waiting for a click on the map. */
+  picking: boolean;
+  at?: [number, number];
   progress?: naturalist.Progress;
   error?: string;
   wishes: naturalist.WishRow[];
   price: bigint;
   busy: boolean;
-} = { open: false, wishes: [], price: 0n, busy: false };
+} = { open: false, picking: false, wishes: [], price: 0n, busy: false };
+
+/** Starts a plan: opens the panel and asks for a click on the map. */
+function plan(p: Plan) {
+  nat.plan = p;
+  nat.at = undefined;
+  nat.picking = true;
+  nat.open = true;
+  nat.error = undefined;
+  const ask =
+    p.kind === 'weather'
+      ? fmt(t.wishPick, { what: (p.rain ? t.wishRain : t.wishDrought).toLowerCase() })
+      : p.kind === 'migrate'
+        ? fmt(t.migratePick, { clade: cladeLabel(p.clade) })
+        : fmt(t.revivePick, { clade: cladeLabel(p.entry) });
+  banner(ask);
+  if ((route.view ?? 'map') !== 'map' || route.epoch !== undefined) go({ ...route, epoch: undefined, view: 'map' });
+  refreshWishes();
+}
+
+/** The densest 5 × 5 area of a clade on the map: its center and how many of the clade are in it. */
+function densest(clade: number): { at: [number, number]; n: number } | undefined {
+  if (!state) return undefined;
+  const o = state.organisms;
+  const cells: [number, number][] = [];
+  for (let i = 0; i < o.id.length; i++) if (o.clade[i] === clade) cells.push([o.cell[i] % state.width, Math.floor(o.cell[i] / state.width)]);
+  let best: { at: [number, number]; n: number } | undefined;
+  for (const c of cells) {
+    const n = cells.filter((d) => Math.abs(d[0] - c[0]) <= 2 && Math.abs(d[1] - c[1]) <= 2).length;
+    if (!best || n > best.n) best = { at: c, n };
+  }
+  return best;
+}
+
+/** The wish of the plan and the picked place, as the core takes it. */
+function actionOf(p: Plan, at: [number, number]): naturalist.Action {
+  if (p.kind === 'weather') return { weather: { x: at[0], y: at[1], rain: p.rain } };
+  if (p.kind === 'migrate') return { migrate: { clade_id: p.clade, from: p.from, to: at } };
+  return { revive: { museum: true, entry_id: p.entry, steps: [], at } };
+}
 
 const big = (n: bigint) => nf.format(Number(n));
 
@@ -665,15 +719,24 @@ async function renderNaturalist() {
     return;
   }
   const key = await naturalist.me();
-  const kind = (rain: boolean) => (rain ? t.wishRain : t.wishDrought);
   const parts: string[] = [
     `<div class="card-head"><h2>${t.naturalistTitle}</h2><button class="icon-btn close" aria-label="${t.close}"><i class="ph ph-x"></i></button></div>`,
     `<div class="subtitle">${fmt(t.naturalistKey, { key: `<code>${key.slice(0, 8)}…${key.slice(-4)}</code>` })}</div>`,
-    `<div class="wish-kinds"><button class="btn" data-rain="1" aria-pressed="${nat.picking === true}"><i class="ph ph-cloud-rain"></i>${t.wishRain}</button><button class="btn" data-rain="0" aria-pressed="${nat.picking === false}"><i class="ph ph-sun"></i>${t.wishDrought}</button></div>`,
+    `<div class="wish-kinds"><button class="btn" data-rain="1" aria-pressed="${nat.plan?.kind === 'weather' && nat.plan.rain}"><i class="ph ph-cloud-rain"></i>${t.wishRain}</button><button class="btn" data-rain="0" aria-pressed="${nat.plan?.kind === 'weather' && !nat.plan.rain}"><i class="ph ph-sun"></i>${t.wishDrought}</button></div>`,
+    `<p class="st" style="margin:0;font-size:12px;color:var(--text-3)">${t.wishOthers}</p>`,
   ];
-  if (nat.chosen) {
-    const c = nat.chosen;
-    parts.push(`<div class="wish-box">${fmt(t.wishPreview, { what: kind(c.rain), x: c.x, y: c.y, price: big(nat.price), threads: naturalist.threads() })}
+  if (nat.plan && nat.at) {
+    const [x, y] = nat.at;
+    const p = nat.plan;
+    const mult = p.kind === 'weather' ? 100n : p.kind === 'migrate' ? 120n : 200n;
+    const price = big((nat.price * mult) / 100n);
+    const text =
+      p.kind === 'weather'
+        ? fmt(t.wishPreview, { what: p.rain ? t.wishRain : t.wishDrought, x, y, price, threads: naturalist.threads() })
+        : p.kind === 'migrate'
+          ? fmt(t.migratePreview, { clade: cladeLabel(p.clade), fx: p.from[0], fy: p.from[1], x, y, price, threads: naturalist.threads() })
+          : fmt(t.revivePreview, { clade: cladeLabel(p.entry), x, y, price, threads: naturalist.threads() });
+    parts.push(`<div class="wish-box">${text}
       <div class="actions"><button class="btn primary" id="wish-make"${nat.busy ? ' disabled' : ''}>${t.wishMake}</button><button class="btn" id="wish-cancel">${t.cancel}</button></div></div>`);
   }
   const p = nat.progress;
@@ -703,30 +766,28 @@ async function renderNaturalist() {
   el.hidden = false;
   el.querySelector('.close')?.addEventListener('click', () => {
     nat.open = false;
-    nat.picking = undefined;
+    nat.picking = false;
+    nat.plan = undefined;
+    banner(null);
     renderNaturalist();
   });
   el.querySelectorAll<HTMLButtonElement>('.wish-kinds .btn').forEach((b) =>
-    b.addEventListener('click', () => {
-      nat.picking = b.dataset.rain === '1';
-      nat.chosen = undefined;
-      banner(fmt(t.wishPick, { what: kind(nat.picking).toLowerCase() }));
-      if ((route.view ?? 'map') !== 'map') go({ ...route, view: 'map' });
-      renderNaturalist();
-    }),
+    b.addEventListener('click', () => plan({ kind: 'weather', rain: b.dataset.rain === '1' })),
   );
   el.querySelector('#wish-cancel')?.addEventListener('click', () => {
-    nat.chosen = undefined;
+    nat.plan = undefined;
+    nat.at = undefined;
     renderNaturalist();
   });
   el.querySelector('#wish-make')?.addEventListener('click', async () => {
-    const c = nat.chosen!;
+    const action = actionOf(nat.plan!, nat.at!);
     nat.busy = true;
     nat.error = undefined;
     renderNaturalist();
     try {
-      await naturalist.wish({ weather: { x: c.x, y: c.y, rain: c.rain } });
-      nat.chosen = undefined;
+      await naturalist.wish(action);
+      nat.plan = undefined;
+      nat.at = undefined;
       track('prediction', 'wish');
     } catch (e) {
       nat.error = e instanceof Error ? e.message : String(e);
@@ -864,10 +925,18 @@ async function renderMuseum() {
                 <div class="meta">${fmt(t.museumLived, { from: dayOf(c.founded_epoch).toFixed(1), to: dayOf(died).toFixed(1), time: duration(died - c.founded_epoch) })}<br>
                 <b>${fmt(t.museumPeak, { n: nf.format(c.peak_living) })}</b> · ${t.habitats[c.reference.habitat] ?? '?'}</div>
                 <a class="last" href="${link({ epoch: last >= world.header.epoch ? undefined : last, clade: c.id, view: 'map' })}">${t.museumLast}</a>
+                ${
+                  world.header.epoch >= died + 36
+                    ? `<button class="btn revive" data-revive="${c.id}"><i class="ph ph-sparkle"></i>${t.reviveButton}</button>`
+                    : `<div class="meta">${fmt(t.reviveLater, { epoch: nf.format(died + 36) })}</div>`
+                }
               </div></div>`;
             })
             .join('')}</div>`
     }`;
+  host.querySelectorAll<HTMLButtonElement>('[data-revive]').forEach((b) =>
+    b.addEventListener('click', () => plan({ kind: 'revive', entry: Number(b.dataset.revive) })),
+  );
   host.querySelectorAll<HTMLButtonElement>('.museum-bar .btn').forEach((b) =>
     b.addEventListener('click', () => {
       museumOrder = b.dataset.order as typeof museumOrder;

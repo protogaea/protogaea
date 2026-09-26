@@ -170,6 +170,7 @@ button { font: inherit; color: inherit; }
 .exhibit .meta { font-size: 12px; color: var(--text-2); line-height: 1.5; }
 .exhibit .meta b { color: var(--text); font-weight: 600; }
 .exhibit a.last { font-size: 12px; display: inline-block; margin-top: 4px; }
+.exhibit .revive { height: 26px; padding: 0 10px; margin-top: 6px; font-size: 12px; }
 .chronicle { max-width: 760px; margin: 0 4px; display: grid; gap: 18px; }
 .chronicle article { border-left: 2px solid var(--line); padding: 2px 0 2px 16px; }
 .chronicle article.today { border-left-color: var(--accent); }

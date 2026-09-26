@@ -170,7 +170,7 @@ An invalid PoW blocks the key and the IP temporarily (candidate: 1 hour). The ve
 t_{E+1} = clamp(t_E × S_target / max(S_E, 1), t_E × 3/4, t_E × 5/4)
 ```
 
-`S_E` is the number of sparks accepted in epoch E. The arithmetic is integer-only (u128), rounding down, and the target never falls below 1 (**Proposed**, [`protocol/src/spark.rs`](../protocol/src/spark.rs)). The target bounds the verification load; it does not affect the price of a miracle, which is measured in work units.
+`S_E` is the number of sparks accepted in epoch E. The arithmetic is integer-only (u128), rounding down, and the target never falls below 1 (**Proposed**, [`protocol/src/spark.rs`](../protocol/src/spark.rs)). An epoch with no accepted sparks leaves the target unchanged (**Proposed**): it says nothing about the network, and raising the target through quiet epochs would let it drift to a value every hash meets, so the first miners to return would flood the intake with sparks worth one hash each. The target bounds the verification load; it does not affect the price of a miracle, which is measured in work units.
 
 ## 6. Spark log
 

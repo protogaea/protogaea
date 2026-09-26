@@ -112,8 +112,13 @@ pub fn parse_batch(bytes: &[u8]) -> Option<Vec<Spark>> {
 }
 
 /// The next epoch's target (protocol §5.7): toward [`TARGET_SPARKS`] accepted sparks, by at most
-/// a quarter either way. Integer arithmetic, rounding down (Proposed); never below 1.
+/// a quarter either way. Integer arithmetic, rounding down (Proposed); never below 1. An epoch with
+/// no sparks tells nothing about the network and leaves the target as it is (Proposed): otherwise
+/// a quiet world would drift to a target every hash meets, and the first miners would flood it.
 pub fn next_target(target: u64, accepted: u64) -> u64 {
+    if accepted == 0 {
+        return target;
+    }
     let t = u128::from(target);
     let want = t * u128::from(TARGET_SPARKS) / u128::from(accepted.max(1));
     let (low, high) = (t * 3 / 4, t * 5 / 4);
@@ -174,9 +179,10 @@ mod tests {
     fn target_moves_by_at_most_a_quarter() {
         assert_eq!(next_target(1000, TARGET_SPARKS), 1000);
         assert_eq!(next_target(1000, TARGET_SPARKS * 10), 750);
-        assert_eq!(next_target(1000, 0), 1250);
+        assert_eq!(next_target(1000, 0), 1000, "no sparks, no change");
+        assert_eq!(next_target(1000, 1), 1250);
         assert_eq!(next_target(1000, TARGET_SPARKS * 11 / 10), 909);
-        assert_eq!(next_target(u64::MAX, 0), u64::MAX);
+        assert_eq!(next_target(u64::MAX, 1), u64::MAX);
         assert_eq!(next_target(1, u64::MAX), 1);
     }
 }

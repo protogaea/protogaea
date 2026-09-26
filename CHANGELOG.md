@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Migration and revival wishes: from a clade's card and a museum exhibit in the viewer, and `wish migrate` / `wish revive` in the spark client. An epoch with no accepted sparks leaves the spark target unchanged, so a quiet world does not drift to sparks worth one hash.
 - Wishes and sparks in the viewer: a naturalist key in the browser, rain and drought wishes by a click on the map, sparks kindled on web workers with yespower in WebAssembly, every receipt checked, and "My wishes" with their status and work against the price. A spark for the window that just closed is refused as late (`E_WINDOW_CLOSED`) instead of banning its sender.
 - The ledger of spec §19 in the world server: the price of a miracle, the queue ranked by the share of the price covered, up to three miracles an epoch without conflicts, the price moving by an eighth over a floor (`--price-min`), the soft check when a window opens, miracles applied as the world steps and logged with their outcomes (`/v0/ledger`, `/v0/miracles`), and miracle events in the feed. The time machine replays miracles, and the map shows rain and drought miracles.
 - Miracles in the core (`miracle`): `weather`, `migrate` and `revive` with the hard checks, limits and cooldowns of spec §5, applied at the epoch boundary after the natural events (`step_epoch_with`, `Run::step_with`). Cooldowns enter `state_root` only while one runs, so worlds without miracles keep their roots; the rules gain `miracles`.

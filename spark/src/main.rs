@@ -2,6 +2,8 @@
 //!
 //!   protogaea-spark key                                   make a key (or show it)
 //!   protogaea-spark wish weather X Y rain|drought         make a wish with its first spark
+//!   protogaea-spark wish migrate CLADE FROM_X FROM_Y TO_X TO_Y
+//!   protogaea-spark wish revive museum|spores ENTRY X Y [i:j ...]
 //!   protogaea-spark mine PROPOSAL_ID [--threads N] [--minutes M]
 //!
 //! Options: --server URL (default http://127.0.0.1:8081), --key FILE (default protogaea-spark.key).
@@ -17,7 +19,7 @@ use std::time::{Duration, Instant};
 use protogaea_pow::{meets, spark_input, weight, SPARK};
 use protogaea_protocol::spark::{Spark, MAX_BATCH};
 use protogaea_protocol::sth::{Receipt, Sth};
-use protogaea_protocol::wish::{self, Action, Weather, Wish, MAX_LIFETIME};
+use protogaea_protocol::wish::{self, Action, Source, Weather, Wish, MAX_LIFETIME};
 use protogaea_protocol::{hex, Hash};
 use serde_json::{json, Value};
 
@@ -266,23 +268,51 @@ fn run() -> Result<()> {
             Ok(())
         }
         Some("wish") => {
-            let (kind, x, y, what) = (args.get(1), args.get(2), args.get(3), args.get(4));
-            if kind.map(String::as_str) != Some("weather") {
-                return Err("only `wish weather X Y rain|drought` for now".into());
-            }
-            let x: u8 = x.and_then(|v| v.parse().ok()).ok_or("X")?;
-            let y: u8 = y.and_then(|v| v.parse().ok()).ok_or("Y")?;
-            let kind = match what.map(String::as_str) {
-                Some("rain") => Weather::Rain,
-                Some("drought") => Weather::Drought,
-                _ => return Err("rain or drought".into()),
+            let n = |i: usize, what: &str| -> Result<u32> {
+                args.get(i)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| format!("{what}: a number"))
+            };
+            let action = match args.get(1).map(String::as_str) {
+                Some("weather") => Action::Weather {
+                    x: n(2, "X")? as u8,
+                    y: n(3, "Y")? as u8,
+                    kind: match args.get(4).map(String::as_str) {
+                        Some("rain") => Weather::Rain,
+                        Some("drought") => Weather::Drought,
+                        _ => return Err("rain or drought".into()),
+                    },
+                },
+                Some("migrate") => Action::Migrate {
+                    clade_id: n(2, "CLADE")?,
+                    from: (n(3, "FROM_X")? as u8, n(4, "FROM_Y")? as u8),
+                    to: (n(5, "TO_X")? as u8, n(6, "TO_Y")? as u8),
+                },
+                Some("revive") => Action::Revive {
+                    source: match args.get(2).map(String::as_str) {
+                        Some("museum") => Source::Museum,
+                        Some("spores") => Source::SporeBank,
+                        _ => return Err("museum or spores".into()),
+                    },
+                    entry_id: n(3, "ENTRY")?,
+                    at: (n(4, "X")? as u8, n(5, "Y")? as u8),
+                    // Edit steps as i:j, each moving one point from trait i to trait j.
+                    steps: args[6.min(args.len())..]
+                        .iter()
+                        .map(|s| {
+                            let (i, j) = s.split_once(':').ok_or("a step is i:j")?;
+                            Ok((i.parse().map_err(|_| "i")?, j.parse().map_err(|_| "j")?))
+                        })
+                        .collect::<Result<Vec<(u8, u8)>>>()?,
+                },
+                _ => return Err("wish weather X Y rain|drought | wish migrate CLADE FROM_X FROM_Y TO_X TO_Y | wish revive museum|spores ENTRY X Y [i:j ...]".into()),
             };
             let operator: [u8; 32] = unhex(client.get("/v0/operator")?["operator"].as_str().ok_or("no operator")?)?;
             let (w, raw) = window(&client)?;
             let wish = Wish {
                 world_id: w.world_id,
                 ruleset_id: unhex(raw["ruleset_id"].as_str().ok_or("no ruleset")?)?,
-                action: Action::Weather { x, y, kind },
+                action,
                 author: me,
                 created_epoch: w.epoch,
                 expires_epoch: w.epoch + MAX_LIFETIME,
@@ -361,7 +391,7 @@ fn run() -> Result<()> {
             stop.store(true, Ordering::Relaxed);
             Ok(())
         }
-        _ => Err("usage: protogaea-spark key | wish weather X Y rain|drought | mine PROPOSAL_ID [--threads N] [--minutes M] [--server URL] [--key FILE]".into()),
+        _ => Err("usage: protogaea-spark key | wish weather X Y rain|drought | wish migrate CLADE FROM_X FROM_Y TO_X TO_Y | wish revive museum|spores ENTRY X Y [i:j ...] | mine PROPOSAL_ID [--threads N] [--minutes M] [--server URL] [--key FILE]".into()),
     }
 }
 
