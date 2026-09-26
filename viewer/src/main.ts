@@ -12,6 +12,7 @@ import { renderTree } from './tree';
 import * as predictions from './predictions';
 import { track } from './visits';
 import * as timeMachine from './timemachine';
+import * as naturalist from './naturalist';
 import { parseFrames, stateOf } from './replay';
 
 // Permanent links live in the hash: #epoch=N&clade=ID&organism=ID. Without `epoch` the viewer is
@@ -616,9 +617,151 @@ map.onHover = (hover, x, y) => {
 };
 
 map.onPick = (p) => {
+  if (nat.picking !== undefined) {
+    const cell = p.kind === 'cell' ? p.cell : map.cellOfOrganism(p.id);
+    if (cell !== undefined) {
+      nat.chosen = { x: cell % world.width, y: Math.floor(cell / world.width), rain: nat.picking };
+      nat.picking = undefined;
+      banner(null);
+      renderNaturalist();
+    }
+    return;
+  }
   if (p.kind === 'organism') go({ epoch: route.epoch, organism: p.id });
   else go({ epoch: route.epoch });
 };
+
+// ---------------------------------------------------------------- the naturalist (stage C)
+
+const nat: {
+  open: boolean;
+  picking?: boolean;
+  chosen?: { x: number; y: number; rain: boolean };
+  progress?: naturalist.Progress;
+  error?: string;
+  wishes: naturalist.WishRow[];
+  price: bigint;
+  busy: boolean;
+} = { open: false, wishes: [], price: 0n, busy: false };
+
+const big = (n: bigint) => nf.format(Number(n));
+
+async function refreshWishes() {
+  try {
+    const [rows, l] = await Promise.all([naturalist.mine(), naturalist.ledger()]);
+    nat.wishes = rows;
+    nat.price = l.price;
+  } catch (e) {
+    nat.error = e instanceof Error ? e.message : String(e);
+  }
+  renderNaturalist();
+}
+
+async function renderNaturalist() {
+  const el = $('naturalist');
+  $('wish-btn').setAttribute('aria-pressed', String(nat.open));
+  if (!nat.open) {
+    el.hidden = true;
+    return;
+  }
+  const key = await naturalist.me();
+  const kind = (rain: boolean) => (rain ? t.wishRain : t.wishDrought);
+  const parts: string[] = [
+    `<div class="card-head"><h2>${t.naturalistTitle}</h2><button class="icon-btn close" aria-label="${t.close}"><i class="ph ph-x"></i></button></div>`,
+    `<div class="subtitle">${fmt(t.naturalistKey, { key: `<code>${key.slice(0, 8)}…${key.slice(-4)}</code>` })}</div>`,
+    `<div class="wish-kinds"><button class="btn" data-rain="1" aria-pressed="${nat.picking === true}"><i class="ph ph-cloud-rain"></i>${t.wishRain}</button><button class="btn" data-rain="0" aria-pressed="${nat.picking === false}"><i class="ph ph-sun"></i>${t.wishDrought}</button></div>`,
+  ];
+  if (nat.chosen) {
+    const c = nat.chosen;
+    parts.push(`<div class="wish-box">${fmt(t.wishPreview, { what: kind(c.rain), x: c.x, y: c.y, price: big(nat.price), threads: naturalist.threads() })}
+      <div class="actions"><button class="btn primary" id="wish-make"${nat.busy ? ' disabled' : ''}>${t.wishMake}</button><button class="btn" id="wish-cancel">${t.cancel}</button></div></div>`);
+  }
+  const p = nat.progress;
+  if (naturalist.mining() && p) {
+    parts.push(`<div class="wish-box">${fmt(t.kindling, { wish: `<code>${p.proposal.slice(0, 8)}</code>`, n: nf.format(p.accepted), work: big(p.work), rate: p.rate.toFixed(0) })}
+      <div class="actions"><button class="btn" id="wish-stop">${t.kindlingStop}</button></div></div>`);
+  }
+  if (nat.error) parts.push(`<div class="wish-box error">${esc(nat.error)}</div>`);
+  parts.push(`<h3 style="margin:14px 0 6px;font-size:13px">${t.myWishes}</h3>`);
+  if (nat.wishes.length === 0) parts.push(`<p class="empty">${t.noWishes}</p>`);
+  else
+    parts.push(
+      `<ul class="wish-list">${nat.wishes
+        .slice(0, 12)
+        .map((w) => {
+          const price = (nat.price * BigInt(w.price_mult)) / 100n;
+          const work = BigInt(w.work);
+          const pct = price > 0n ? Math.min(100, Number((work * 100n) / price)) : 0;
+          const live = w.status === 'open' || w.status === 'ready';
+          return `<li><div class="top"><span>${t.actionName[w.action] ?? w.action} <code>${w.id.slice(0, 8)}</code></span><span class="st ${w.status}">${t.status[w.status] ?? w.status}${w.reason ? `: ${esc(w.reason)}` : ''}</span></div>
+            ${live ? `<div class="bar"><i style="width:${pct}%"></i></div><div class="st">${fmt(t.wishWork, { work: big(work), price: big(price) })}</div>` : ''}
+            ${live && naturalist.mining() !== w.id ? `<button class="btn" data-support="${w.id}">${t.support}</button>` : ''}</li>`;
+        })
+        .join('')}</ul>`,
+    );
+  el.innerHTML = parts.join('');
+  el.hidden = false;
+  el.querySelector('.close')?.addEventListener('click', () => {
+    nat.open = false;
+    nat.picking = undefined;
+    renderNaturalist();
+  });
+  el.querySelectorAll<HTMLButtonElement>('.wish-kinds .btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      nat.picking = b.dataset.rain === '1';
+      nat.chosen = undefined;
+      banner(fmt(t.wishPick, { what: kind(nat.picking).toLowerCase() }));
+      if ((route.view ?? 'map') !== 'map') go({ ...route, view: 'map' });
+      renderNaturalist();
+    }),
+  );
+  el.querySelector('#wish-cancel')?.addEventListener('click', () => {
+    nat.chosen = undefined;
+    renderNaturalist();
+  });
+  el.querySelector('#wish-make')?.addEventListener('click', async () => {
+    const c = nat.chosen!;
+    nat.busy = true;
+    nat.error = undefined;
+    renderNaturalist();
+    try {
+      await naturalist.wish({ weather: { x: c.x, y: c.y, rain: c.rain } });
+      nat.chosen = undefined;
+      track('prediction', 'wish');
+    } catch (e) {
+      nat.error = e instanceof Error ? e.message : String(e);
+    }
+    nat.busy = false;
+    await refreshWishes();
+  });
+  el.querySelector('#wish-stop')?.addEventListener('click', () => {
+    naturalist.stop();
+    nat.progress = undefined;
+    renderNaturalist();
+  });
+  el.querySelectorAll<HTMLButtonElement>('[data-support]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      nat.error = undefined;
+      try {
+        await naturalist.support(b.dataset.support!);
+      } catch (e) {
+        nat.error = e instanceof Error ? e.message : String(e);
+      }
+      renderNaturalist();
+    }),
+  );
+}
+
+naturalist.onProgress((p) => {
+  if (p.forged) {
+    nat.error = t.forged;
+    nat.progress = undefined;
+  } else {
+    nat.progress = p;
+    if (p.error) nat.error = p.error;
+  }
+  renderNaturalist();
+});
 
 // ---------------------------------------------------------------- loading
 
@@ -1108,6 +1251,13 @@ async function boot() {
   window.addEventListener('hashchange', onRoute);
   $('replay-btn').querySelector('span')!.textContent = t.replayButton;
   $('replay-btn').addEventListener('click', () => playReplay());
+  $('wish-btn').querySelector('span')!.textContent = t.wishButton;
+  $('wish-btn').addEventListener('click', () => {
+    nat.open = !nat.open;
+    if (nat.open) refreshWishes();
+    else renderNaturalist();
+  });
+  window.setInterval(() => nat.open && refreshWishes(), 10000);
   $('season').addEventListener('click', (ev) => {
     const track = (ev.target as HTMLElement).closest<HTMLElement>('.season-track');
     if (!track) return;

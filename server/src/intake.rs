@@ -158,6 +158,9 @@ pub struct Intake {
     leaves: Vec<Hash>,
     seen: HashSet<Hash>,
     pub sth: Option<Sth>,
+    /// The window before the open one: a spark that fails the open window's PoW but passes this
+    /// one was only late (the client had not seen the change yet), not forged.
+    pub previous: Option<Ticket>,
     /// The floor of the price of a miracle, in work units (spec §19, `P_min`).
     pub price_min: u128,
 }
@@ -266,6 +269,7 @@ impl Intake {
             leaves: Vec::new(),
             seen: HashSet::new(),
             sth: None,
+            previous: None,
             price_min,
         })
     }
@@ -543,6 +547,14 @@ impl Intake {
             .collect::<Result<_, _>>()
             .map_err(err)?;
         drop(stmt);
+        if self.challenge != [0; 32] && self.epoch + 1 == epoch {
+            self.previous = Some(Ticket {
+                epoch: self.epoch,
+                challenge: self.challenge,
+                target: self.target,
+                world_id: self.world_id,
+            });
+        }
         self.epoch = epoch;
         self.challenge = challenge;
         self.target = target;

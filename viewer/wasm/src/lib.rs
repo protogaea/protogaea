@@ -313,6 +313,178 @@ pub extern "C" fn spark_bench(count: u32) {
     });
 }
 
+// ---------------------------------------------------------------- the spark client (stage C)
+
+fn hex_arr<const N: usize>(v: &serde_json::Value) -> Result<[u8; N], String> {
+    unhex_n(v.as_str().ok_or("expected a hex string")?)
+}
+
+fn unhex_n<const N: usize>(s: &str) -> Result<[u8; N], String> {
+    if s.len() != 2 * N || !s.is_ascii() {
+        return Err(format!("expected {N} bytes of hex"));
+    }
+    let mut out = [0u8; N];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+fn num(v: &serde_json::Value) -> Result<u64, String> {
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .ok_or_else(|| "expected a number".to_string())
+}
+
+/// The wish of `req.action`: `{"weather": {x, y, rain}}`, `{"migrate": {clade_id, from, to}}` or
+/// `{"revive": {museum, entry_id, steps, at}}`, with points as `[x, y]`.
+fn wish_of(req: &serde_json::Value) -> Result<protogaea_protocol::wish::Wish, String> {
+    use protogaea_protocol::wish::{Action, Source, Weather, Wish};
+    let point = |v: &serde_json::Value| -> Result<(u8, u8), String> {
+        let a = v.as_array().ok_or("a point is [x, y]")?;
+        Ok((num(&a[0])? as u8, num(&a[1])? as u8))
+    };
+    let a = &req["action"];
+    let action = if let Some(w) = a.get("weather") {
+        Action::Weather {
+            x: num(&w["x"])? as u8,
+            y: num(&w["y"])? as u8,
+            kind: if w["rain"].as_bool().unwrap_or(true) {
+                Weather::Rain
+            } else {
+                Weather::Drought
+            },
+        }
+    } else if let Some(m) = a.get("migrate") {
+        Action::Migrate {
+            clade_id: num(&m["clade_id"])? as u32,
+            from: point(&m["from"])?,
+            to: point(&m["to"])?,
+        }
+    } else if let Some(r) = a.get("revive") {
+        let steps = r["steps"]
+            .as_array()
+            .map(|s| s.iter().map(point).collect::<Result<Vec<_>, _>>())
+            .transpose()?
+            .unwrap_or_default();
+        Action::Revive {
+            source: if r["museum"].as_bool().unwrap_or(true) {
+                Source::Museum
+            } else {
+                Source::SporeBank
+            },
+            entry_id: num(&r["entry_id"])? as u32,
+            steps,
+            at: point(&r["at"])?,
+        }
+    } else {
+        return Err("no action".into());
+    };
+    let w = Wish {
+        world_id: hex_arr(&req["world_id"])?,
+        ruleset_id: hex_arr(&req["ruleset_id"])?,
+        action,
+        author: hex_arr(&req["author"])?,
+        created_epoch: num(&req["created_epoch"])?,
+        expires_epoch: num(&req["expires_epoch"])?,
+        hypothesis: None,
+        name: None,
+    };
+    w.check().map_err(|e| format!("{e:?}"))?;
+    Ok(w)
+}
+
+fn spark_op(req: &serde_json::Value) -> Result<serde_json::Value, String> {
+    use protogaea_protocol::spark::Spark;
+    use protogaea_protocol::sth::{Receipt, Sth};
+    use protogaea_protocol::wish;
+    match req["op"].as_str().unwrap_or("") {
+        "public" => Ok(json!({ "public": hex(&wish::public_key(&hex_arr(&req["secret"])?)) })),
+        "wish" => {
+            let w = wish_of(req)?;
+            let id = w.id();
+            let signature = wish::sign(&hex_arr(&req["secret"])?, &id);
+            Ok(json!({ "bytes": hex(&w.to_bytes()), "id": hex(&id), "signature": hex(&signature) }))
+        }
+        "mine" => {
+            // Tries `count` nonces from `nonce`; returns the sparks found and the next nonce.
+            let world_id: [u8; 16] = hex_arr(&req["world_id"])?;
+            let epoch = num(&req["epoch"])?;
+            let challenge: [u8; 32] = hex_arr(&req["challenge"])?;
+            let target = num(&req["target"])?;
+            let proposal_id: [u8; 32] = hex_arr(&req["proposal_id"])?;
+            let miner: [u8; 32] = hex_arr(&req["miner"])?;
+            let (mut nonce, count) = (num(&req["nonce"])?, num(&req["count"])?);
+            let mut found = Vec::new();
+            SPARK_HASHER.with(|h| {
+                let mut h = h.borrow_mut();
+                let hasher =
+                    h.get_or_insert_with(|| protogaea_pow::Hasher::new(protogaea_pow::SPARK));
+                for _ in 0..count {
+                    let s = Spark {
+                        proposal_id,
+                        miner,
+                        nonce,
+                    };
+                    if s.check(hasher, &world_id, epoch, &challenge, target)
+                        .is_some()
+                    {
+                        found.push(hex(&s.to_bytes()));
+                    }
+                    nonce = nonce.wrapping_add(1);
+                }
+            });
+            Ok(json!({ "found": found, "next": nonce.to_string() }))
+        }
+        "receipt" => {
+            let r = &req["receipt"];
+            let s = &r["sth"];
+            let path = r["path"]
+                .as_array()
+                .ok_or("no path")?
+                .iter()
+                .map(hex_arr::<32>)
+                .collect::<Result<Vec<_>, _>>()?;
+            let receipt = Receipt {
+                spark: Spark::from_bytes(&hex_arr::<72>(&req["spark"])?),
+                leaf_index: num(&r["leaf_index"])?,
+                sth: Sth {
+                    epoch: num(&s["epoch"])?,
+                    tree_size: num(&s["tree_size"])?,
+                    root: hex_arr(&s["root"])?,
+                    timestamp_ms: num(&s["timestamp_ms"])?,
+                    signature: hex_arr(&s["signature"])?,
+                },
+                path,
+            };
+            Ok(json!({ "ok": receipt.verify(&hex_arr(&req["operator"])?) }))
+        }
+        other => Err(format!("no such operation: {other}")),
+    }
+}
+
+/// The spark client's operations, JSON in and out: `public`, `wish`, `mine`, `receipt`. Returns
+/// 0 with the answer in the output, or -1 with the error.
+///
+/// # Safety
+/// `ptr` must point to `len` initialized bytes.
+#[no_mangle]
+pub unsafe extern "C" fn spark_api(ptr: *const u8, len: usize) -> i32 {
+    let result = serde_json::from_slice::<serde_json::Value>(std::slice::from_raw_parts(ptr, len))
+        .map_err(|e| e.to_string())
+        .and_then(|req| spark_op(&req));
+    match result {
+        Ok(v) => {
+            put(serde_json::to_vec(&v).expect("JSON"));
+            0
+        }
+        Err(e) => {
+            put(e.into_bytes());
+            -1
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn out_ptr() -> *const u8 {
     OUT.with(|o| o.borrow().as_ptr())
@@ -368,6 +540,57 @@ mod tests {
             assert_eq!(check(&changed, &root), Ok(false));
         }
         assert!(check(&proof, "zz").is_err());
+    }
+
+    /// The spark client's operations: a signed wish that the protocol accepts, mining that finds
+    /// sparks under an easy target, and a receipt checked against the operator's key.
+    #[test]
+    fn spark_api_operations() {
+        use protogaea_protocol::{log, spark::Spark, sth::Sth, wish};
+        let secret = [5u8; 32];
+        let author = hex(&wish::public_key(&secret));
+        let req = json!({
+            "op": "wish", "secret": hex(&secret), "author": author,
+            "world_id": hex(&[1u8; 16]), "ruleset_id": hex(&[2u8; 32]),
+            "created_epoch": 10, "expires_epoch": 298,
+            "action": { "weather": { "x": 3, "y": 4, "rain": true } },
+        });
+        let w = spark_op(&req).unwrap();
+        let bytes: Vec<u8> = (0..w["bytes"].as_str().unwrap().len() / 2)
+            .map(|i| {
+                u8::from_str_radix(&w["bytes"].as_str().unwrap()[2 * i..2 * i + 2], 16).unwrap()
+            })
+            .collect();
+        let parsed = wish::Wish::from_bytes(&bytes).unwrap();
+        let sig: [u8; 64] = unhex_n(w["signature"].as_str().unwrap()).unwrap();
+        assert_eq!(wish::verify(&parsed.author, &parsed.id(), &sig), Ok(()));
+
+        let mine = spark_op(&json!({
+            "op": "mine", "world_id": hex(&[1u8; 16]), "epoch": 10, "challenge": hex(&[3u8; 32]),
+            "target": (u64::MAX / 4).to_string(), "proposal_id": w["id"], "miner": author,
+            "nonce": "0", "count": 20,
+        }))
+        .unwrap();
+        let found = mine["found"].as_array().unwrap();
+        assert!(!found.is_empty(), "a quarter of hashes are sparks");
+        assert_eq!(mine["next"], "20");
+
+        let spark_hex = found[0].as_str().unwrap();
+        let spark = Spark::from_bytes(&unhex_n::<72>(spark_hex).unwrap());
+        let operator = [9u8; 32];
+        let leaves = vec![log::leaf_hash(&spark.leaf(10))];
+        let sth = Sth::sign(&operator, 10, 1, log::root(&leaves), 7);
+        let receipt = json!({
+            "leaf_index": 0, "path": [],
+            "sth": { "epoch": 10, "tree_size": 1, "root": hex(&sth.root), "timestamp_ms": 7, "signature": hex(&sth.signature) },
+        });
+        let ok = spark_op(&json!({ "op": "receipt", "receipt": receipt, "spark": spark_hex, "operator": hex(&wish::public_key(&operator)) })).unwrap();
+        assert_eq!(ok["ok"], true);
+        let other = spark_op(
+            &json!({ "op": "receipt", "receipt": receipt, "spark": spark_hex, "operator": author }),
+        )
+        .unwrap();
+        assert_eq!(other["ok"], false);
     }
 
     /// A world resumed from its snapshot and stepped goes exactly where the original went.

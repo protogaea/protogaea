@@ -963,6 +963,7 @@ version = "0.0.1"
 dependencies = [
  "protogaea-core",
  "protogaea-pow",
+ "protogaea-protocol",
  "serde",
  "serde_json",
 ]

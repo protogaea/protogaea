@@ -139,7 +139,7 @@ Algorithm: yespower 1.0, `N = 2048`, `r = 32`, `pers = "PROTOGAEA/SPARK/V0"` —
 
 A batch contains up to 64 sparks. Each spark is `{proposal_id (32 B), miner_pubkey (32 B), nonce (8 B)}` — 72 bytes; the epoch is the one whose window is open. Sparks are not signed: the key is part of the PoW input.
 
-TBD: whether to include the epoch explicitly (80 bytes) to remove any ambiguity at window boundaries.
+Window boundaries (**Proposed**): the epoch stays implicit (72 bytes). A spark that fails the PoW of the open window but passes that of the window just closed was sent late, not forged: the server refuses it with `E_WINDOW_CLOSED` and does not ban its sender. Without this, an honest client that has not yet seen the window change would be banned; the cost is one more hash for invalid sparks only.
 
 ### 5.5 Spark identifier (Proposed)
 

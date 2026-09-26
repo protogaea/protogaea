@@ -188,18 +188,37 @@ fn pow(t: &Ticket, s: &Spark) -> Option<u64> {
     meets(&hash, t.target).then(|| weight(t.target))
 }
 
-/// Checks the PoW of sparks on the checking threads. `None` when the queue is full.
-async fn check_pow(t: Ticket, sparks: Vec<Spark>) -> Option<Vec<Option<u64>>> {
+/// What the PoW check found: a spark with its weight, a spark for the window that just closed,
+/// or no spark at all.
+#[derive(Clone, Copy)]
+enum Pow {
+    Valid(u64),
+    Late,
+    Invalid,
+}
+
+/// Checks the PoW of sparks on the checking threads. `None` when the queue is full. A spark that
+/// fails the open window is checked against the one before, so a client that has not yet seen
+/// the window change is told it is late instead of being banned.
+async fn check_pow(t: Ticket, previous: Option<Ticket>, sparks: Vec<Spark>) -> Option<Vec<Pow>> {
     let n = sparks.len();
     if QUEUED.fetch_add(n, Ordering::SeqCst) + n > QUEUE {
         QUEUED.fetch_sub(n, Ordering::SeqCst);
         return None;
     }
     let permit = CHECKERS.acquire().await.expect("the semaphore stays open");
-    let out =
-        tokio::task::spawn_blocking(move || sparks.iter().map(|s| pow(&t, s)).collect::<Vec<_>>())
-            .await
-            .ok();
+    let out = tokio::task::spawn_blocking(move || {
+        sparks
+            .iter()
+            .map(|s| match pow(&t, s) {
+                Some(w) => Pow::Valid(w),
+                None if previous.is_some_and(|p| pow(&p, s).is_some()) => Pow::Late,
+                None => Pow::Invalid,
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .ok();
     drop(permit);
     QUEUED.fetch_sub(n, Ordering::SeqCst);
     out
@@ -299,14 +318,14 @@ async fn propose(
         return refuse(Refusal::Format);
     };
     let spark = Spark::from_bytes(&spark);
-    let (w, ticket) = {
+    let (w, ticket, previous) = {
         let intake = api.intake.lock().expect("the lock is never poisoned");
         let w = match intake.precheck_wish(&bytes, &sig) {
             Ok(w) => w,
             Err(r) => return refuse(r),
         };
         match intake.ticket() {
-            Ok(t) => (w, t),
+            Ok(t) => (w, t, intake.previous),
             Err(r) => return refuse(r),
         }
     };
@@ -321,12 +340,16 @@ async fn propose(
             return refuse(Refusal::ActionInvalid(why));
         }
     }
-    let Some(checked) = check_pow(ticket, vec![spark]).await else {
+    let Some(checked) = check_pow(ticket, previous, vec![spark]).await else {
         return overloaded();
     };
-    let Some(weight) = checked[0] else {
-        ban(&ip, &spark.miner);
-        return refuse(Refusal::PowInvalid);
+    let weight = match checked[0] {
+        Pow::Valid(w) => w,
+        Pow::Late => return refuse(Refusal::WindowClosed),
+        Pow::Invalid => {
+            ban(&ip, &spark.miner);
+            return refuse(Refusal::PowInvalid);
+        }
     };
     let mut intake = api.intake.lock().expect("the lock is never poisoned");
     if let Err(r) = intake.precheck_wish(&bytes, &sig) {
@@ -378,13 +401,17 @@ async fn sparks(
             return refuse(Refusal::Limit);
         }
     }
-    let (ticket, pre): (Ticket, Vec<Result<(), Refusal>>) = {
+    let (ticket, previous, pre): (Ticket, Option<Ticket>, Vec<Result<(), Refusal>>) = {
         let intake = api.intake.lock().expect("the lock is never poisoned");
         let ticket = match intake.ticket() {
             Ok(t) => t,
             Err(r) => return refuse(r),
         };
-        (ticket, batch.iter().map(|s| intake.precheck(s)).collect())
+        (
+            ticket,
+            intake.previous,
+            batch.iter().map(|s| intake.precheck(s)).collect(),
+        )
     };
     let to_check: Vec<Spark> = batch
         .iter()
@@ -392,15 +419,18 @@ async fn sparks(
         .filter(|(_, p)| p.is_ok())
         .map(|(s, _)| *s)
         .collect();
-    let Some(checked) = check_pow(ticket, to_check.clone()).await else {
+    let Some(checked) = check_pow(ticket, previous, to_check.clone()).await else {
         return overloaded();
     };
     let mut passed = Vec::new();
     let mut verdict: HashMap<Spark, Result<(), Refusal>> = HashMap::new();
     for (s, w) in to_check.iter().zip(&checked) {
         match w {
-            Some(w) => passed.push((*s, *w)),
-            None => {
+            Pow::Valid(w) => passed.push((*s, *w)),
+            Pow::Late => {
+                verdict.insert(*s, Err(Refusal::WindowClosed));
+            }
+            Pow::Invalid => {
                 ban(&ip, &s.miner);
                 verdict.insert(*s, Err(Refusal::PowInvalid));
             }
