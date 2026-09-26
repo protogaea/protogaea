@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The Season 1 numbers from the parameter search, checked on fresh seeds: `hunt_hunger_pct` 70, `kin_distance` 1, `mutation_ppm` 140,000, `weights.habitat_bonus` 300. Every health check now passes on 91–100% of seeds, and about twice as many stories are told. The world stays 64 × 64.
+- The arms race is told from two three-day windows with enough hunters in both, instead of noisy daily means.
 - Stage B7, part 2: comparing two moments, inclusion proofs checked in the browser by the WebAssembly core, and the stories and the event feed of a past epoch (`until=` on `/v0/stories` and `/v0/events`).
 - Stage B7, part 1: the time machine. The core compiled to WebAssembly (`viewer/wasm`, `protogaea-wasm`) recomputes any past epoch in the browser from the nearest earlier snapshot and checks its `state_root` against the server's log; the season timeline opens any moment, and arrow keys step through epochs.
 - A welcome for first-time viewers in the viewer, and fixes for phones (the welcome and the digest over the whole screen, the replay button clear of the tabs).

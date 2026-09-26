@@ -182,3 +182,16 @@ Measured on 2026-09-26 over full 42-day seasons on fresh seeds 101 to 113 (12 se
 
 Season 1 stays at 64 × 64 unless the core gets about 2.5 times faster.
 
+## Findings (stage A3: the Season 1 numbers)
+
+The parameter screen (`search.py screen`, 24 one-parameter changes on seeds 1 to 13) was noisy at 12 seeds, so its five best changes were combined and checked on fresh seeds 201 to 213 that the screen never saw (2026-09-26):
+
+| Variant | Checks passed (mean of 11) | 6+ clades of 20+ 95% of the time | Continents apart at the end | Stories per world day |
+|---|---|---|---|---|
+| defaults before | 9.83 | 75% | 75% | 4.2 |
+| hunting at 70% energy + plague mortality 65% | 10.25 | 100% | 92% | 5.7 |
+| all five changes | 10.75 | 92% | 83% | 6.9 |
+| all but the plague change | **10.75** | **100%** | **92%** | **8.0** |
+
+The last one is now the default: `hunt_hunger_pct` 60 → 70, `kin_distance` 2 → 1, `mutation_ppm` 100,000 → 140,000, `weights.habitat_bonus` 200 → 300. Every check passes on 91–100% of seeds (a changing leader every 3 days went from 58% to 91%), and every kind of story is told more often: new leaders 50 a season against 23, invasions 59 against 34, the last of a great clade 37 against 22. A world day still takes 11.6 s (p95 epoch 57 ms).
+

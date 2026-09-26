@@ -166,8 +166,8 @@ The six traits `M`–`F` always sum to `trait_budget` (24), so one grows only at
 | `bite_per_point`, `plant_efficiency` | TBD |
 | `attack_weight`, `defense_weight`, `roll_span`, `attack_cost` | TBD |
 | `predation_efficiency`, `body_value` | TBD |
-| `kin_distance` | 2 — no attacks on organisms within this genome distance |
-| `hunt_hunger_pct` | 60 — hunting only while energy is below this share of `energy_max` |
+| `kin_distance` | 1 — no attacks on organisms within this genome distance (2 until the Season 1 tuning) |
+| `hunt_hunger_pct` | 70 — hunting only while energy is below this share of `energy_max` (60 until the Season 1 tuning) |
 | `cover` | forest 12, swamp 10, mountains 14, open land 0 — a defense bonus in the biome |
 
 Attack and defense:

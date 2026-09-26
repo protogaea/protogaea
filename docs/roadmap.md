@@ -22,7 +22,7 @@ These decisions come from [spec §31](spec/spec-v0.2.md#31-decisions-to-make-bef
 | # | Decision | Status |
 |---|---|---|
 | 1 | Final PoW algorithm and parameters, after benchmarks on x86-64, ARM64 and GPUs | Open |
-| 2 | `ruleset` numbers from the balance harness; Season 1 seed selection criteria | Open — needs stage A |
+| 2 | `ruleset` numbers from the balance harness; Season 1 seed selection criteria | Numbers chosen from the harness on 2026-09-26 ([findings](../harness/README.md#findings-stage-a3-the-season-1-numbers)); the world stays 64 × 64. Seed selection criteria open |
 | 3 | Beacon network, the "window close → round number" rule, the delay rule; independent watchers | Open |
 | 4 | Formats of receipts, STHs and headers; log mirrors; OpenTimestamps cadence | Open — see the [protocol draft](protocol.md) |
 | 5 | The root dictionary for names and the hypothesis templates | Open |
