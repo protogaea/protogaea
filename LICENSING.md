@@ -2,9 +2,13 @@
 
 ## Today
 
-Everything currently in this repository — the specification and the documentation — is licensed under the [Apache License 2.0](LICENSE), unless a file or directory says otherwise.
+Everything in this repository is licensed under the [Apache License 2.0](LICENSE), unless a file or directory says otherwise. That covers the specification, the documentation, the simulation core (`core/`) and the balance harness (`harness/`).
 
-The one exception today is [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): it is the Contributor Covenant 2.1, which is licensed under CC BY 4.0, with our contact details added.
+The exceptions:
+
+- [`server/`](server/LICENSE) (the world server) and [`viewer/`](viewer/LICENSE) (the web viewer) are licensed under the **GNU Affero General Public License v3.0 only** (`AGPL-3.0-only`), as planned below: anyone who runs a modified copy as a public service must publish their changes.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is the Contributor Covenant 2.1, licensed under CC BY 4.0, with our contact details added.
+- The viewer's third-party parts keep their own licenses: PixiJS (MIT), the Geist fonts (SIL Open Font License 1.1) and Phosphor icons (MIT).
 
 ## Planned licenses per component
 
@@ -18,7 +22,7 @@ These follow [spec §26](docs/spec/spec-v0.2.md#26-openness-licenses-and-languag
 | Root dictionary, text templates, artwork | CC BY-SA 4.0 (candidate) | Reusable with attribution |
 | Name and logo | Not licensed | See the [trademark policy](TRADEMARKS.md) |
 
-Components under Apache-2.0, such as `core/` and `harness/`, use the root `LICENSE` and declare `license = "Apache-2.0"` in their manifests. AGPL-3.0 components will carry their own `LICENSE` file. Where a directory has no `LICENSE` file, the root Apache-2.0 license applies.
+Components under Apache-2.0, such as `core/` and `harness/`, use the root `LICENSE` and declare `license = "Apache-2.0"` in their manifests. AGPL-3.0 components, `server/` and `viewer/`, carry their own `LICENSE` file and declare `AGPL-3.0-only` in their manifests. Where a directory has no `LICENSE` file, the root Apache-2.0 license applies.
 
 ## Contributions
 

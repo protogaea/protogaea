@@ -111,7 +111,7 @@ The project is in pre-alpha, so we are **not accepting pull requests yet**. Feed
 
 ## License
 
-The current contents of this repository are licensed under the [Apache License 2.0](LICENSE). Some components are planned to use different licenses — for example, AGPL-3.0 for the server and the web application — as described in [LICENSING.md](LICENSING.md). The name and logo are covered by the [trademark policy](TRADEMARKS.md).
+The specification, the documentation, the simulation core and the balance harness are licensed under the [Apache License 2.0](LICENSE). The world server and the web viewer are licensed under the [GNU AGPL v3.0](server/LICENSE), so anyone who runs a modified copy as a public service must publish their changes. Details are in [LICENSING.md](LICENSING.md). The name and logo are covered by the [trademark policy](TRADEMARKS.md).
 
 ## The name
 

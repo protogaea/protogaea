@@ -52,6 +52,10 @@ Nothing the server records is part of consensus (spec §22): all of it can be re
 
 Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
+## License
+
+The world server is licensed under the GNU Affero General Public License v3.0 only ([LICENSE](LICENSE)); the rest of the repository is under Apache-2.0 ([LICENSING.md](../LICENSING.md)).
+
 ## Building
 
 The server needs a C compiler for the bundled SQLite — on Windows either the MSVC toolchain, or the GNU toolchain with MSYS2's `gcc` and `dlltool` on `PATH` (`C:\msys64\ucrt64\bin`) — so a plain `cargo build` at the workspace root leaves it out (`default-members`); build it with `-p protogaea-server`. CI builds and tests it on Linux. A systemd unit is in [`deploy/protogaea-server.service`](../deploy/protogaea-server.service).

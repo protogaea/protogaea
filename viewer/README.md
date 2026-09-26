@@ -24,3 +24,7 @@ npm run build    # dist/, for protogaea-server --viewer viewer/dist
 - **Permanent links** in the hash: `#epoch=N` opens an archived snapshot, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
 
 The interface is in English and Russian, following the browser's language, and follows the system's light or dark theme.
+
+## License
+
+The viewer is licensed under the GNU Affero General Public License v3.0 only ([LICENSE](LICENSE)). It bundles PixiJS (MIT), the Geist fonts (SIL Open Font License 1.1) and Phosphor icons (MIT) under their own licenses.

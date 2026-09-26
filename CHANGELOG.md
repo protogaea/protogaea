@@ -34,6 +34,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- The world server and the viewer are licensed under AGPL-3.0-only, as planned in LICENSING.md and spec §26; the core, the harness and the documentation stay under Apache-2.0.
 - Specification §28: at least 6 clades of 20+ must hold during 95% of the time after day 3 instead of at every moment, so a brief dip while the continent breaks up does not fail a diverse season.
 - Specification §28: divergence after the breakup is judged by the continents' fauna — clade makeup at least 80% apart and mean hues at least 30° apart at the end of the season — instead of the growth of the distance between dominant clades' traits, which converge under the same rules.
 
