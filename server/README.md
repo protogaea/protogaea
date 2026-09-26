@@ -53,4 +53,4 @@ Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
 ## Building
 
-The server needs a C compiler for the bundled SQLite and, on Windows, the MSVC toolchain, so a plain `cargo build` at the workspace root leaves it out (`default-members`); build it with `-p protogaea-server`. CI builds and tests it on Linux. A systemd unit is in [`deploy/protogaea-server.service`](../deploy/protogaea-server.service).
+The server needs a C compiler for the bundled SQLite — on Windows either the MSVC toolchain, or the GNU toolchain with MSYS2's `gcc` and `dlltool` on `PATH` (`C:\msys64\ucrt64\bin`) — so a plain `cargo build` at the workspace root leaves it out (`default-members`); build it with `-p protogaea-server`. CI builds and tests it on Linux. A systemd unit is in [`deploy/protogaea-server.service`](../deploy/protogaea-server.service).
