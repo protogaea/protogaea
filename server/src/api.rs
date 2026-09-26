@@ -570,30 +570,38 @@ async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
 #[derive(Deserialize)]
 struct DigestQuery {
     since: u64,
+    /// Up to this epoch instead of the latest: a past world day, for the chronicle.
+    until: Option<u64>,
 }
 
 /// "While you were away" (spec §7): what changed since an epoch the viewer last saw.
 async fn digest(State(api): State<Api>, Query(q): Query<DigestQuery>) -> Reply {
-    let (now, header) = {
+    let (latest, live_header) = {
         let live = api.live.read().expect("the lock is never poisoned");
         (
             live.world.epoch,
             serde_json::to_value(&live.header).unwrap_or(Value::Null),
         )
     };
+    let now = q.until.unwrap_or(latest).min(latest);
     let since = q.since.min(now);
-    let (then, counts, bridges, stories, names) = read(&api, move |c| {
+    let (then, past_header, counts, bridges, stories, names) = read(&api, move |c| {
         let then = store::header(c, since)?;
-        let counts = store::event_counts(c, since)?;
-        let bridges = store::events_since(c, since, "bridge_closed")?;
-        let stories = varied(store::stories(c, since + 1, u64::MAX, 300)?, 6);
+        let past_header = if now < latest {
+            store::header(c, now)?
+        } else {
+            None
+        };
+        let counts = store::event_counts(c, since, now)?;
+        let bridges = store::events_since(c, since, now, "bridge_closed")?;
+        let stories = varied(store::stories(c, since + 1, now, 300)?, 6);
         let mut ids: Vec<u32> = stories
             .iter()
             .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
             .flatten()
             .map(|id| id as u32)
             .collect();
-        for h in [then.as_ref(), None].into_iter().flatten() {
+        for h in [then.as_ref(), past_header.as_ref()].into_iter().flatten() {
             if let Some(d) = h["dominant_clade"].as_u64() {
                 ids.push(d as u32);
             }
@@ -601,9 +609,10 @@ async fn digest(State(api): State<Api>, Query(q): Query<DigestQuery>) -> Reply {
         ids.sort_unstable();
         ids.dedup();
         let names = store::clade_names(c, &ids)?;
-        Ok((then, counts, bridges, stories, names))
+        Ok((then, past_header, counts, bridges, stories, names))
     })
     .await?;
+    let header = past_header.unwrap_or(live_header);
     let mut names: serde_json::Map<String, Value> = names
         .into_iter()
         .map(|(id, n)| (id.to_string(), Value::String(n)))

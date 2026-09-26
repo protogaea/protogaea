@@ -144,6 +144,23 @@ button { font: inherit; color: inherit; }
 .tab[aria-selected='true'] i { color: var(--accent); }
 .pane { position: absolute; inset: 0; background: var(--bg); padding: 64px 12px 12px; }
 .pane.scroll { overflow-y: auto; }
+.museum-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 4px 14px; font-size: 13px; color: var(--text-2); }
+.museum-bar .btn[aria-pressed="true"] { border-color: var(--accent); color: var(--text); }
+.museum-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin: 0 4px; }
+.exhibit { display: grid; grid-template-columns: 44px 1fr; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.exhibit .avatar { width: 44px; height: 44px; border-radius: 10px; filter: grayscale(0.6); }
+.exhibit h4 { margin: 0 0 2px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.exhibit .meta { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.exhibit .meta b { color: var(--text); font-weight: 600; }
+.exhibit a.last { font-size: 12px; display: inline-block; margin-top: 4px; }
+.chronicle { max-width: 760px; margin: 0 4px; display: grid; gap: 18px; }
+.chronicle article { border-left: 2px solid var(--line); padding: 2px 0 2px 16px; }
+.chronicle article.today { border-left-color: var(--accent); }
+.chronicle h3 { margin: 0 0 6px; font-size: 15px; color: var(--text); display: flex; gap: 10px; align-items: baseline; }
+.chronicle h3 .phase { font-size: 12px; color: var(--text-3); font-weight: 500; }
+.chronicle p { margin: 0 0 8px; color: var(--text-2); font-size: 14px; line-height: 1.55; }
+.chronicle .stories { margin: 8px 0; }
+.chronicle .open { font-size: 12px; }
 .pane .hint { max-width: 720px; margin: 0 4px 10px; color: var(--text-2); font-size: 13px; }
 .pane .chart { position: absolute; inset: 110px 12px 12px; }
 .muller-svg, .tree-svg { display: block; font: 11px var(--font); }

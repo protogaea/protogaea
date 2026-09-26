@@ -203,6 +203,18 @@ export const api = {
     if (!res.ok) throw new ApiError(res.status, 'E_NO_SNAPSHOT', `no snapshot at epoch ${n}`);
     return res.arrayBuffer();
   },
+  museum: () => get<{ museum: CladeInfo[] }>('/v0/museum?limit=2000'),
+  digestRange: (since: number, until: number) =>
+    get<{
+      since: number;
+      now: number;
+      then: Header | null;
+      header: Header;
+      counts: Record<string, number>;
+      bridges_closed: WorldEvent[];
+      stories: StoryRow[];
+      names: Record<string, string>;
+    }>(`/v0/digest?since=${since}&until=${until}`),
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),

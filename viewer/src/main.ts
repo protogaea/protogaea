@@ -27,7 +27,7 @@ type Kind = 'grazer' | 'armored' | 'hunter';
 const kindOf = (traits: number[]): Kind => (traits[3] >= 4 ? 'hunter' : traits[4] >= 6 ? 'armored' : 'grazer');
 const portrait = (kind: Kind, cls = 'portrait') => `<img class="${cls}" src="${import.meta.env.BASE_URL}archetypes/${kind}.webp" alt="" width="36" height="36">`;
 
-type View = 'map' | 'muller' | 'tree';
+type View = 'map' | 'muller' | 'tree' | 'museum' | 'chronicle';
 
 interface Route {
   epoch?: number;
@@ -46,7 +46,7 @@ function readRoute(): Route {
     epoch: num('epoch'),
     clade: num('clade'),
     organism: num('organism'),
-    view: view === 'muller' || view === 'tree' ? view : undefined,
+    view: view === 'muller' || view === 'tree' || view === 'museum' || view === 'chronicle' ? view : undefined,
     cmp: num('cmp'),
   };
 }
@@ -119,6 +119,7 @@ function banner(html: string | null, error = false) {
 
 function duration(epochs: number): string {
   const minutes = (epochs * 24 * 60) / world.epochs_per_day;
+  if (minutes >= 48 * 60) return fmt(t.daysShort, { d: (minutes / 1440).toFixed(1) });
   return minutes >= 90 ? fmt(t.hours, { h: Math.round(minutes / 60) }) : fmt(t.minutes, { m: Math.round(minutes) });
 }
 
@@ -679,6 +680,102 @@ function stepBy(by: number) {
   go({ ...route, epoch: target >= latest ? undefined : target });
 }
 
+// ---------------------------------------------------------------- the museum and the chronicle (B7)
+
+let museumOrder: 'great' | 'recent' = 'great';
+
+async function renderMuseum() {
+  const host = $('museum');
+  const { museum } = await api.museum();
+  for (const c of museum) if (c.name) names.set(c.id, c.name);
+  const rows = museum.slice().sort((a, b) => (museumOrder === 'great' ? b.peak_living - a.peak_living : (b.extinct_epoch ?? 0) - (a.extinct_epoch ?? 0)));
+  const order = (o: typeof museumOrder, label: string) => `<button class="btn" data-order="${o}" aria-pressed="${museumOrder === o}">${label}</button>`;
+  host.innerHTML = `<p class="hint">${t.museumHint}</p>
+    <div class="museum-bar"><span>${fmt(t.museumCount, { n: nf.format(rows.length) })}</span>${order('great', t.museumGreat)}${order('recent', t.museumRecent)}</div>
+    ${
+      rows.length === 0
+        ? `<p class="empty" style="margin:0 4px">${t.museumEmpty}</p>`
+        : `<div class="museum-grid">${rows
+            .slice(0, 300)
+            .map((c) => {
+              const died = c.extinct_epoch ?? 0;
+              const last = Math.max(0, died - 1);
+              return `<div class="exhibit">${portrait(kindOf(c.reference.traits), 'avatar')}<div>
+                <h4><span class="swatch" style="background:${css(hueColor(c.reference.hue))}"></span><a href="${link({ ...route, clade: c.id, organism: undefined })}">${cladeLabel(c.id)}</a></h4>
+                <div class="meta">${fmt(t.museumLived, { from: dayOf(c.founded_epoch).toFixed(1), to: dayOf(died).toFixed(1), time: duration(died - c.founded_epoch) })}<br>
+                <b>${fmt(t.museumPeak, { n: nf.format(c.peak_living) })}</b> · ${t.habitats[c.reference.habitat] ?? '?'}</div>
+                <a class="last" href="${link({ epoch: last >= world.header.epoch ? undefined : last, clade: c.id, view: 'map' })}">${t.museumLast}</a>
+              </div></div>`;
+            })
+            .join('')}</div>`
+    }`;
+  host.querySelectorAll<HTMLButtonElement>('.museum-bar .btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      museumOrder = b.dataset.order as typeof museumOrder;
+      renderMuseum();
+    }),
+  );
+}
+
+let chronicleDays = 7;
+
+async function renderChronicle() {
+  const host = $('chronicle');
+  const per = world.epochs_per_day;
+  const now = route.epoch ?? world.header.epoch;
+  const today = Math.floor(now / per);
+  const first = Math.max(0, today - chronicleDays + 1);
+  const days: number[] = [];
+  for (let d = today; d >= first; d--) days.push(d);
+  const digests = await Promise.all(days.map((d) => api.digestRange(d * per, Math.min((d + 1) * per, now)).catch(() => null)));
+  const pct = (h: Header) => (h.dominant_permille / 10).toFixed(0);
+  const articles = days.map((d, i) => {
+    const g = digests[i];
+    if (!g || !g.then) return '';
+    learnNames(g.names);
+    const a = g.then;
+    const b = g.header;
+    const partial = g.now < (d + 1) * per;
+    const change = b.population - a.population;
+    const lines: string[] = [];
+    const big = Math.max(20, a.population / 20);
+    lines.push(
+      fmt(change > big ? t.chronicleGrew : change < -big ? t.chronicleShrank : t.chronicleSteady, { a: nf.format(a.population), b: nf.format(b.population) }),
+    );
+    lines.push(
+      a.dominant_clade !== b.dominant_clade
+        ? fmt(t.chronicleLeaderNew, { clade: cladeLabel(b.dominant_clade), other: cladeLabel(a.dominant_clade), pct: pct(b) })
+        : fmt(t.chronicleLeaderKept, { clade: cladeLabel(b.dominant_clade), pct: pct(b) }),
+    );
+    if (g.counts.clade_named) lines.push(fmt(t.chronicleNamed, { n: g.counts.clade_named }));
+    if (g.bridges_closed.length) lines.push(fmt(t.chronicleBridges, { list: g.bridges_closed.map((e) => e.data.bridge).join(', ') }));
+    const nature = (
+      [
+        ['wildfire', t.natureWildfire],
+        ['drought', t.natureDrought],
+        ['flood', t.natureFlood],
+        ['plague', t.naturePlague],
+      ] as [string, string][]
+    )
+      .filter(([k]) => g.counts[k])
+      .map(([k, label]) => fmt(label, { n: g.counts[k] }));
+    if (nature.length) lines.push(fmt(t.chronicleNature, { list: nature.join(', ') }));
+    const phase = t.phases[b.phase - 1] ?? b.phase_name;
+    return `<article class="${partial ? 'today' : ''}">
+      <h3>${fmt(partial ? t.chronicleToday : t.chronicleDay, { day: d })}<span class="phase">${esc(phase)}</span></h3>
+      <p>${lines.join(' ')}</p>
+      ${g.stories.length ? `<div class="stories">${g.stories.slice(0, 4).map(storyHtml).join('')}</div>` : `<p>${t.chronicleQuiet}</p>`}
+      ${partial ? '' : `<a class="open" href="${link({ ...route, epoch: g.now >= world.header.epoch ? undefined : g.now, view: 'map' })}">${t.chronicleOpen}</a>`}
+    </article>`;
+  });
+  host.innerHTML = `<p class="hint">${t.chronicleHint}</p><div class="chronicle">${articles.join('')}</div>
+    ${first > 0 ? `<p style="margin:14px 4px"><button class="btn" id="chronicle-more">${t.chronicleMore}</button></p>` : ''}`;
+  $('chronicle').querySelector('#chronicle-more')?.addEventListener('click', () => {
+    chronicleDays += 7;
+    renderChronicle();
+  });
+}
+
 // ---------------------------------------------------------------- views: the map, the Muller plot, the clade tree
 
 let treeData: Map<number, TreeClade> | undefined;
@@ -716,6 +813,8 @@ function renderTabs() {
     ['map', t.tabMap, 'ph-map-trifold'],
     ['muller', t.tabMuller, 'ph-chart-line'],
     ['tree', t.tabTree, 'ph-tree-structure'],
+    ['chronicle', t.tabChronicle, 'ph-scroll'],
+    ['museum', t.tabMuseum, 'ph-bank'],
   ];
   $('tabs').innerHTML = tabs
     .map(([v, name, icon]) => `<a class="tab" role="tab" aria-selected="${v === view}" href="${link({ ...route, view: v })}"><i class="ph ${icon}"></i><span>${name}</span></a>`)
@@ -727,9 +826,13 @@ async function renderView() {
   renderTabs();
   $('muller').hidden = view !== 'muller';
   $('tree').hidden = view !== 'tree';
+  $('museum').hidden = view !== 'museum';
+  $('chronicle').hidden = view !== 'chronicle';
   for (const id of ['layers', 'legend', 'minimap', 'replay-btn']) $(id).style.visibility = view === 'map' ? '' : 'hidden';
   document.querySelector<HTMLElement>('.zoom')!.style.visibility = view === 'map' ? '' : 'hidden';
   if (view === 'map') return;
+  if (view === 'museum') return renderMuseum();
+  if (view === 'chronicle') return renderChronicle();
   await loadCharts();
   const pick = (clade: number) => go({ ...route, clade, organism: undefined });
   const dayLabel = (day: number) => `${t.day} ${day}`;

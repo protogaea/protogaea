@@ -757,27 +757,29 @@ pub fn frames(conn: &Connection, from: u64, to: u64, step: u64) -> Result<Vec<(u
     rows.map(|r| r.map_err(err)).collect()
 }
 
-/// How many events of each kind happened after `since`.
-pub fn event_counts(conn: &Connection, since: u64) -> Result<Vec<(String, i64)>> {
+/// How many events of each kind happened after `since`, up to `until`.
+pub fn event_counts(conn: &Connection, since: u64, until: u64) -> Result<Vec<(String, i64)>> {
     let mut stmt = conn
-        .prepare("SELECT kind, count(*) FROM events WHERE epoch > ?1 GROUP BY kind")
+        .prepare("SELECT kind, count(*) FROM events WHERE epoch > ?1 AND epoch <= ?2 GROUP BY kind")
         .map_err(err)?;
     let rows = stmt
-        .query_map([since as i64], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map(params![since as i64, until as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
         .map_err(err)?;
     rows.map(|r| r.map_err(err)).collect()
 }
 
-/// Events of one kind after `since`, oldest first.
-pub fn events_since(conn: &Connection, since: u64, kind: &str) -> Result<Vec<Value>> {
+/// Events of one kind after `since`, up to `until`, oldest first.
+pub fn events_since(conn: &Connection, since: u64, until: u64, kind: &str) -> Result<Vec<Value>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, epoch, kind, clade_id, organism_id, data FROM events
-             WHERE epoch > ?1 AND kind = ?2 ORDER BY id LIMIT 200",
+             WHERE epoch > ?1 AND epoch <= ?2 AND kind = ?3 ORDER BY id LIMIT 200",
         )
         .map_err(err)?;
     let rows = stmt
-        .query_map(params![since as i64, kind], event_row)
+        .query_map(params![since as i64, until as i64, kind], event_row)
         .map_err(err)?;
     rows.map(|r| r.map_err(err)).collect()
 }
