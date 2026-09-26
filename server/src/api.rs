@@ -55,13 +55,13 @@ where
 }
 
 /// With a viewer, `/` leads to it; without one, to a page listing the API.
-pub fn router(api: Api, credentials: Option<String>, viewer: bool) -> Router {
+pub fn router(api: Api, viewer: bool) -> Router {
     let home = if viewer {
         get(|| async { Redirect::temporary("/app/") })
     } else {
         get(index)
     };
-    let routes = Router::new()
+    Router::new()
         .route("/", home)
         .route("/v0/world", get(world))
         .route("/v0/ruleset", get(ruleset))
@@ -78,26 +78,29 @@ pub fn router(api: Api, credentials: Option<String>, viewer: bool) -> Router {
         .route("/v0/events", get(events))
         .route("/v0/muller", get(muller))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
-        .with_state(api);
-    let routes = match credentials {
-        Some(expected) => routes.layer(axum::middleware::from_fn(move |req, next| {
+        .route("/health", get(|| async { "ok" }))
+        .with_state(api)
+}
+
+/// Puts everything behind HTTP Basic authentication except `/health`, which stays open for
+/// monitoring. Applied last, so it covers the viewer's files too.
+pub fn protect(app: Router, credentials: Option<String>) -> Router {
+    match credentials {
+        Some(expected) => app.layer(axum::middleware::from_fn(move |req, next| {
             let expected = expected.clone();
             async move { basic_auth(req, next, expected).await }
         })),
-        None => routes,
-    };
-    // `/health` stays open for monitoring.
-    Router::new()
-        .route("/health", get(|| async { "ok" }))
-        .merge(routes)
+        None => app,
+    }
 }
 
 async fn basic_auth(req: Request, next: Next, expected: String) -> Response {
-    let ok = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v == expected);
+    let ok = req.uri().path() == "/health"
+        || req
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v == expected);
     if ok {
         next.run(req).await
     } else {

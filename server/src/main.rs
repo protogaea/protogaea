@@ -102,11 +102,11 @@ fn run() -> Result<(), String> {
             .map_err(|e| format!("cannot start the world thread: {e}"))?;
     }
 
-    let mut app = api::router(shared, credentials, viewer.is_some());
+    let mut app = api::router(shared, viewer.is_some());
     if let Some(dir) = viewer {
         app = app.nest_service("/app", tower_http::services::ServeDir::new(dir));
     }
-    let app = app
+    let app = api::protect(app, credentials)
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::cors::CorsLayer::permissive());
 
