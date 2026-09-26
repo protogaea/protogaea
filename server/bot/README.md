@@ -6,9 +6,10 @@ The bot of stage B5 ([roadmap](../../docs/roadmap.md)): it sends a morning diges
 
 - **The morning digest**, once a day at `DIGEST_HOUR_UTC`: what changed since the last digest, from `/v0/digest` (population, the leading clade, clades named and extinct, land bridges closed, the best stories), with links into the viewer.
 - **Following a clade:** `/follow` with a clade's number or name (a unique beginning of the name will do). The bot then tells when the clade gets its name, becomes or stops being the most numerous, goes extinct, or is in a story.
-- Commands: `/start`, `/digest`, `/follow`, `/unfollow`, `/list`, `/mute`, `/unmute`, `/stop`. Messages are in Russian for Russian, Ukrainian, Belarusian and Kazakh Telegram settings, and in English otherwise.
+- **Following a continent:** `/continent` with its number (again to stop). The bot then tells of the stories on it: crossings to it, invasions, the last of a great clade that died there.
+- Commands: `/start`, `/digest`, `/follow`, `/unfollow`, `/continent`, `/list`, `/mute`, `/unmute`, `/stop`. Messages are in Russian for Russian, Ukrainian, Belarusian and Kazakh Telegram settings, and in English otherwise.
 
-A chat that blocks the bot is forgotten. The bot keeps only chat ids, their language, the clades they follow and when they last had a digest.
+A chat that blocks the bot is forgotten. The bot keeps only chat ids, their language, the clades and continents they follow and when they last had a digest.
 
 ## Running it
 

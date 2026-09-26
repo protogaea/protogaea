@@ -40,6 +40,7 @@ TEXTS = {
             "/digest — что было с прошлой сводки\n"
             "/follow <i>имя или номер</i> — следить за кладой\n"
             "/unfollow <i>имя или номер</i> — перестать\n"
+            "/continent <i>номер</i> — следить за континентом (ещё раз — перестать)\n"
             "/list — за кем я слежу\n"
             "/mute, /unmute — утренняя сводка\n"
             "/stop — забыть меня\n\n"
@@ -61,6 +62,10 @@ TEXTS = {
         "list": "<b>Ты следишь за:</b>",
         "list_row": "{clade}: {living}",
         "list_row_extinct": "{clade}: вымерла",
+        "list_continent": "континент {n}",
+        "continent_usage": "Напиши номер континента: /continent <i>1–{max}</i>",
+        "continent_followed": "Слежу за континентом {n}: расскажу, кто туда переправится и кто его захватит.",
+        "continent_unfollowed": "Больше не слежу за континентом {n}.",
         "muted": "Утренней сводки не будет. Вернуть: /unmute",
         "unmuted": "Утренняя сводка снова включена.",
         "stopped": "Забыл тебя. Вернуться: /start",
@@ -92,6 +97,7 @@ TEXTS = {
             "/digest — what happened since the last digest\n"
             "/follow <i>name or number</i> — follow a clade\n"
             "/unfollow <i>name or number</i> — stop following\n"
+            "/continent <i>number</i> — follow a continent (again to stop)\n"
             "/list — the clades you follow\n"
             "/mute, /unmute — the morning digest\n"
             "/stop — forget me\n\n"
@@ -113,6 +119,10 @@ TEXTS = {
         "list": "<b>You follow:</b>",
         "list_row": "{clade}: {living}",
         "list_row_extinct": "{clade}: extinct",
+        "list_continent": "continent {n}",
+        "continent_usage": "Which continent? /continent <i>1–{max}</i>",
+        "continent_followed": "Following continent {n}: I will tell you who crosses to it and who takes it over.",
+        "continent_unfollowed": "No longer following continent {n}.",
         "muted": "No morning digest. To bring it back: /unmute",
         "unmuted": "The morning digest is back on.",
         "stopped": "Forgotten. To come back: /start",
@@ -254,6 +264,11 @@ def open_db(path):
             clade_id INTEGER NOT NULL,
             PRIMARY KEY (chat_id, clade_id)
         );
+        CREATE TABLE IF NOT EXISTS follows_plate (
+            chat_id INTEGER NOT NULL,
+            plate INTEGER NOT NULL,
+            PRIMARY KEY (chat_id, plate)
+        );
         CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         """
     )
@@ -337,6 +352,7 @@ class Bot:
         self.db = db
         self.digest_hour = digest_hour
         self.info = world.get("/v0/world")
+        self.info["rules_plates_max"] = world.get("/v0/ruleset")["rifts"]["plates_max"]
 
     def t(self, chat):
         row = self.db.execute("SELECT lang FROM chats WHERE chat_id = ?", (chat,)).fetchone()
@@ -348,11 +364,14 @@ class Bot:
         except RuntimeError as e:
             # A chat that blocked the bot is forgotten.
             if " 403 " in str(e):
-                self.db.execute("DELETE FROM chats WHERE chat_id = ?", (chat,))
-                self.db.execute("DELETE FROM follows WHERE chat_id = ?", (chat,))
-                self.db.commit()
+                self.forget(chat)
             else:
                 log(str(e))
+
+    def forget(self, chat):
+        for table in ("chats", "follows", "follows_plate"):
+            self.db.execute(f"DELETE FROM {table} WHERE chat_id = ?", (chat,))
+        self.db.commit()
 
     # ------------------------------------------------ commands
 
@@ -396,9 +415,10 @@ class Bot:
             self.send(chat, t["followed"].format(clade=link, living=organisms(c["living"], t)))
         elif command == "/list":
             ids = [r[0] for r in self.db.execute("SELECT clade_id FROM follows WHERE chat_id = ?", (chat,))]
-            if not ids:
+            plates = [r[0] for r in self.db.execute("SELECT plate FROM follows_plate WHERE chat_id = ? ORDER BY plate", (chat,))]
+            if not ids and not plates:
                 return self.send(chat, t["list_empty"])
-            lines = [t["list"]]
+            lines = [t["list"]] + [t["list_continent"].format(n=p + 1) for p in plates]
             for cid in ids:
                 try:
                     c = self.world.get(f"/v0/clades/{cid}")
@@ -415,9 +435,18 @@ class Bot:
             self.send(chat, t["unmuted" if command == "/unmute" else "muted"])
         elif command == "/stop":
             self.send(chat, t["stopped"])
-            self.db.execute("DELETE FROM chats WHERE chat_id = ?", (chat,))
-            self.db.execute("DELETE FROM follows WHERE chat_id = ?", (chat,))
+            self.forget(chat)
+        elif command == "/continent":
+            most = int(self.info["rules_plates_max"])
+            n = arg.strip().lstrip("#")
+            if not n.isdigit() or not 1 <= int(n) <= most:
+                return self.send(chat, t["continent_usage"].format(max=most))
+            plate = int(n) - 1
+            gone = self.db.execute("DELETE FROM follows_plate WHERE chat_id = ? AND plate = ?", (chat, plate)).rowcount
+            if not gone:
+                self.db.execute("INSERT INTO follows_plate (chat_id, plate) VALUES (?, ?)", (chat, plate))
             self.db.commit()
+            self.send(chat, t["continent_unfollowed" if gone else "continent_followed"].format(n=int(n)))
         else:
             self.send(chat, t["unknown"])
 
@@ -460,9 +489,10 @@ class Bot:
         # Events: names given, extinctions, changes of the leader.
         cursor = kv_get(self.db, "event_cursor")
         if cursor is None:
+            # The first run starts from now: no news of the past.
             latest = self.world.get("/v0/events", before=0, limit=1)["events"]
-            kv_set(self.db, "event_cursor", latest[0]["id"] if latest else 0)
-            return
+            cursor = latest[0]["id"] if latest else 0
+            kv_set(self.db, "event_cursor", cursor)
         for _ in range(20):
             page = self.world.get("/v0/events", cursor=cursor, limit=1000)
             events = page["events"]
@@ -473,7 +503,10 @@ class Bot:
                 self.tell_event(e, names, followers)
             cursor = events[-1]["id"]
             kv_set(self.db, "event_cursor", cursor)
-        # Stories about followed clades.
+        # Stories about followed clades and continents.
+        plate_followers = {}
+        for plate, chat in self.db.execute("SELECT plate, chat_id FROM follows_plate").fetchall():
+            plate_followers.setdefault(plate, []).append(chat)
         last = int(kv_get(self.db, "story_id", "-1"))
         since = max(0, self.world.get("/v0/world")["header"]["epoch"] - 2 * self.info["epochs_per_day"])
         page = self.world.get("/v0/stories", since=since, limit=200)
@@ -485,6 +518,8 @@ class Bot:
             if s["id"] <= last:
                 continue
             chats = set(followers.get(s.get("clade_id"), [])) | set(followers.get(s.get("other_id"), []))
+            for plate in {s.get("plate"), (s.get("data") or {}).get("to")} - {None}:
+                chats |= set(plate_followers.get(plate, []))
             for chat in chats:
                 self.send(chat, story_text(self.world, s, page.get("names") or {}, self.t(chat)))
             kv_set(self.db, "story_id", s["id"])

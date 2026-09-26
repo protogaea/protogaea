@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The Telegram bot follows continents too (`/continent`), and on its first run it starts from the present in one pass.
 - Stage B7, the end: the museum of extinct named clades and the daily chronicle in the viewer; `/v0/digest` takes `until=`.
 - The Season 1 numbers from the parameter search, checked on fresh seeds: `hunt_hunger_pct` 70, `kin_distance` 1, `mutation_ppm` 140,000, `weights.habitat_bonus` 300. Every health check now passes on 91–100% of seeds, and about twice as many stories are told. The world stays 64 × 64.
 - The arms race is told from two three-day windows with enough hunters in both, instead of noisy daily means.
