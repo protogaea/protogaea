@@ -3,7 +3,7 @@ import '@fontsource-variable/geist-mono';
 import '@phosphor-icons/web/regular';
 import './style.css';
 
-import { api, ApiError, type CladeInfo, type Header, type MapState, type OrganismInfo, type Rift, type WorldEvent, type WorldInfo } from './api';
+import { api, ApiError, type StoryRow, type CladeInfo, type Header, type MapState, type OrganismInfo, type Rift, type WorldEvent, type WorldInfo } from './api';
 import { hueColor } from './glyph';
 import { fmt, lang, t } from './i18n';
 import { WorldMap, type Layers } from './map';
@@ -247,6 +247,52 @@ function eventText(e: WorldEvent): string {
   });
 }
 
+// ---------------------------------------------------------------- stories
+
+const STORY_ICONS: Record<string, string> = {
+  comeback: 'ph-arrow-counter-clockwise',
+  crossing: 'ph-boat',
+  invasion: 'ph-flag-pennant',
+  arms_race: 'ph-sword',
+  last_of_its_kind: 'ph-hourglass-low',
+  changing_of_the_guard: 'ph-crown',
+  split_by_sea: 'ph-waves',
+  fall: 'ph-skull',
+};
+
+function storyHtml(s: StoryRow): string {
+  const [title, template] = t.story[s.kind] ?? [s.kind, ''];
+  const d = s.data as Record<string, unknown>;
+  const clade = (id: unknown) => (id === null || id === undefined ? '' : `<a href="${link({ ...route, clade: Number(id), organism: undefined })}">${cladeLabel(Number(id))}</a>`);
+  const continent = (plate: unknown) => (plate === null || plate === undefined ? '' : fmt(t.continent, { n: Number(plate) + 1 }));
+  const tenth = (v: unknown) => (Number(v) / 10).toFixed(1);
+  const hunting = (d.hunting_x10 as number[] | undefined) ?? [];
+  const defense = (d.defense_x10 as number[] | undefined) ?? [];
+  const text = fmt(template, {
+    clade: clade(s.clade_id),
+    other: clade(s.other_id),
+    low: String(d.low ?? ''),
+    living: String(d.living ?? ''),
+    peak: String(d.peak ?? ''),
+    to: continent(d.to),
+    plate: continent(s.plate),
+    organism: d.organism ? `<a href="${link({ ...route, organism: Number(d.organism), clade: undefined })}">#${d.organism}</a>` : '',
+    h0: tenth(hunting[0]),
+    h1: tenth(hunting[1]),
+    d0: tenth(defense[0]),
+    d1: tenth(defense[1]),
+  });
+  return `<article class="story"><span class="icon"><i class="ph ${STORY_ICONS[s.kind] ?? 'ph-star'}"></i></span><div><h4><span>${title}</span><span class="when">${t.day} ${dayOf(s.epoch).toFixed(2)}</span></h4><p>${text}</p></div></article>`;
+}
+
+async function renderStories() {
+  const { stories, names: storyNames } = await api.stories(5);
+  learnNames(storyNames);
+  $('stories').innerHTML =
+    `<h2>${t.storiesTitle}</h2>` +
+    (stories.length === 0 ? `<p class="empty">${t.storiesEmpty}</p>` : `<div class="stories">${stories.map(storyHtml).join('')}</div>`);
+}
+
 async function renderFeed() {
   const { events, names: eventNames } = await api.latestEvents(120);
   learnNames(eventNames);
@@ -255,7 +301,7 @@ async function renderFeed() {
     .filter((e) => (e.kind === 'clade_founded' ? e.id % 8 === 0 : e.kind !== 'clade_extinct' || e.data.named === true))
     .slice(0, 40);
   $('feed').innerHTML =
-    `<h2>${t.feed}</h2>` +
+    `<h2>${t.allEvents}</h2>` +
     (shown.length === 0
       ? `<p class="empty">${t.noEvents}</p>`
       : `<ul class="feed">${shown
@@ -520,7 +566,7 @@ async function poll() {
       await showEpoch(undefined, true);
       renderStats(world.header);
       renderSeason();
-      await renderFeed();
+      await Promise.all([renderStories(), renderFeed()]);
       if (route.view && route.view !== 'map' && world.header.epoch % 12 === 0) await renderView();
       if (route.clade !== undefined || route.organism !== undefined) await renderDetails();
     }
@@ -558,7 +604,7 @@ async function boot() {
   $('zoom-fit').title = t.fit;
   window.addEventListener('hashchange', onRoute);
   await onRoute();
-  await renderFeed();
+  await Promise.all([renderStories(), renderFeed()]);
   setInterval(renderClock, 1000);
   setInterval(poll, 5000);
 }

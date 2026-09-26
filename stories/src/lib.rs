@@ -21,8 +21,14 @@ const COMEBACK_BACK: u32 = 50;
 /// A crossing: this many members on another continent for this many epochs in a row.
 const CROSSING_MEMBERS: u32 = 10;
 const CROSSING_EPOCHS: u32 = 12;
-/// "Last of its kind" and "the fall of a great clade" are for clades that reached this peak.
-const GREAT_PEAK: u32 = 100;
+/// "Last of its kind" and "the fall of a great clade" are for great clades: those that once held
+/// this share of the world's capacity (5%, or 300 of 6,000), and at least 100 organisms.
+const GREAT_PERMILLE: u32 = 50;
+const GREAT_MIN: u32 = 100;
+
+fn great(rules: &Ruleset) -> u32 {
+    (rules.max_organisms * GREAT_PERMILLE / 1000).max(GREAT_MIN)
+}
 /// Arms race: both mean hunting of hunters and mean defense of their prey grew by this much
 /// (tenths of a trait point) over a world day, about 30 generations.
 const ARMS_RACE_X10: i64 = 20;
@@ -131,6 +137,7 @@ struct CladeTrack {
     fell: bool,
     comeback_told: bool,
     last_told: bool,
+    split_told: bool,
     /// Epochs in a row with enough members on each other continent.
     abroad: BTreeMap<u8, u32>,
     crossed: BTreeSet<u8>,
@@ -164,6 +171,7 @@ impl Detectors {
         let per_day = u64::from(ctx.rules.epochs_per_day);
         // Continents only mean something once the sea starts to part them.
         let apart = epoch >= u64::from(ctx.rules.rifts.shallows_from_day) * per_day;
+        let great = great(ctx.rules);
         let mut out = Vec::new();
 
         // Members of each clade on each plate.
@@ -205,7 +213,7 @@ impl Detectors {
                 ));
             }
             // Last of its kind.
-            if clade.peak_living >= GREAT_PEAK && clade.living == 1 && !track.last_told {
+            if clade.peak_living >= great && clade.living == 1 && !track.last_told {
                 track.last_told = true;
                 let last = world
                     .organisms
@@ -253,9 +261,10 @@ impl Detectors {
             }
         }
 
-        // The fall of a great clade.
+        // The fall of a great clade, unless its last organism already made a story.
         for c in &report.clades_extinct {
-            if c.peak_living >= GREAT_PEAK {
+            let told = self.clades.get(&c.id).is_some_and(|t| t.last_told);
+            if c.peak_living >= great && !told {
                 out.push(Story::new(
                     Kind::Fall,
                     epoch,
@@ -275,7 +284,9 @@ impl Detectors {
                     .filter(|&(_, &n)| n >= SPLIT_MEMBERS)
                     .map(|(&p, &n)| (p, n))
                     .collect();
-                if sides.len() >= 2 {
+                let track = self.clades.entry(id).or_default();
+                if sides.len() >= 2 && !track.split_told {
+                    track.split_told = true;
                     let size: u32 = sides.iter().map(|s| s.1).sum();
                     out.push(Story::new(
                         Kind::SplitBySea,

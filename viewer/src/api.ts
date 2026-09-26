@@ -127,6 +127,17 @@ export interface OrganismInfo {
   offspring: number[];
 }
 
+export interface StoryRow {
+  id: number;
+  epoch: number;
+  kind: string;
+  clade_id: number | null;
+  other_id: number | null;
+  plate: number | null;
+  score: number;
+  data: Record<string, unknown>;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -163,6 +174,7 @@ export const api = {
   eventsOfKind: (kind: string) => get<{ events: WorldEvent[]; names: Record<string, string> }>(`/v0/events?kind=${kind}&limit=500`),
   tree: () =>
     get<{ clades: [number, number, number, number | null, number, number, string | null][]; name_threshold: number }>('/v0/tree'),
+  stories: (limit = 6) => get<{ since: number; stories: StoryRow[]; names: Record<string, string> }>(`/v0/stories?limit=${limit}`),
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),

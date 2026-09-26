@@ -218,6 +218,13 @@ em.latin { font-style: italic; }
 .notice { display: flex; gap: 10px; align-items: flex-start; margin-top: 18px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); font-size: 13px; color: var(--text-2); }
 .notice i { color: var(--accent); font-size: 17px; margin-top: 1px; }
 
+.stories { display: grid; gap: 10px; }
+.story { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 12px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--line); }
+.story .icon { width: 34px; height: 34px; border-radius: 8px; display: grid; place-items: center; font-size: 19px; color: var(--accent); background: color-mix(in oklab, var(--accent) 14%, transparent); }
+.story h4 { margin: 0 0 3px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.story h4 .when { color: var(--text-3); font: 11px var(--mono); font-weight: 400; }
+.story p { margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.45; }
+.story p a { font-weight: 500; }
 .feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .feed li { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: start; padding: 7px 0; font-size: 13px; }
 .feed li i { font-size: 16px; color: var(--text-3); margin-top: 1px; }

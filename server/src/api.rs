@@ -78,6 +78,7 @@ pub fn router(api: Api, viewer: bool) -> Router {
         .route("/v0/events", get(events))
         .route("/v0/muller", get(muller))
         .route("/v0/tree", get(tree))
+        .route("/v0/stories", get(stories))
         .route("/v0/proofs/{epoch}/organism/{id}", get(proof))
         .route("/health", get(|| async { "ok" }))
         .with_state(api)
@@ -476,6 +477,67 @@ async fn events(State(api): State<Api>, Query(q): Query<EventQuery>) -> Reply {
         .unwrap_or(fallback);
     Ok(Json(
         json!({ "events": rows, "next": next, "names": names }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct StoryQuery {
+    /// From this epoch on; by default, the last world day.
+    since: Option<u64>,
+    limit: Option<u32>,
+}
+
+/// The stories the detectors found (roadmap B4), the most important first, with the names of
+/// the clades they are about.
+async fn stories(State(api): State<Api>, Query(q): Query<StoryQuery>) -> Reply {
+    let latest = api
+        .live
+        .read()
+        .expect("the lock is never poisoned")
+        .world
+        .epoch;
+    let since = q
+        .since
+        .unwrap_or_else(|| latest.saturating_sub(u64::from(api.rules.epochs_per_day)));
+    let limit = q.limit.unwrap_or(20).min(200);
+    let (rows, names) = read(&api, move |c| {
+        // A varied selection: the best story of each clade and kind, then the rest by score.
+        let all = store::stories(c, since, 500)?;
+        let (mut first, mut rest) = (Vec::new(), Vec::new());
+        let mut clades = std::collections::HashSet::new();
+        let mut kinds = std::collections::HashSet::new();
+        for s in all {
+            let clade = s["clade_id"].as_i64();
+            let kind = s["kind"].as_str().unwrap_or_default().to_string();
+            if clade.is_none_or(|c| !clades.contains(&c)) && !kinds.contains(&kind) {
+                if let Some(c) = clade {
+                    clades.insert(c);
+                }
+                kinds.insert(kind);
+                first.push(s);
+            } else {
+                rest.push(s);
+            }
+        }
+        let rows: Vec<Value> = first.into_iter().chain(rest).take(limit as usize).collect();
+        let mut ids: Vec<u32> = rows
+            .iter()
+            .flat_map(|s| [s["clade_id"].as_u64(), s["other_id"].as_u64()])
+            .flatten()
+            .map(|id| id as u32)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        let names = store::clade_names(c, &ids)?;
+        Ok((rows, names))
+    })
+    .await?;
+    let names: serde_json::Map<String, Value> = names
+        .into_iter()
+        .map(|(id, n)| (id.to_string(), Value::String(n)))
+        .collect();
+    Ok(Json(
+        json!({ "since": since, "stories": rows, "names": names }),
     ))
 }
 

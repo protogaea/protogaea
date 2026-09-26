@@ -20,6 +20,7 @@ npm run build    # dist/, for protogaea-server --viewer viewer/dist
 - **Live mode:** the viewer polls `/v0/world`; when an epoch arrives, organisms walk from their old cells to their new ones, newborns fade in and the dead fade out. Reduced motion turns this off.
 - **The season timeline:** the six phases of the Breaking of Pangea, the current day and when each land bridge closes.
 - **Cards** for a clade (population history, parent and child clades, reference genome) and an organism (clade, parent, offspring, cause of death, genome).
+- **Today's stories:** the best stories of the last world day (comebacks, crossings, invasions, arms races, the last of a great clade, a new leader, clades split by the sea, falls), each a sentence with the protagonist and a link.
 - **The feed** of events: phases, clades named and extinct, a change of the dominant clade, land bridges closing, wildfires, droughts, floods, plague and revivals.
 - **Permanent links** in the hash: `#epoch=N` opens an archived snapshot, `#clade=ID` and `#organism=ID` open a card. Without `epoch` the viewer is live.
 

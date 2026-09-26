@@ -79,6 +79,10 @@ These are the checks of spec §28 measured so far. The thresholds are candidates
 - each plate ends as its own continent (judged once the last land bridge has closed);
 - each continent ends with its own fauna: the clade makeup of different continents is at least 80% apart and their mean hues at least 30° apart at the end of the season (judged on runs of a full season).
 
+## Stories
+
+Every run and sweep also runs the story detectors of [`protogaea-stories`](../stories/src/lib.rs) and reports how many stories a season tells per world day and of which kinds (`st/day` in the sweep table; `stories_per_day` and `story_*` columns in the CSV; the best stories at the end of `run`). A season whose health checks pass but where nothing happens is not what Season 1 needs, so the parameter search ranks by stories too.
+
 ## Findings (stage A1)
 
 Measured on 2026-09-25 with 16 seeds.

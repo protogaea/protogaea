@@ -13,6 +13,8 @@ use protogaea_core::run::Run;
 use protogaea_core::{EpochReport, Ruleset, World};
 use serde::{Deserialize, Serialize};
 
+use protogaea_stories::{Context, Detectors};
+
 use crate::model::{self, Before, Header, DOMINANT_EVERY};
 use crate::store::{EpochRecord, Store};
 
@@ -63,6 +65,9 @@ struct Snapshot {
     seed: u64,
     rules: Ruleset,
     world: World,
+    /// The story detectors' memory, so a restart neither loses nor repeats a story.
+    #[serde(default)]
+    detectors: Detectors,
 }
 
 #[derive(Serialize)]
@@ -70,6 +75,7 @@ struct SnapshotRef<'a> {
     seed: u64,
     rules: &'a Ruleset,
     world: &'a World,
+    detectors: &'a Detectors,
 }
 
 fn archive_path(data: &Path, epoch: u64) -> PathBuf {
@@ -91,13 +97,14 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
-/// Opens or creates the world and its log. Returns the run and the shared state for the API.
-pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
+/// Opens or creates the world and its log. Returns the run, its story detectors, the store and
+/// the shared state for the API.
+pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), String> {
     std::fs::create_dir_all(opts.data.join("snapshots"))
         .map_err(|e| format!("cannot create {}: {e}", opts.data.display()))?;
     let mut store = Store::open(&opts.data.join(DB), opts.rules.clade_name_threshold)?;
     let latest = opts.data.join(LATEST);
-    let (run, header) = match std::fs::read_to_string(&latest) {
+    let (run, detectors, header) = match std::fs::read_to_string(&latest) {
         Ok(text) => {
             let s: Snapshot = serde_json::from_str(&text)
                 .map_err(|e| format!("invalid snapshot {}: {e}", latest.display()))?;
@@ -111,7 +118,7 @@ pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
             store.rollback_after(&s.world)?;
             let run = Run::resume(s.seed, s.rules, s.world);
             let header = model::header(&run.world, &EpochReport::default(), &run.rules);
-            (run, header)
+            (run, s.detectors, header)
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             println!("starting seed {} from genesis", opts.seed);
@@ -124,8 +131,9 @@ pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
                 &serde_json::to_string(&run.rules).map_err(|e| e.to_string())?,
             )?;
             store.record_genesis(&run.world, &header)?;
-            save(&opts.data, &run, opts.archive_every)?;
-            (run, header)
+            let detectors = Detectors::new();
+            save(&opts.data, &run, &detectors, opts.archive_every)?;
+            (run, detectors, header)
         }
         Err(e) => return Err(format!("cannot read {}: {e}", latest.display())),
     };
@@ -152,12 +160,17 @@ pub fn start(opts: Options) -> Result<(Run, Store, Arc<Shared>), String> {
         epoch_seconds: opts.epoch_seconds,
         archive_every: opts.archive_every.max(1),
     });
-    Ok((run, store, shared))
+    Ok((run, detectors, store, shared))
 }
 
 /// Runs forever: one epoch every `epoch_seconds`. World time is logical: after a delay the
 /// world does not catch up (spec §20).
-pub fn run_loop(mut run: Run, mut store: Store, shared: Arc<Shared>) -> Result<(), String> {
+pub fn run_loop(
+    mut run: Run,
+    mut detectors: Detectors,
+    mut store: Store,
+    shared: Arc<Shared>,
+) -> Result<(), String> {
     let period = Duration::from_secs(shared.epoch_seconds);
     let mut next = Instant::now() + period;
     loop {
@@ -170,7 +183,7 @@ pub fn run_loop(mut run: Run, mut store: Store, shared: Arc<Shared>) -> Result<(
             continue;
         }
         let started = Instant::now();
-        let header = step(&mut run, &mut store, &shared)?;
+        let header = step(&mut run, &mut detectors, &mut store, &shared)?;
         {
             let mut live = shared.live.write().expect("the lock is never poisoned");
             live.world = run.world.clone();
@@ -180,7 +193,7 @@ pub fn run_loop(mut run: Run, mut store: Store, shared: Arc<Shared>) -> Result<(
             live.header = header;
             live.next_epoch_ms = now_ms() + period.as_millis() as u64;
         }
-        save(&shared.data, &run, shared.archive_every)?;
+        save(&shared.data, &run, &detectors, shared.archive_every)?;
         println!(
             "epoch {}: population {}, {} ms",
             run.world.epoch,
@@ -190,8 +203,13 @@ pub fn run_loop(mut run: Run, mut store: Store, shared: Arc<Shared>) -> Result<(
     }
 }
 
-/// One epoch: step, then record it.
-pub fn step(run: &mut Run, store: &mut Store, shared: &Shared) -> Result<Header, String> {
+/// One epoch: step, look for stories, then record it all.
+pub fn step(
+    run: &mut Run,
+    detectors: &mut Detectors,
+    store: &mut Store,
+    shared: &Shared,
+) -> Result<Header, String> {
     let before = {
         let live = shared.live.read().expect("the lock is never poisoned");
         Before::of(&run.world, live.hour_dominant)
@@ -200,6 +218,14 @@ pub fn step(run: &mut Run, store: &mut Store, shared: &Shared) -> Result<Header,
     let report = run.step();
     let header = model::header(&run.world, &report, &run.rules);
     let events = model::events(&before, &run.world, &report, &header, &run.rules);
+    let stories = detectors.observe(
+        &run.world,
+        &report,
+        &Context {
+            rules: &run.rules,
+            plates: &run.plan.plates,
+        },
+    );
 
     // Every organism with a new id appeared this epoch, born or revived: the living ones and
     // those that died before the epoch ended.
@@ -237,16 +263,18 @@ pub fn step(run: &mut Run, store: &mut Store, shared: &Shared) -> Result<Header,
         world: &run.world,
         founded,
         extinct: &report.clades_extinct,
+        stories: &stories,
     })?;
     Ok(header)
 }
 
 /// Replaces the latest snapshot atomically, and archives one every `archive_every` epochs.
-fn save(data: &Path, run: &Run, archive_every: u64) -> Result<(), String> {
+fn save(data: &Path, run: &Run, detectors: &Detectors, archive_every: u64) -> Result<(), String> {
     let snapshot = SnapshotRef {
         seed: run.seed,
         rules: &run.rules,
         world: &run.world,
+        detectors,
     };
     let json = serde_json::to_vec(&snapshot).map_err(|e| e.to_string())?;
     let tmp = data.join(format!("{LATEST}.tmp"));
@@ -281,9 +309,16 @@ mod tests {
         }
     }
 
-    fn advance(run: &mut Run, store: &mut Store, shared: &Shared, epochs: u32, snapshot: bool) {
+    fn advance(
+        run: &mut Run,
+        detectors: &mut Detectors,
+        store: &mut Store,
+        shared: &Shared,
+        epochs: u32,
+        snapshot: bool,
+    ) {
         for _ in 0..epochs {
-            let header = step(run, store, shared).expect("the epoch is recorded");
+            let header = step(run, detectors, store, shared).expect("the epoch is recorded");
             {
                 let mut live = shared.live.write().unwrap();
                 if header.epoch.is_multiple_of(DOMINANT_EVERY) {
@@ -292,7 +327,8 @@ mod tests {
                 live.header = header;
             }
             if snapshot {
-                save(&shared.data, run, shared.archive_every).expect("the snapshot is saved");
+                save(&shared.data, run, detectors, shared.archive_every)
+                    .expect("the snapshot is saved");
             }
         }
     }
@@ -301,6 +337,7 @@ mod tests {
         let c = crate::store::reader(&data.join(DB)).unwrap();
         [
             "SELECT count(*) FROM epochs",
+            "SELECT count(*) FROM stories",
             "SELECT count(*) FROM events",
             "SELECT count(*) FROM organisms",
             "SELECT count(*) FROM organisms WHERE died_epoch IS NOT NULL",
@@ -317,19 +354,19 @@ mod tests {
     #[test]
     fn a_restart_after_a_crash_matches_an_uninterrupted_run() {
         let clean = temp_dir("clean");
-        let (mut run, mut store, shared) = start(options(clean.clone())).unwrap();
-        advance(&mut run, &mut store, &shared, 8, true);
+        let (mut run, mut det, mut store, shared) = start(options(clean.clone())).unwrap();
+        advance(&mut run, &mut det, &mut store, &shared, 8, true);
         let clean_root = run.state_root();
         drop(store);
 
         let crashed = temp_dir("crashed");
-        let (mut run, mut store, shared) = start(options(crashed.clone())).unwrap();
-        advance(&mut run, &mut store, &shared, 5, true);
-        advance(&mut run, &mut store, &shared, 2, false); // recorded, but no snapshot
+        let (mut run, mut det, mut store, shared) = start(options(crashed.clone())).unwrap();
+        advance(&mut run, &mut det, &mut store, &shared, 5, true);
+        advance(&mut run, &mut det, &mut store, &shared, 2, false); // recorded, but no snapshot
         drop(store);
-        let (mut run, mut store, shared) = start(options(crashed.clone())).unwrap();
+        let (mut run, mut det, mut store, shared) = start(options(crashed.clone())).unwrap();
         assert_eq!(run.world.epoch, 5);
-        advance(&mut run, &mut store, &shared, 3, true);
+        advance(&mut run, &mut det, &mut store, &shared, 3, true);
 
         assert_eq!(run.state_root(), clean_root);
         assert_eq!(counts(&crashed), counts(&clean));

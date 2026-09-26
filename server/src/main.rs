@@ -89,13 +89,13 @@ fn run() -> Result<(), String> {
         eprintln!("note: no PROTOGAEA_PASSWORD set; the API is open to everyone who can reach it");
     }
 
-    let (run, store, shared) = world::start(opts)?;
+    let (run, detectors, store, shared) = world::start(opts)?;
     {
         let shared = shared.clone();
         std::thread::Builder::new()
             .name("world".into())
             .spawn(move || {
-                if let Err(e) = world::run_loop(run, store, shared) {
+                if let Err(e) = world::run_loop(run, detectors, store, shared) {
                     eprintln!("error: the world stopped: {e}");
                     std::process::exit(1);
                 }

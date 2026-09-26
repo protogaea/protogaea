@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- Stage B4, part 1: story detectors (`protogaea-stories`) in the harness, the world server (`/v0/stories`, kept across restarts) and the viewer ("Today's stories").
 - Stage B3: automatic binomial clade names, stored once a clade reaches the naming threshold; the Muller plot and the clade tree in the viewer; `/v0/tree` and a Muller plot folded to named clades on the server.
 - Stage B2, the viewer (`viewer/`): the map with layers and genome glyphs, live mode, the season timeline, clade and organism cards, the event feed and permanent links, in English and Russian; the server serves it at `/app/` and its API gains the traits on the map, past epochs from snapshots and a newest-first feed.
 - Stage B1, the world server (`protogaea-server`): runs the world on a timer, records every epoch's header, events, organisms (the dead included), clades and Muller samples in SQLite, keeps snapshots, recovers from a crash without losing or changing an epoch, and serves the read API of spec §23 with inclusion proofs; a systemd unit in `deploy/`.

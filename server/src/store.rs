@@ -8,6 +8,8 @@ use protogaea_core::{Clade, DeathCause, Organism, World};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::{json, Value};
 
+use protogaea_stories::Story;
+
 use crate::model::{Event, Header};
 use crate::names;
 
@@ -56,6 +58,17 @@ CREATE TABLE IF NOT EXISTS organisms (
 );
 CREATE INDEX IF NOT EXISTS organisms_parent ON organisms (parent_id);
 CREATE INDEX IF NOT EXISTS organisms_clade ON organisms (clade_id);
+CREATE TABLE IF NOT EXISTS stories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    epoch INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    clade_id INTEGER,
+    other_id INTEGER,
+    plate INTEGER,
+    score INTEGER NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS stories_epoch ON stories (epoch);
 CREATE TABLE IF NOT EXISTS muller (
     epoch INTEGER NOT NULL,
     clade_id INTEGER NOT NULL,
@@ -80,6 +93,7 @@ pub struct EpochRecord<'a> {
     pub world: &'a World,
     pub founded: Vec<Clade>,
     pub extinct: &'a [Clade],
+    pub stories: &'a [Story],
 }
 
 pub struct Store {
@@ -148,7 +162,7 @@ impl Store {
     pub fn clear(&self) -> Result<()> {
         self.conn
             .execute_batch(
-                "DELETE FROM epochs; DELETE FROM events; DELETE FROM clades;
+                "DELETE FROM epochs; DELETE FROM events; DELETE FROM clades; DELETE FROM stories;
                  DELETE FROM organisms; DELETE FROM muller; DELETE FROM meta;",
             )
             .map_err(err)
@@ -235,6 +249,26 @@ impl Store {
                 .map_err(err)?;
             }
         }
+        {
+            let mut stmt = tx
+                .prepare_cached(
+                    "INSERT INTO stories (epoch, kind, clade_id, other_id, plate, score, data)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                )
+                .map_err(err)?;
+            for s in rec.stories {
+                stmt.execute(params![
+                    epoch as i64,
+                    s.kind.name(),
+                    s.clade,
+                    s.other,
+                    s.plate,
+                    s.score,
+                    s.data.to_string()
+                ])
+                .map_err(err)?;
+            }
+        }
         if epoch.is_multiple_of(MULLER_EVERY) {
             insert_muller(&tx, rec.world)?;
         }
@@ -249,6 +283,7 @@ impl Store {
         tx.execute_batch(&format!(
             "DELETE FROM epochs WHERE epoch > {e};
              DELETE FROM events WHERE epoch > {e};
+             DELETE FROM stories WHERE epoch > {e};
              DELETE FROM muller WHERE epoch > {e};
              DELETE FROM organisms WHERE born_epoch > {e};
              UPDATE organisms SET died_epoch = NULL, cause = NULL, at_death = NULL WHERE died_epoch > {e};
@@ -639,6 +674,31 @@ pub fn tree(conn: &Connection) -> Result<Vec<TreeRow>> {
                 r.get(5)?,
                 r.get(6)?,
             ))
+        })
+        .map_err(err)?;
+    rows.map(|r| r.map_err(err)).collect()
+}
+
+/// Stories from epoch `since` on, the most important first, then the newest.
+pub fn stories(conn: &Connection, since: u64, limit: u32) -> Result<Vec<Value>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, epoch, kind, clade_id, other_id, plate, score, data FROM stories
+             WHERE epoch >= ?1 ORDER BY score DESC, epoch DESC, id LIMIT ?2",
+        )
+        .map_err(err)?;
+    let rows = stmt
+        .query_map(params![since as i64, limit], |r| {
+            Ok(json!({
+                "id": r.get::<_, i64>(0)?,
+                "epoch": r.get::<_, i64>(1)?,
+                "kind": r.get::<_, String>(2)?,
+                "clade_id": r.get::<_, Option<i64>>(3)?,
+                "other_id": r.get::<_, Option<i64>>(4)?,
+                "plate": r.get::<_, Option<i64>>(5)?,
+                "score": r.get::<_, i64>(6)?,
+                "data": json_col(r.get::<_, String>(7)?),
+            }))
         })
         .map_err(err)?;
     rows.map(|r| r.map_err(err)).collect()
