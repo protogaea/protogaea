@@ -2,7 +2,9 @@
 
 *A persistent digital evolution world you can watch — and, rarely, touch.*
 
-> **Status: pre-alpha, specification stage.** There is no code yet, and everything described here can change. The current design is [specification v0.2](docs/spec/spec-v0.2.md).
+> **Status: pre-alpha.** The deterministic core and the balance harness (stage A) are nearly done, and the observation stage (B) is under way: a world server keeps the event log and serves a read API, and a web viewer shows the living world on a test server. Nothing is public yet, and everything described here can change. The design is [specification v0.2](docs/spec/spec-v0.2.md).
+
+![The viewer: the illustrated map of the supercontinent, the population by archetype and the event feed](docs/images/viewer.jpg)
 
 Protogaea (Russian «Протогея», "proto-Earth") is a continuous digital world where organisms forage, hunt, reproduce, mutate and go extinct, while people watch, form hypotheses and follow the fate of lineages. Most of the time the world runs on its own. Occasionally, naturalists pool **sparks** — proof-of-work computed on their own processors — into public **wishes**. When a wish gathers enough work, it becomes a **miracle**: a small, bounded intervention such as rain over a region, carrying three organisms across a strait, or reviving an extinct clade from the museum.
 
@@ -49,8 +51,8 @@ Season 1, **The Breaking of Pangea**, begins with a single supercontinent that s
 | Stage | Goal | Status |
 |---|---|---|
 | Spec | Specification v0.2: English canonical, Russian translation | Done |
-| A | Deterministic core, WASM build, balance harness, Season 1 map generator | Next |
-| B | Observation: map, Muller plot, clade tree, time machine, digests | Planned |
+| A | Deterministic core, WASM build, balance harness, Season 1 map generator | Nearly done: the parameter search for Season 1 is running |
+| B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot and the clade tree are done; next is the time machine |
 | B′ | Closed observation test with invited users, no PoW | Planned |
 | C | Sparks: yespower, desktop app, WASM client, spark log, watchers | Planned |
 | D | Public Season 1 — The Breaking of Pangea | Planned |
@@ -76,19 +78,24 @@ The full index is in [docs/README.md](docs/README.md).
 
 ## Development
 
-The code covers stage A1 and part of A2: the deterministic core with times of year and natural events, and the balance harness with a live mode. You need stable Rust.
+The repository holds four parts:
+
+- [core/](core/README.md): the deterministic simulation core (Rust, no dependencies beyond BLAKE3 and serde; also builds for WASM), with its status against the specification. Season 1 runs in full: times of year, natural events, the Breaking of Pangea, the museum, the spore bank and a Merkle `state_root` with inclusion proofs.
+- [harness/](harness/README.md): the balance harness that runs thousands of seasons offline and checks the ecosystem health criteria of spec §28, with its findings, the archetype arena, a benchmark and the parameter search.
+- [server/](server/README.md): the world server. It runs the world on a timer, records every epoch, organism, clade and event in SQLite, keeps snapshots, recovers from a crash without losing an epoch, and serves the read API of spec §23.
+- [viewer/](viewer/README.md): the web viewer (TypeScript and PixiJS): the illustrated map with live organisms, the season timeline, clade and organism cards, the Muller plot, the clade tree and the event feed, in English and Russian.
+
+You need stable Rust, and Node.js for the viewer. The server bundles SQLite, so it needs a C compiler (on Windows, MSVC or MSYS2's gcc); a plain `cargo build` leaves it out.
 
 ```sh
 cargo test --workspace
-cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # writes runs/seed-1/report.html
-cargo run --release -p protogaea-harness -- sweep --seeds 1..17 --days 2
-cargo run --release -p protogaea-harness -- live --seed 5                # a world in real time on http://127.0.0.1:8080
+cargo run --release -p protogaea-harness -- run --seed 1 --days 3      # one world, report in runs/seed-1/report.html
+cargo run --release -p protogaea-harness -- sweep --seeds 1..21 --days 42
+(cd viewer && npm install && npm run build)
+cargo run --release -p protogaea-server -- --seed 5 --viewer viewer/dist # the viewer on http://127.0.0.1:8080
 ```
 
-- [core/](core/README.md) — the deterministic simulation core, with its status against the specification.
-- [harness/](harness/README.md) — the balance harness and the first findings.
-
-CI checks formatting, lints and tests, and compares state hashes across x86-64, ARM64, Windows, macOS and WASM.
+CI checks formatting, lints and tests (the server included), builds the viewer, and compares state hashes across x86-64, ARM64, Windows, macOS and WASM.
 
 ## Principles
 
@@ -104,7 +111,7 @@ The project is in pre-alpha, so we are **not accepting pull requests yet**. Feed
 
 ## License
 
-The current contents of this repository are licensed under the [Apache License 2.0](LICENSE). Future components will use different licenses — for example, AGPL-3.0 for the server and the web application — as described in [LICENSING.md](LICENSING.md). The name and logo are covered by the [trademark policy](TRADEMARKS.md).
+The current contents of this repository are licensed under the [Apache License 2.0](LICENSE). Some components are planned to use different licenses — for example, AGPL-3.0 for the server and the web application — as described in [LICENSING.md](LICENSING.md). The name and logo are covered by the [trademark policy](TRADEMARKS.md).
 
 ## The name
 

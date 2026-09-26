@@ -1,6 +1,6 @@
 # Contributing to Protogaea
 
-Thank you for your interest. Protogaea is at the **specification stage** (pre-alpha): the design is written down, but there is no code yet.
+Thank you for your interest. Protogaea is in **pre-alpha**: the design is written down in the specification, the deterministic core and the balance harness are nearly done, and the world server and the web viewer of the observation stage are being built. Nothing is public yet.
 
 ## What helps most right now
 

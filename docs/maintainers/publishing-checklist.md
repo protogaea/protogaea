@@ -38,7 +38,7 @@ The repository [github.com/protogaea/protogaea](https://github.com/protogaea/pro
 
 - [ ] No secrets anywhere in the Git history.
 - [ ] All links in the documentation work.
-- [ ] The README states the status honestly: pre-alpha, specification stage.
+- [ ] The README states the status honestly: pre-alpha, with what is built and what is not.
 
 ## GitHub "About"
 

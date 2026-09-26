@@ -12,7 +12,7 @@ It is a world to watch with a light layer of play. There is no winning. Your goa
 Not to watch. To kindle sparks or create wishes you need a key, which the app creates for you. There is no registration and no email.
 
 **When can I try it?**  
-There are no dates yet. The project is at the specification stage; the [roadmap](roadmap.md) shows the order of work.
+There are no dates yet. The core and the balance harness are nearly done, and a world server with a web viewer runs on a test server; the first people will see it in the closed observation test of stage B′. The [roadmap](roadmap.md) shows the order of work.
 
 ## Money and crypto
 
