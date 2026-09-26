@@ -62,6 +62,7 @@ export function compute(
   target: number,
   base: number,
   fetchSnapshot: (epoch: number) => Promise<ArrayBuffer>,
+  fetchMiracles: (from: number, to: number) => Promise<Record<number, string>>,
   onProgress: (done: number, total: number) => void,
 ): Promise<Computed> {
   const job = busy.then(async () => {
@@ -70,11 +71,12 @@ export function compute(
     const from = cont ? loaded!.epoch : base;
     const progress = (e: number) => onProgress(e - from, target - from);
     let result;
+    const miracles = await fetchMiracles(from + 1, target);
     if (cont) {
-      result = await run({ kind: 'step', target }, [], progress);
+      result = await run({ kind: 'step', target, miracles }, [], progress);
     } else {
       const snapshot = await fetchSnapshot(base);
-      result = await run({ kind: 'load', snapshot, target }, [snapshot], progress);
+      result = await run({ kind: 'load', snapshot, target, miracles }, [snapshot], progress);
     }
     loaded = { base, epoch: result.epoch };
     return {

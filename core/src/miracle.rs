@@ -220,6 +220,21 @@ pub fn check(world: &World, rules: &Ruleset, m: &Miracle) -> Result<(), &'static
     }
 }
 
+/// Whether a refusal may pass by itself (an effect ends, a cooldown runs out, the area empties),
+/// so that the wish can wait instead of being closed.
+pub fn is_transient(reason: &str) -> bool {
+    matches!(
+        reason,
+        "the area overlaps an active effect"
+            | "the region is on cooldown"
+            | "the clade was relocated recently"
+            | "revived already this world day"
+            | "too crowded around the start"
+            | "no free land at the target"
+            | "extinct too recently"
+    )
+}
+
 /// What became of each miracle, in the order they were given.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Outcomes {

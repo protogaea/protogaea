@@ -98,6 +98,8 @@ pub fn routes() -> Router<Api> {
         .route("/v0/proposals", post(propose).get(proposals))
         .route("/v0/sparks", post(sparks))
         .route("/v0/sth", get(sth))
+        .route("/v0/ledger", get(ledger))
+        .route("/v0/miracles", get(miracles))
         .route("/v0/log/{epoch}/inclusion", get(inclusion))
         .route("/v0/log/{epoch}/consistency", get(consistency))
 }
@@ -446,6 +448,39 @@ async fn proposals(State(api): State<Api>, Query(q): Query<ProposalQuery>) -> Re
     let intake = api.intake.lock().expect("the lock is never poisoned");
     match intake.wishes(q.status.as_deref(), q.limit.unwrap_or(100).min(1000)) {
         Ok(rows) => Json(json!({ "proposals": rows })).into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// The price of a miracle for the next selection and its floor (spec §19), in work units, as
+/// strings (they may exceed 2^53).
+async fn ledger(State(api): State<Api>) -> Response {
+    let intake = api.intake.lock().expect("the lock is never poisoned");
+    match intake.price() {
+        Ok(p) => Json(json!({
+            "price": p.to_string(),
+            "price_min": intake.price_min.to_string(),
+            "price_mult": { "weather": 100, "migrate": 120, "revive": 200 },
+            "per_epoch": crate::intake::PER_EPOCH,
+        }))
+        .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct RangeQuery {
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
+/// The miracles given to the world, by epoch, with their outcomes: what the time machine and
+/// any watcher need to replay the world.
+async fn miracles(State(api): State<Api>, Query(q): Query<RangeQuery>) -> Response {
+    let intake = api.intake.lock().expect("the lock is never poisoned");
+    let from = q.from.unwrap_or(0);
+    match intake.miracles(from, q.to.unwrap_or(u64::MAX / 2)) {
+        Ok(rows) => Json(json!({ "miracles": rows })).into_response(),
         Err(e) => internal(e),
     }
 }

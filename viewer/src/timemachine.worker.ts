@@ -7,6 +7,7 @@ interface Core {
   dealloc(ptr: number, len: number): void;
   load(ptr: number, len: number): bigint;
   step(n: number): bigint;
+  step_with(ptr: number, len: number): bigint;
   verify(ptr: number, len: number): number;
   map(): void;
   out_ptr(): number;
@@ -14,8 +15,8 @@ interface Core {
 }
 
 export type Request =
-  | { kind: 'load'; snapshot: ArrayBuffer; target: number }
-  | { kind: 'step'; target: number }
+  | { kind: 'load'; snapshot: ArrayBuffer; target: number; miracles: Record<number, string> }
+  | { kind: 'step'; target: number; miracles: Record<number, string> }
   | { kind: 'verify'; input: string };
 
 export type Reply =
@@ -66,7 +67,19 @@ self.onmessage = async (ev: MessageEvent<Request>) => {
     }
     if (epoch < 0) return post({ kind: 'error', message: 'no world loaded' });
     while (epoch < req.target) {
-      epoch = Number(c.step(1));
+      // Miracles are keyed by the epoch they open: stepping from e to e + 1 applies those of e + 1.
+      const m = req.miracles[epoch + 1];
+      if (m) {
+        const bytes = new TextEncoder().encode(m);
+        const ptr = c.alloc(bytes.length);
+        new Uint8Array(c.memory.buffer, ptr, bytes.length).set(bytes);
+        const at = Number(c.step_with(ptr, bytes.length));
+        c.dealloc(ptr, bytes.length);
+        if (at < 0) return post({ kind: 'error', message: output(c) });
+        epoch = at;
+      } else {
+        epoch = Number(c.step(1));
+      }
       post({ kind: 'progress', epoch });
     }
     c.map();

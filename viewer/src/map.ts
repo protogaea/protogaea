@@ -1,6 +1,6 @@
 import { Application, BlurFilter, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 
-import type { MapState, Rift } from './api';
+import type { Effect, MapState, Rift } from './api';
 import { drawGlyph, hueColor } from './glyph';
 import { glowCanvas, renderTerrain, terrainKey, TERRAIN_PX, type Region } from './terrain';
 
@@ -65,7 +65,7 @@ interface Camera {
 }
 
 interface EventSprite {
-  kind: 'Ash' | 'Drought' | 'Flood';
+  kind: Effect['kind'];
   glow: Sprite;
   core?: Sprite;
   ring?: Graphics;
@@ -575,6 +575,15 @@ export class WorldMap {
         ring.position.set(x, y);
         ev.ring = ring;
         this.events.addChild(glow, ring);
+      } else if (e.kind === 'Rain') {
+        glow.tint = 0x4fd1c5;
+        const ring = new Graphics();
+        ring.position.set(x, y);
+        ev.ring = ring;
+        this.events.addChild(glow, ring);
+      } else if (e.kind === 'Dry') {
+        glow.tint = 0xe0a040;
+        this.events.addChild(glow);
       } else {
         glow.tint = 0xffb347;
         this.events.addChild(glow);

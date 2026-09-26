@@ -7,16 +7,25 @@
 //! to E and the window of E + 1 opens.
 //!
 //! The spark log lives in `sparks.sqlite`, apart from the world's database: the world may roll
-//! back to its last snapshot after a crash, the log never does.
+//! back to its last snapshot after a crash, the log never does (the miracles applied past the
+//! snapshot are rolled back with the world).
+//!
+//! The ledger (spec §19) runs when a window closes: wishes whose work covers their price are
+//! ready; the ready ones are ranked by the share of the price they cover and up to three that do
+//! not conflict are selected; the price then moves by an eighth. The world applies the selected
+//! miracles as it steps; one refused for a reason that passes by itself (an active effect, a
+//! cooldown) goes back to the queue, one refused for good is invalidated.
 
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use protogaea_core::miracle::{check, is_transient, Outcomes};
+use protogaea_core::{Miracle, Ruleset, World};
 use protogaea_protocol::log::{consistency_proof, inclusion_proof, leaf_hash, root};
 use protogaea_protocol::spark::{challenge, next_target, Spark};
 use protogaea_protocol::sth::{Receipt, Sth};
-use protogaea_protocol::wish::{self, Wish, MAX_LIFETIME};
+use protogaea_protocol::wish::{self, Action, Source, Weather, Wish, MAX_LIFETIME};
 use protogaea_protocol::{hex, Hash};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -27,6 +36,63 @@ const KEY: &str = "operator.key";
 const FIRST_TARGET: u64 = 1 << 56;
 /// Open wishes per author key at most (spec §17).
 pub const OPEN_PER_AUTHOR: i64 = 3;
+/// Miracles per epoch at most, and each action's price multiplier in percent (spec §19).
+pub const PER_EPOCH: usize = 3;
+pub const PRICE_MULT: [u128; 3] = [100, 120, 200];
+pub const TIEBREAK_TAG: &[u8] = b"PROTOGAEA/TIEBREAK/V0";
+
+/// A wish's miracle for the core: cells as `x + y · width`.
+pub fn to_miracle(w: &Wish, width: u16) -> Miracle {
+    let cell = |(x, y): (u8, u8)| u16::from(x) + u16::from(y) * width;
+    match &w.action {
+        Action::Weather { x, y, kind } => Miracle::Weather {
+            center: cell((*x, *y)),
+            rain: *kind == Weather::Rain,
+        },
+        Action::Migrate { clade_id, from, to } => Miracle::Migrate {
+            clade_id: *clade_id,
+            from: cell(*from),
+            to: cell(*to),
+        },
+        Action::Revive {
+            source,
+            entry_id,
+            steps,
+            at,
+        } => Miracle::Revive {
+            from_museum: *source == Source::Museum,
+            entry_id: *entry_id,
+            steps: steps.clone(),
+            at: cell(*at),
+        },
+    }
+}
+
+/// Two miracles that cannot go in one epoch (spec §5): overlapping weather areas, one clade
+/// relocated twice, or targets whose 3 × 3 areas overlap.
+fn conflicts(a: &Action, b: &Action) -> bool {
+    let far = |p: (u8, u8), q: (u8, u8)| {
+        (i32::from(p.0) - i32::from(q.0))
+            .abs()
+            .max((i32::from(p.1) - i32::from(q.1)).abs())
+    };
+    let target = |a: &Action| match a {
+        Action::Migrate { to, .. } => Some(*to),
+        Action::Revive { at, .. } => Some(*at),
+        Action::Weather { .. } => None,
+    };
+    match (a, b) {
+        (Action::Weather { x, y, .. }, Action::Weather { x: x2, y: y2, .. }) => {
+            far((*x, *y), (*x2, *y2)) <= 6
+        }
+        (Action::Migrate { clade_id: c1, .. }, Action::Migrate { clade_id: c2, .. })
+            if c1 == c2 =>
+        {
+            true
+        }
+        _ => matches!((target(a), target(b)), (Some(p), Some(q)) if far(p, q) <= 2),
+    }
+}
 
 fn err(e: rusqlite::Error) -> String {
     e.to_string()
@@ -92,6 +158,8 @@ pub struct Intake {
     leaves: Vec<Hash>,
     seen: HashSet<Hash>,
     pub sth: Option<Sth>,
+    /// The floor of the price of a miracle, in work units (spec §19, `P_min`).
+    pub price_min: u128,
 }
 
 /// Reads the operator's secret key from the data directory, or makes one.
@@ -119,7 +187,12 @@ fn operator_key(data: &Path) -> Result<[u8; 32], String> {
 }
 
 impl Intake {
-    pub fn open(data: &Path, world_id: [u8; 16], ruleset_id: Hash) -> Result<Intake, String> {
+    pub fn open(
+        data: &Path,
+        world_id: [u8; 16],
+        ruleset_id: Hash,
+        price_min: u128,
+    ) -> Result<Intake, String> {
         let secret = operator_key(data)?;
         let conn = Connection::open(data.join(DB)).map_err(err)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))
@@ -163,9 +236,22 @@ impl Intake {
                  challenge BLOB NOT NULL,
                  target INTEGER NOT NULL,
                  accepted INTEGER
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS miracles (
+                 epoch INTEGER NOT NULL,
+                 idx INTEGER NOT NULL,
+                 proposal_id BLOB NOT NULL,
+                 miracle TEXT NOT NULL,
+                 outcome TEXT NOT NULL,
+                 PRIMARY KEY (epoch, idx)
+             );
+             CREATE TABLE IF NOT EXISTS ledger (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
         )
         .map_err(err)?;
+        // Columns added with the ledger, for a log made before it.
+        for column in ["reason TEXT", "executed_epoch INTEGER"] {
+            let _ = conn.execute(&format!("ALTER TABLE wishes ADD COLUMN {column}"), []);
+        }
         let operator = wish::public_key(&secret);
         Ok(Intake {
             conn,
@@ -180,7 +266,219 @@ impl Intake {
             leaves: Vec::new(),
             seen: HashSet::new(),
             sth: None,
+            price_min,
         })
+    }
+
+    /// The price of a miracle for the next selection (`P_E`), in work units.
+    pub fn price(&self) -> Result<u128, String> {
+        let v: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM ledger WHERE key = 'price'", [], |r| {
+                r.get(0)
+            })
+            .optional()
+            .map_err(err)?;
+        Ok(v.and_then(|v| v.parse().ok())
+            .unwrap_or(self.price_min)
+            .max(self.price_min))
+    }
+
+    fn set_price(&self, p: u128) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO ledger (key, value) VALUES ('price', ?1)",
+                [p.to_string()],
+            )
+            .map_err(err)?;
+        Ok(())
+    }
+
+    /// After a restart from a snapshot at `epoch`: the miracles of later epochs are undone with
+    /// the world, and their wishes go back to the queue.
+    pub fn rollback_after(&mut self, epoch: u64) -> Result<(), String> {
+        let e = epoch as i64;
+        self.conn
+            .execute_batch(&format!(
+                "DELETE FROM miracles WHERE epoch > {e};
+                 UPDATE wishes SET status = 'ready', executed_epoch = NULL, reason = NULL
+                   WHERE executed_epoch > {e} OR status = 'selected';"
+            ))
+            .map_err(err)
+    }
+
+    /// The soft check when a window opens (spec §5): open and queued wishes that can no longer
+    /// apply, for a reason that will not pass, are invalidated; their work is burned.
+    pub fn soft_check(&mut self, world: &World, rules: &Ruleset) -> Result<u32, String> {
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, bytes FROM wishes WHERE status IN ('open', 'ready')")
+                .map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?;
+            rows
+        };
+        let mut closed = 0;
+        for (id, bytes) in rows {
+            let Ok(w) = Wish::from_bytes(&bytes) else {
+                continue;
+            };
+            if let Err(why) = check(world, rules, &to_miracle(&w, world.width)) {
+                if !is_transient(why) {
+                    self.conn
+                        .execute(
+                            "UPDATE wishes SET status = 'invalidated', reason = ?2 WHERE id = ?1",
+                            params![id, why],
+                        )
+                        .map_err(err)?;
+                    closed += 1;
+                }
+            }
+        }
+        Ok(closed)
+    }
+
+    /// The ledger (spec §19), after the window's work was added: ready wishes, ranked, up to
+    /// three selected without conflicts, and the next price. Returns the selected wishes.
+    fn select(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
+        let price = self.price()?;
+        let rows: Vec<(Vec<u8>, Vec<u8>, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, bytes, work FROM wishes WHERE status IN ('open', 'ready')")
+                .map_err(err)?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(err)?
+                .collect::<Result<_, _>>()
+                .map_err(err)?;
+            rows
+        };
+        let mut ready: Vec<(Hash, Wish, u128, u128)> = Vec::new();
+        for (id, bytes, work) in rows {
+            let Ok(w) = Wish::from_bytes(&bytes) else {
+                continue;
+            };
+            let mult = PRICE_MULT[usize::from(w.action.code())];
+            let work: u128 = work.parse().unwrap_or(0);
+            if work >= price * mult / 100 {
+                self.conn
+                    .execute("UPDATE wishes SET status = 'ready' WHERE id = ?1", [&id])
+                    .map_err(err)?;
+                ready.push((blob32(id), w, work, mult));
+            }
+        }
+        // By the share of the price covered, W / mult, compared by cross-multiplication; ties by
+        // BLAKE3(tag ‖ beacon ‖ proposal_id).
+        ready.sort_by(|a, b| {
+            (b.2 * a.3).cmp(&(a.2 * b.3)).then_with(|| {
+                protogaea_protocol::hash(&[TIEBREAK_TAG, beacon, &a.0])
+                    .cmp(&protogaea_protocol::hash(&[TIEBREAK_TAG, beacon, &b.0]))
+            })
+        });
+        let mut selected: Vec<(Hash, Wish)> = Vec::new();
+        for (id, w, _, _) in &ready {
+            if selected.len() == PER_EPOCH {
+                break;
+            }
+            if selected
+                .iter()
+                .any(|(_, s)| conflicts(&s.action, &w.action))
+            {
+                continue;
+            }
+            selected.push((*id, w.clone()));
+        }
+        for (id, _) in &selected {
+            self.conn
+                .execute(
+                    "UPDATE wishes SET status = 'selected' WHERE id = ?1",
+                    [id.to_vec()],
+                )
+                .map_err(err)?;
+        }
+        let next = if ready.len() > selected.len() {
+            price + price / 8
+        } else if selected.len() < PER_EPOCH {
+            (price - price / 8).max(self.price_min)
+        } else {
+            price
+        };
+        self.set_price(next)?;
+        Ok(selected)
+    }
+
+    /// What the world did with the selected miracles of `epoch`: applied ones are executed,
+    /// refused ones wait in the queue or are invalidated. Every miracle given is logged, so that
+    /// anyone can replay the epoch.
+    pub fn record(
+        &mut self,
+        epoch: u64,
+        selected: &[(Hash, Wish)],
+        miracles: &[Miracle],
+        outcomes: &Outcomes,
+    ) -> Result<(), String> {
+        let tx = self.conn.transaction().map_err(err)?;
+        for (i, ((id, _), m)) in selected.iter().zip(miracles).enumerate() {
+            let refused = outcomes
+                .refused
+                .iter()
+                .find(|(k, _)| *k == i)
+                .map(|(_, why)| *why);
+            let (status, outcome) = match refused {
+                None => ("executed", "applied".to_string()),
+                Some(why) if is_transient(why) => ("ready", format!("deferred: {why}")),
+                Some(why) => ("invalidated", format!("refused: {why}")),
+            };
+            tx.execute(
+                "UPDATE wishes SET status = ?2, reason = ?3, executed_epoch = ?4 WHERE id = ?1",
+                params![
+                    id.to_vec(),
+                    status,
+                    refused,
+                    (status == "executed").then_some(epoch as i64)
+                ],
+            )
+            .map_err(err)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO miracles (epoch, idx, proposal_id, miracle, outcome) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    epoch as i64,
+                    i as i64,
+                    id.to_vec(),
+                    serde_json::to_string(m).map_err(|e| e.to_string())?,
+                    outcome
+                ],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)
+    }
+
+    /// The miracles given to the world for epochs `from` to `to`, in order, with their outcomes.
+    pub fn miracles(&self, from: u64, to: u64) -> Result<Vec<Value>, String> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT epoch, idx, proposal_id, miracle, outcome FROM miracles
+                 WHERE epoch BETWEEN ?1 AND ?2 ORDER BY epoch, idx LIMIT 5000",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![from as i64, to as i64], |r| {
+                Ok(json!({
+                    "epoch": r.get::<_, i64>(0)?,
+                    "proposal_id": hex(&r.get::<_, Vec<u8>>(2)?),
+                    "miracle": serde_json::from_str::<Value>(&r.get::<_, String>(3)?).unwrap_or(Value::Null),
+                    "outcome": r.get::<_, String>(4)?,
+                }))
+            })
+            .map_err(err)?;
+        rows.map(|r| r.map_err(err)).collect()
     }
 
     /// Opens the window of `epoch`, whose challenge commits to the previous header (`prev_root`
@@ -259,10 +557,11 @@ impl Intake {
     }
 
     /// Closes the window: the final signed tree head, the work of its sparks added to their
-    /// wishes, and wishes past their lifetime expired. Returns the final head.
-    pub fn close_window(&mut self) -> Result<Option<Sth>, String> {
+    /// wishes, open wishes past their lifetime expired (queued ones wait), and the ledger's
+    /// selection. Returns the wishes selected for the epoch.
+    pub fn close_window(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
         if !self.open {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         self.open = false;
         let sth = self.sign_head(true)?;
@@ -302,7 +601,8 @@ impl Intake {
         )
         .map_err(err)?;
         tx.commit().map_err(err)?;
-        Ok(Some(sth))
+        let _ = sth;
+        self.select(beacon)
     }
 
     /// Signs and records a tree head of the current log.
@@ -568,7 +868,7 @@ impl Intake {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, bytes, author, action, created_epoch, expires_epoch, status, work FROM wishes
+                "SELECT id, bytes, author, action, created_epoch, expires_epoch, status, work, reason, executed_epoch FROM wishes
                  WHERE (?1 IS NULL OR status = ?1) ORDER BY at DESC LIMIT ?2",
             )
             .map_err(err)?;
@@ -583,6 +883,9 @@ impl Intake {
                     "expires_epoch": r.get::<_, i64>(5)?,
                     "status": r.get::<_, String>(6)?,
                     "work": r.get::<_, String>(7)?,
+                    "reason": r.get::<_, Option<String>>(8)?,
+                    "executed_epoch": r.get::<_, Option<i64>>(9)?,
+                    "price_mult": PRICE_MULT.get(r.get::<_, i64>(3)? as usize).copied().unwrap_or(100) as u64,
                 }))
             })
             .map_err(err)?;
@@ -654,7 +957,7 @@ mod tests {
     fn a_window_from_open_to_close() {
         let dir = std::env::temp_dir().join(format!("protogaea-intake-{}", now_ms()));
         std::fs::create_dir_all(&dir).unwrap();
-        let mut intake = Intake::open(&dir, [1; 16], [2; 32]).unwrap();
+        let mut intake = Intake::open(&dir, [1; 16], [2; 32], 1_000_000).unwrap();
         // An easy target, so the test finds sparks quickly.
         intake.conn.execute("INSERT INTO windows (epoch, challenge, target, accepted) VALUES (9, x'00', ?1, 20000)", [(u64::MAX / 4) as i64]).unwrap();
         intake.open_window(10, &[3; 32]).unwrap();
@@ -719,7 +1022,9 @@ mod tests {
             &proof
         ));
 
-        let fin = intake.close_window().unwrap().unwrap();
+        let selected = intake.close_window(&[0; 32]).unwrap();
+        assert!(selected.is_empty(), "far below the price");
+        let fin = intake.head(10).unwrap().unwrap();
         assert!(fin.verify(&intake.operator));
         assert_eq!(fin.tree_size, 2);
         assert_eq!(intake.ticket().err(), Some(Refusal::WindowClosed));
@@ -734,7 +1039,7 @@ mod tests {
         // The next window: a new challenge, and at its close the wish expires.
         intake.open_window(11, &[4; 32]).unwrap();
         assert_ne!(intake.challenge, t.challenge);
-        intake.close_window().unwrap();
+        intake.close_window(&[0; 32]).unwrap();
         assert_eq!(intake.wishes(Some("expired"), 10).unwrap().len(), 1);
         drop(intake);
         let _ = std::fs::remove_dir_all(&dir);

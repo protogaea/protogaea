@@ -45,7 +45,7 @@ export interface WorldInfo {
 }
 
 export interface Effect {
-  kind: 'Ash' | 'Drought' | 'Flood';
+  kind: 'Ash' | 'Drought' | 'Flood' | 'Rain' | 'Dry';
   center: number;
   radius: number;
   remaining_ticks: number;
@@ -215,6 +215,8 @@ export const api = {
       stories: StoryRow[];
       names: Record<string, string>;
     }>(`/v0/digest?since=${since}&until=${until}`),
+  miracles: (from: number, to: number) =>
+    get<{ miracles: { epoch: number; proposal_id: string; miracle: unknown; outcome: string }[] }>(`/v0/miracles?from=${from}&to=${to}`),
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),
   organism: (id: number) => get<OrganismInfo>(`/v0/organisms/${id}`),

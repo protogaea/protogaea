@@ -64,7 +64,11 @@ Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
 While the world shows epoch e, the window of epoch e + 1 is open: its challenge commits to the header of e. When the timer fires, the window closes with a final signed tree head, the work of its sparks is added to their wishes, wishes past their lifetime expire and the target moves toward 20,000 sparks an epoch; then the world steps and the next window opens. Sparks are checked in the order of spec §18: format, window, wish, duplicates, rate limits (a bucket of 40 batches per address, 10 a second), then one PoW check with the reference C yespower on at most two threads (`E_OVERLOADED` when 512 sparks wait). An invalid PoW bans the key and the address for an hour.
 
-The spark log lives in `sparks.sqlite` in the data directory, apart from the world's database, and the operator's key in `operator.key` (made on first start). Miracles are not applied yet: the work waits for the ledger and the miracles in the core.
+The spark log lives in `sparks.sqlite` in the data directory, apart from the world's database, and the operator's key in `operator.key` (made on first start).
+
+**The ledger (spec §19).** When a window closes, a wish whose work covers `P_E × price_mult / 100` becomes ready (`weather` 100, `migrate` 120, `revive` 200). Ready wishes are ranked by the share of the price they cover (compared by cross-multiplication), ties broken by `BLAKE3("PROTOGAEA/TIEBREAK/V0" ‖ beacon ‖ proposal_id)`, and up to three that do not conflict are selected; a conflicting one waits. The price then rises by an eighth if ready wishes remain, falls by an eighth (not below `--price-min`, 2,900,000 by default) if fewer than three were selected, and holds otherwise. The world applies the selected miracles as it steps into the epoch: an applied one is `executed`; one refused for a reason that passes by itself (an active effect, a cooldown, a crowded start) goes back to the queue; one refused for good is `invalidated` with the reason, and its work is burned. When a window opens, open and queued wishes that can no longer apply for good are invalidated too. Every miracle given to the world is logged with its outcome, so the time machine and any watcher can replay the epoch; after a crash the miracles past the restored snapshot are undone with the world.
+
+Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed`, `expired` (an open wish past its lifetime; queued ones do not expire), `invalidated`.
 
 | Endpoint | What it returns |
 |---|---|
@@ -73,6 +77,8 @@ The spark log lives in `sparks.sqlite` in the data directory, apart from the wor
 | `POST /v0/proposals` | a wish with its first spark: `{wish, signature, spark}` in hex; answers the `proposal_id` and the spark's receipt |
 | `GET /v0/proposals?status=&limit=` | wishes with their status and accumulated work |
 | `POST /v0/sparks` | a batch of up to 64 sparks, 72 bytes each (`application/octet-stream`); a receipt or an error for each |
+| `GET /v0/ledger` | the price of a miracle for the next selection, its floor, the multipliers and the miracles per epoch |
+| `GET /v0/miracles?from=&to=` | the miracles given to the world by epoch, as the core applies them, with their outcomes |
 | `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |
 | `GET /v0/log/{epoch}/inclusion?index=&size=`, `GET /v0/log/{epoch}/consistency?first=&second=` | inclusion and consistency proofs in the epoch's log |
 

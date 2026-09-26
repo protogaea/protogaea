@@ -159,6 +159,46 @@ impl Event {
     }
 }
 
+/// The miracles of an epoch as events for the feed: applied or refused, with the reason.
+pub fn miracle_events(
+    miracles: &[protogaea_core::Miracle],
+    outcomes: &protogaea_core::miracle::Outcomes,
+    width: u16,
+) -> Vec<Event> {
+    use protogaea_core::Miracle;
+    let xy = |c: u16| json!([c % width, c / width]);
+    miracles
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let refused = outcomes.refused.iter().find(|(k, _)| *k == i).map(|(_, w)| *w);
+            let (action, clade, mut data) = match m {
+                Miracle::Weather { center, rain } => (
+                    "weather",
+                    None,
+                    json!({ "kind": if *rain { "rain" } else { "drought" }, "at": xy(*center), "cell": center }),
+                ),
+                Miracle::Migrate { clade_id, from, to } => (
+                    "migrate",
+                    Some(*clade_id),
+                    json!({ "from": xy(*from), "at": xy(*to), "cell": to }),
+                ),
+                Miracle::Revive { from_museum, entry_id, at, .. } => (
+                    "revive",
+                    from_museum.then_some(*entry_id),
+                    json!({ "source": if *from_museum { "museum" } else { "spore_bank" }, "entry_id": entry_id, "at": xy(*at), "cell": at }),
+                ),
+            };
+            data["action"] = json!(action);
+            data["applied"] = json!(refused.is_none());
+            if let Some(why) = refused {
+                data["reason"] = json!(why);
+            }
+            Event::new("miracle", clade, data)
+        })
+        .collect()
+}
+
 /// The dominant clade is compared once per world hour, as in the harness, so that two clades
 /// trading the lead back and forth do not flood the feed.
 pub const DOMINANT_EVERY: u64 = 12;

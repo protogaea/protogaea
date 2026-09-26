@@ -211,6 +211,7 @@ ledger_root = MerkleRoot(open wishes with W, price, queue)
 ```
 
 - **Conflicts** ([spec §5](spec/spec-v0.2.md#5-naturalist-actions)): overlapping weather areas, the same clade relocated twice, occupied target cells.
+- **In the server** ([`server/src/intake.rs`](../server/src/intake.rs)), with these **Proposed** choices: ties are broken by `BLAKE3("PROTOGAEA/TIEBREAK/V0" ‖ beacon_E ‖ proposal_id)`, smaller first; a queued (ready) wish does not expire; weather areas conflict when their centers are within 6 cells, targets when within 2; a miracle refused at application for a reason that passes by itself (an active effect, a cooldown, a crowded start, a museum entry extinct too recently) stays queued with its work, one refused for good is invalidated. The ledger root is not computed yet.
 - **Candidates:** `price_mult` = `weather` 100, `migrate` 120, `revive` 200. `P_min` ≈ 8 core-hours of the reference core, expressed in work units after benchmarks.
 
 ## 8. Epoch timeline and beacon

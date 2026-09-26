@@ -9,8 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use protogaea_core::miracle::Outcomes;
 use protogaea_core::run::Run;
-use protogaea_core::{EpochReport, Ruleset, World};
+use protogaea_core::{EpochReport, Miracle, Ruleset, World};
 use serde::{Deserialize, Serialize};
 
 use protogaea_stories::{Context, Detectors};
@@ -29,6 +30,8 @@ pub struct Options {
     pub epoch_seconds: u64,
     /// Snapshots kept for the time machine, one every this many epochs.
     pub archive_every: u64,
+    /// The floor of the price of a miracle, in work units.
+    pub price_min: u128,
 }
 
 /// What the API reads while the loop runs.
@@ -150,8 +153,15 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         .and_then(|c| crate::store::header(&c, hour))?
         .and_then(|h| h["dominant_clade"].as_u64())
         .map_or(header.dominant_clade, |d| d as u32);
-    let mut intake = Intake::open(&opts.data, run.world.world_id, run.world.ruleset_id)?;
+    let mut intake = Intake::open(
+        &opts.data,
+        run.world.world_id,
+        run.world.ruleset_id,
+        opts.price_min,
+    )?;
+    intake.rollback_after(run.world.epoch)?;
     intake.open_window(run.world.epoch + 1, &run.state_root())?;
+    intake.soft_check(&run.world, &run.rules)?;
     let shared = Arc::new(Shared {
         intake: Mutex::new(intake),
         live: RwLock::new(Live {
@@ -189,13 +199,24 @@ pub fn run_loop(
             continue;
         }
         let started = Instant::now();
-        // The window of this epoch closes before the world steps into it (spec §20).
+        // The window of this epoch closes before the world steps into it (spec §20), and the
+        // ledger selects its miracles; ties are broken by the epoch's beacon.
+        let beacon = run.beacon(run.world.epoch);
+        let selected = shared
+            .intake
+            .lock()
+            .expect("the lock is never poisoned")
+            .close_window(&beacon)?;
+        let miracles: Vec<Miracle> = selected
+            .iter()
+            .map(|(_, w)| crate::intake::to_miracle(w, run.world.width))
+            .collect();
+        let (header, outcomes) = step(&mut run, &mut detectors, &mut store, &shared, &miracles)?;
         shared
             .intake
             .lock()
             .expect("the lock is never poisoned")
-            .close_window()?;
-        let header = step(&mut run, &mut detectors, &mut store, &shared)?;
+            .record(run.world.epoch, &selected, &miracles, &outcomes)?;
         {
             let mut live = shared.live.write().expect("the lock is never poisoned");
             live.world = run.world.clone();
@@ -211,6 +232,11 @@ pub fn run_loop(
             .lock()
             .expect("the lock is never poisoned")
             .open_window(run.world.epoch + 1, &run.state_root())?;
+        shared
+            .intake
+            .lock()
+            .expect("the lock is never poisoned")
+            .soft_check(&run.world, &run.rules)?;
         println!(
             "epoch {}: population {}, {} ms",
             run.world.epoch,
@@ -226,15 +252,21 @@ pub fn step(
     detectors: &mut Detectors,
     store: &mut Store,
     shared: &Shared,
-) -> Result<Header, String> {
+    miracles: &[Miracle],
+) -> Result<(Header, Outcomes), String> {
     let before = {
         let live = shared.live.read().expect("the lock is never poisoned");
         Before::of(&run.world, live.hour_dominant)
     };
     let max_id_before = run.world.organisms.last().map_or(0, |o| o.id);
-    let report = run.step();
+    let report = run.step_with(miracles);
     let header = model::header(&run.world, &report, &run.rules);
-    let events = model::events(&before, &run.world, &report, &header, &run.rules);
+    let mut events = model::events(&before, &run.world, &report, &header, &run.rules);
+    events.extend(model::miracle_events(
+        miracles,
+        &report.miracles,
+        run.world.width,
+    ));
     let stories = detectors.observe(
         &run.world,
         &report,
@@ -282,7 +314,7 @@ pub fn step(
         extinct: &report.clades_extinct,
         stories: &stories,
     })?;
-    Ok(header)
+    Ok((header, report.miracles))
 }
 
 /// Replaces the latest snapshot atomically, and archives one every `archive_every` epochs.
@@ -323,6 +355,7 @@ mod tests {
             data,
             epoch_seconds: 0,
             archive_every: 4,
+            price_min: 1_000_000,
         }
     }
 
@@ -335,7 +368,8 @@ mod tests {
         snapshot: bool,
     ) {
         for _ in 0..epochs {
-            let header = step(run, detectors, store, shared).expect("the epoch is recorded");
+            let (header, _) =
+                step(run, detectors, store, shared, &[]).expect("the epoch is recorded");
             {
                 let mut live = shared.live.write().unwrap();
                 if header.epoch.is_multiple_of(DOMINANT_EVERY) {

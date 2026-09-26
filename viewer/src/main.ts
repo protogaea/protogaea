@@ -323,12 +323,19 @@ const EVENT_ICONS: Record<string, string> = {
   flood: 'ph-drop',
   plague: 'ph-virus',
   revival: 'ph-plant',
+  miracle: 'ph-sparkle',
 };
-const MAJOR = new Set(['phase', 'bridge_closed', 'dominant_changed', 'revival', 'clade_extinct']);
+const MAJOR = new Set(['phase', 'bridge_closed', 'dominant_changed', 'revival', 'clade_extinct', 'miracle']);
 
 function eventText(e: WorldEvent): string {
   const d = e.data as Record<string, number | string | boolean>;
   const cladeLink = (id: unknown) => `<a href="${link({ ...route, clade: Number(id), organism: undefined })}">${cladeLabel(Number(id))}</a>`;
+  if (e.kind === 'miracle') {
+    const at = (e.data.at as number[] | undefined) ?? [];
+    const what = d.action === 'weather' ? (d.kind === 'rain' ? t.miracleRain : t.miracleDrought) : d.action === 'migrate' ? t.miracleMigrate : d.source === 'museum' ? t.miracleReviveMuseum : t.miracleReviveSpores;
+    const text = fmt(what, { clade: e.clade_id !== null ? cladeLink(e.clade_id) : '', x: String(at[0] ?? ''), y: String(at[1] ?? '') });
+    return d.applied ? fmt(t.miracleApplied, { what: text }) : fmt(t.miracleRefused, { what: text, reason: esc(String(d.reason ?? '')) });
+  }
   return fmt(t.events[e.kind] ?? e.kind, {
     clade: e.clade_id !== null ? cladeLink(e.clade_id) : '',
     parent: cladeLink(d.parent_id),
@@ -645,13 +652,22 @@ function allNames(): Promise<Record<string, string>> {
   return treeNames;
 }
 
+/** The miracles given to the world in epochs `from` to `to`, as the core's JSON per epoch. */
+async function miraclesBetween(from: number, to: number): Promise<Record<number, string>> {
+  if (to < from) return {};
+  const { miracles } = await api.miracles(from, to);
+  const by: Record<number, unknown[]> = {};
+  for (const m of miracles) (by[m.epoch] ??= []).push(m.miracle);
+  return Object.fromEntries(Object.entries(by).map(([e, list]) => [Number(e), JSON.stringify(list)]));
+}
+
 /** Recomputes a past epoch in the browser from the nearest earlier snapshot and checks it. */
 async function travel(epoch: number, animate: boolean) {
   const base = Math.floor(epoch / world.archive_every) * world.archive_every;
   const cont = state !== undefined && state.epoch < epoch && Math.floor(state.epoch / world.archive_every) * world.archive_every === base;
   banner(fmt(t.tmComputing, { epoch, base, pct: 0 }));
   try {
-    const c = await timeMachine.compute(epoch, base, api.snapshotBytes, (done, total) =>
+    const c = await timeMachine.compute(epoch, base, api.snapshotBytes, miraclesBetween, (done, total) =>
       banner(fmt(t.tmComputing, { epoch, base, pct: total ? Math.round((done / total) * 100) : 100 })),
     );
     if (route.epoch !== epoch) return;

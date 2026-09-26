@@ -128,6 +128,19 @@ pub fn step_epochs(n: u32) -> u64 {
     })
 }
 
+/// Steps the loaded world one epoch with the miracles given for it (a JSON array of the core's
+/// `Miracle`, as `/v0/miracles` serves them, in their order). Returns the epoch it is at.
+pub fn step_with_miracles(json: &[u8]) -> Result<u64, String> {
+    let miracles: Vec<protogaea_core::Miracle> =
+        serde_json::from_slice(json).map_err(|e| e.to_string())?;
+    Ok(RUN.with(|r| {
+        let mut r = r.borrow_mut();
+        let run = r.as_mut().expect("a world is loaded");
+        run.step_with(&miracles);
+        run.world.epoch
+    }))
+}
+
 /// The archetype an organism is counted as: 0 grazer, 1 armored, 2 hunter (as in the server).
 fn archetype(traits: &[u8]) -> u8 {
     if traits[HUNTING] >= 4 {
@@ -226,6 +239,22 @@ pub unsafe extern "C" fn load(ptr: *const u8, len: usize) -> i64 {
 #[no_mangle]
 pub extern "C" fn step(n: u32) -> u64 {
     step_epochs(n)
+}
+
+/// Steps one epoch with the miracles in the JSON of `len` bytes at `ptr`. Returns the epoch, or
+/// -1 with the error in the output.
+///
+/// # Safety
+/// `ptr` must point to `len` initialized bytes.
+#[no_mangle]
+pub unsafe extern "C" fn step_with(ptr: *const u8, len: usize) -> i64 {
+    match step_with_miracles(std::slice::from_raw_parts(ptr, len)) {
+        Ok(epoch) => epoch as i64,
+        Err(e) => {
+            put(e.into_bytes());
+            -1
+        }
+    }
 }
 
 /// Puts the map of the current state in the output.

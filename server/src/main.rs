@@ -20,13 +20,15 @@ protogaea-server — runs a Protogaea world and serves its read API
 
 USAGE:
   protogaea-server [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
-                   [--archive-every K] [--ruleset FILE] [--viewer DIR]
+                   [--archive-every K] [--price-min WORK] [--ruleset FILE] [--viewer DIR]
 
   --seed N           the world's seed for a new world (1); a saved world keeps its own
   --data DIR         where the world, snapshots and the database live (runs/server)
   --listen ADDR      the HTTP address (127.0.0.1:8080)
   --epoch-seconds S  one epoch every S seconds (300)
   --archive-every K  keep a snapshot every K epochs for the time machine (36)
+  --price-min WORK   the floor of the price of a miracle in work units (2900000: about 8 hours
+                     of one core of the reference CPU with every core busy)
   --ruleset FILE     a ruleset for a new world (the default ruleset)
   --viewer DIR       serve the viewer's static files from DIR at /app/
 
@@ -79,6 +81,7 @@ fn run() -> Result<(), String> {
         data: PathBuf::from(value(&args, "data").unwrap_or("runs/server")),
         epoch_seconds: number(&args, "epoch-seconds", 300)?,
         archive_every: number(&args, "archive-every", 36)?,
+        price_min: number(&args, "price-min", 2_900_000u128)?,
     };
     let listen = value(&args, "listen")
         .unwrap_or("127.0.0.1:8080")
