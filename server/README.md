@@ -62,7 +62,7 @@ Errors are JSON with a code: `E_NOT_FOUND`, `E_NO_SNAPSHOT`, `E_INTERNAL`.
 
 ## Wishes and sparks (stage C)
 
-While the world shows epoch e, the window of epoch e + 1 is open: its challenge commits to the header of e. When the timer fires, the window closes with a final signed tree head, the work of its sparks is added to their wishes, wishes past their lifetime expire and the target moves toward 20,000 sparks an epoch; then the world steps and the next window opens. Sparks are checked in the order of spec §18: format, window, wish, duplicates, rate limits (a bucket of 40 batches per address, 10 a second), then one PoW check with the reference C yespower on at most two threads (`E_OVERLOADED` when 512 sparks wait). An invalid PoW bans the key and the address for an hour; a spark that fails the open window but passes the one just closed is only late (the client had not seen the change yet) and is refused with `E_WINDOW_CLOSED`, without a ban.
+While the world shows epoch e, the window of epoch e + 1 is open: its challenge commits to the header of e. When the timer fires, the window closes with a final signed tree head, the work of its sparks is added to their wishes, wishes past their lifetime expire and the target moves toward 20,000 sparks an epoch; then the world steps and the next window opens. Sparks are checked in the order of spec §18: format, window, wish, duplicates, rate limits (token buckets: 40 batches per address, refilled at 10 a second; 160 per /24 or /48 subnet, at 40 a second; 40 per miner key, at 10 a second), then one PoW check with the reference C yespower on at most two threads (`E_OVERLOADED` when 512 sparks wait). An invalid PoW bans the key and the address for an hour and ends the check of its batch (the rest are answered `E_BANNED` unchecked). During the first 30 s of a window, a spark that fails it but passes the one just closed is only late (the client had not seen the change yet) and is refused with `E_WINDOW_CLOSED`, without a ban; later it counts as forged, so a forged spark never costs two hashes. `--first-weight H` makes a new log's first window take sparks worth H hashes, for load tests (see [load tests](#load-tests)).
 
 The spark log lives in `sparks.sqlite` in the data directory, apart from the world's database, and the operator's key in `operator.key` (made on first start).
 
@@ -87,6 +87,23 @@ Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed
 | `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |
 | `GET /v0/log/{epoch}` | an epoch's whole spark log for watchers: its window's challenge, target and accepted count, and every spark in log order |
 | `GET /v0/log/{epoch}/inclusion?index=&size=`, `GET /v0/log/{epoch}/consistency?first=&second=` | inclusion and consistency proofs in the epoch's log |
+
+## Load tests
+
+Run with the load test of the spark client ([`spark/examples/load.rs`](../spark/examples/load.rs)) on the test server (AMD Ryzen 5 5500, 6 cores, 12 threads), against a server on the same machine with `--beacon stand-in` (2026-09-27):
+
+| Test | Result |
+|---|---|
+| 70 honest sparks a second (20,000 an epoch, the target of spec §19), 8 clients, batches of 32, a spark worth 2 hashes | all accepted; latency p50 292 ms, p99 605 ms; 0.36 cores on average |
+| 300 a second | 296 accepted a second; p50 429 ms, p99 680 ms; 1.74 cores. 1.7% refused `E_WINDOW_CLOSED`: sent as the window closed |
+| 800 a second offered | 314 accepted a second: the ceiling of the two PoW threads (1.96 cores), about 4.5 times the target; p99 756 ms |
+| Closing a window with 19,265 sparks, then the step | 89 ms |
+| Spec §29: 10,000 forged sparks a second from 1,000 addresses (each its own /24), with 4 honest miners at the real target (256 hashes a spark) | every honest spark accepted, p50 20 ms, p99 90 ms; the server used 0.25 cores on average, 1.6 at the peak of the first second. Each address had one batch checked (one hash: the first forged spark ends it) and was banned: 1,000 answers of 200, then 69,146 of 403 |
+| The same flood from 4 subnets of 250 addresses | the same, and 228 requests refused by the subnet limit (429) |
+
+**What it leaves open.**
+- A flood from fresh addresses for every request (a large IPv6 range) is not stopped by bans: each request costs a hash, and at about 600 hashes a second the two threads and their queue fill, so honest sparks would get `E_OVERLOADED` too. The subnet limit bounds it per /48; a queue that serves keys with accepted sparks first is a candidate.
+- **The spark log grows about 190 bytes a spark** (with its indexes): at 20,000 sparks an epoch, about 1.1 GB a day and some 46 GB a season. It needs pruning or archiving of closed epochs (their leaves stay provable from the published logs) before the public season.
 
 ## The Telegram bot
 

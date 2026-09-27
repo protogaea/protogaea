@@ -34,6 +34,8 @@ pub struct Options {
     pub price_min: u128,
     /// Seed epochs from drand (the live season) or from the stand-in beacon (offline runs).
     pub drand: bool,
+    /// Hashes a spark is worth in the first window, for load tests (the default is 256).
+    pub first_weight: Option<u64>,
 }
 
 /// What the API reads while the loop runs.
@@ -184,6 +186,9 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         opts.price_min,
     )?;
     intake.rollback_after(run.world.epoch)?;
+    if let Some(w) = opts.first_weight {
+        intake.first_target = (u64::MAX / w.max(1)).min(i64::MAX as u64);
+    }
     // The challenge commits to the last signed header (the state root before headers existed).
     let prev = intake
         .header_hash(run.world.epoch)?
@@ -451,6 +456,7 @@ mod tests {
             archive_every: 4,
             price_min: 1_000_000,
             drand: false,
+            first_weight: None,
         }
     }
 

@@ -2,11 +2,12 @@
 //! first spark, spark batches, tree heads and log proofs.
 //!
 //! Intake order for a spark (spec §18): size and format, the window, the wish, duplicates, rate
-//! limits, then one PoW check, the log and the receipt. The PoW is checked outside the intake lock
-//! with the reference C yespower, on at most two threads; a full queue answers `E_OVERLOADED`. An
-//! invalid PoW bans the key and the address for an hour: an honest client never sends one.
+//! limits (per address, subnet and miner key), then one PoW check, the log and the receipt. The
+//! PoW is checked outside the intake lock with the reference C yespower, on at most two threads; a
+//! full queue answers `E_OVERLOADED`. An invalid PoW bans the key and the address for an hour (an
+//! honest client never sends one) and ends the check of its batch.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -35,6 +36,11 @@ const BAN: Duration = Duration::from_secs(3600);
 /// Spark batches per address: a bucket of this many, refilled at this rate per second.
 const BUCKET: f64 = 40.0;
 const REFILL: f64 = 10.0;
+/// The same per subnet (/24 for IPv4, /48 for IPv6) and per miner key (spec §18).
+const SUBNET_BUCKET: f64 = 160.0;
+const SUBNET_REFILL: f64 = 40.0;
+const KEY_BUCKET: f64 = 40.0;
+const KEY_REFILL: f64 = 10.0;
 /// Sparks waiting for a PoW check at most, and threads checking them.
 const QUEUE: usize = 512;
 static QUEUED: AtomicUsize = AtomicUsize::new(0);
@@ -42,7 +48,8 @@ static CHECKERS: LazyLock<tokio::sync::Semaphore> =
     LazyLock::new(|| tokio::sync::Semaphore::new(2));
 
 struct Guard {
-    buckets: HashMap<IpAddr, (f64, Instant)>,
+    /// Token buckets by a tagged key: `i` an address, `n` a subnet, `k` a miner key.
+    buckets: HashMap<Vec<u8>, (f64, Instant)>,
     banned: HashMap<Vec<u8>, Instant>,
 }
 
@@ -72,22 +79,41 @@ impl Guard {
         }
     }
 
-    fn take(&mut self, ip: IpAddr) -> bool {
+    fn take(&mut self, key: Vec<u8>, size: f64, refill: f64) -> bool {
         let now = Instant::now();
-        let (tokens, last) = self.buckets.entry(ip).or_insert((BUCKET, now));
-        *tokens = (*tokens + now.duration_since(*last).as_secs_f64() * REFILL).min(BUCKET);
-        *last = now;
         if self.buckets.len() > 100_000 {
             self.buckets
                 .retain(|_, (_, at)| now.duration_since(*at) < Duration::from_secs(60));
         }
-        let (tokens, _) = self.buckets.get_mut(&ip).expect("just inserted");
+        let (tokens, last) = self.buckets.entry(key).or_insert((size, now));
+        *tokens = (*tokens + now.duration_since(*last).as_secs_f64() * refill).min(size);
+        *last = now;
         if *tokens >= 1.0 {
             *tokens -= 1.0;
             true
         } else {
             false
         }
+    }
+
+    /// One request from an address, for sparks of these miners: a token from the address, its
+    /// subnet and each miner key (spec §18: before any PoW is checked).
+    fn admit(&mut self, ip: IpAddr, miners: &[[u8; 32]]) -> bool {
+        let tagged = |tag: u8, bytes: &[u8]| [&[tag][..], bytes].concat();
+        let subnet = match ip {
+            IpAddr::V4(a) => tagged(b'n', &a.octets()[..3]),
+            IpAddr::V6(a) => tagged(b'n', &a.octets()[..6]),
+        };
+        if !self.take(tagged(b'i', &ip_key(ip)), BUCKET, REFILL)
+            || !self.take(subnet, SUBNET_BUCKET, SUBNET_REFILL)
+        {
+            return false;
+        }
+        let mut keys: Vec<&[u8; 32]> = miners.iter().collect();
+        keys.sort();
+        keys.dedup();
+        keys.into_iter()
+            .all(|m| self.take(tagged(b'k', m), KEY_BUCKET, KEY_REFILL))
     }
 }
 
@@ -192,17 +218,19 @@ fn pow(t: &Ticket, s: &Spark) -> Option<u64> {
 }
 
 /// What the PoW check found: a spark with its weight, a spark for the window that just closed,
-/// or no spark at all.
+/// no spark at all, or not checked (after a forged spark in the same batch).
 #[derive(Clone, Copy)]
 enum Pow {
     Valid(u64),
     Late,
     Invalid,
+    Skipped,
 }
 
 /// Checks the PoW of sparks on the checking threads. `None` when the queue is full. A spark that
 /// fails the open window is checked against the one before, so a client that has not yet seen
-/// the window change is told it is late instead of being banned.
+/// the window change is told it is late instead of being banned. The first forged spark stops
+/// the batch: its sender is banned, and the rest cost nothing.
 async fn check_pow(t: Ticket, previous: Option<Ticket>, sparks: Vec<Spark>) -> Option<Vec<Pow>> {
     let n = sparks.len();
     if QUEUED.fetch_add(n, Ordering::SeqCst) + n > QUEUE {
@@ -211,12 +239,21 @@ async fn check_pow(t: Ticket, previous: Option<Ticket>, sparks: Vec<Spark>) -> O
     }
     let permit = CHECKERS.acquire().await.expect("the semaphore stays open");
     let out = tokio::task::spawn_blocking(move || {
+        let mut forged = false;
         sparks
             .iter()
-            .map(|s| match pow(&t, s) {
-                Some(w) => Pow::Valid(w),
-                None if previous.is_some_and(|p| pow(&p, s).is_some()) => Pow::Late,
-                None => Pow::Invalid,
+            .map(|s| {
+                if forged {
+                    return Pow::Skipped;
+                }
+                match pow(&t, s) {
+                    Some(w) => Pow::Valid(w),
+                    None if previous.is_some_and(|p| pow(&p, s).is_some()) => Pow::Late,
+                    None => {
+                        forged = true;
+                        Pow::Invalid
+                    }
+                }
             })
             .collect::<Vec<_>>()
     })
@@ -309,7 +346,7 @@ async fn propose(
             )
                 .into_response();
         }
-        if !g.take(addr.ip()) {
+        if !g.admit(addr.ip(), &[]) {
             return refuse(Refusal::Limit);
         }
     }
@@ -328,7 +365,7 @@ async fn propose(
             Err(r) => return refuse(r),
         };
         match intake.ticket() {
-            Ok(t) => (w, t, intake.previous),
+            Ok(t) => (w, t, intake.late_ticket()),
             Err(r) => return refuse(r),
         }
     };
@@ -349,7 +386,7 @@ async fn propose(
     let weight = match checked[0] {
         Pow::Valid(w) => w,
         Pow::Late => return refuse(Refusal::WindowClosed),
-        Pow::Invalid => {
+        Pow::Invalid | Pow::Skipped => {
             ban(&ip, &spark.miner);
             return refuse(Refusal::PowInvalid);
         }
@@ -375,7 +412,11 @@ async fn propose(
 
 fn ban(ip: &[u8], miner: &[u8; 32]) {
     let mut g = GUARD.lock().expect("the lock is never poisoned");
-    let until = Instant::now() + BAN;
+    let now = Instant::now();
+    if g.banned.len() > 100_000 {
+        g.banned.retain(|_, until| *until > now);
+    }
+    let until = now + BAN;
     g.banned.insert(ip.to_vec(), until);
     g.banned.insert(miner.to_vec(), until);
 }
@@ -400,7 +441,8 @@ async fn sparks(
             )
                 .into_response();
         }
-        if !g.take(addr.ip()) {
+        let miners: Vec<[u8; 32]> = batch.iter().map(|s| s.miner).collect();
+        if !g.admit(addr.ip(), &miners) {
             return refuse(Refusal::Limit);
         }
     }
@@ -412,7 +454,7 @@ async fn sparks(
         };
         (
             ticket,
-            intake.previous,
+            intake.late_ticket(),
             batch.iter().map(|s| intake.precheck(s)).collect(),
         )
     };
@@ -427,6 +469,7 @@ async fn sparks(
     };
     let mut passed = Vec::new();
     let mut verdict: HashMap<Spark, Result<(), Refusal>> = HashMap::new();
+    let mut skipped: HashSet<Spark> = HashSet::new();
     for (s, w) in to_check.iter().zip(&checked) {
         match w {
             Pow::Valid(w) => passed.push((*s, *w)),
@@ -436,6 +479,9 @@ async fn sparks(
             Pow::Invalid => {
                 ban(&ip, &s.miner);
                 verdict.insert(*s, Err(Refusal::PowInvalid));
+            }
+            Pow::Skipped => {
+                skipped.insert(*s);
             }
         }
     }
@@ -464,6 +510,7 @@ async fn sparks(
             |(s, p)| match (p, verdict.get(s).copied(), receipts.get(s)) {
                 (Err(r), _, _) | (Ok(()), Some(Err(r)), _) => json!({ "error": r.code() }),
                 (Ok(()), _, Some(v)) => v.clone(),
+                _ if skipped.contains(s) => json!({ "error": "E_BANNED" }),
                 _ => json!({ "error": "E_INTERNAL" }),
             },
         )

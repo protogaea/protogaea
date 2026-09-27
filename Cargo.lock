@@ -1046,6 +1046,7 @@ dependencies = [
  "protogaea-pow",
  "protogaea-protocol",
  "serde_json",
+ "socket2",
  "ureq",
 ]
 

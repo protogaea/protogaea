@@ -16,3 +16,11 @@ protogaea-pow = { path = "../pow" }
 protogaea-protocol = { path = "../protocol" }
 serde_json.workspace = true
 ureq = { version = "3", default-features = false, features = ["json"] }
+
+[dev-dependencies]
+# The load test binds each client to its own loopback address.
+socket2 = "0.6"
+
+[[example]]
+name = "load"
+required-features = ["c"]

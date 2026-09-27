@@ -134,6 +134,11 @@ pub struct Intake {
     /// The window before the open one: a spark that fails the open window's PoW but passes this
     /// one was only late (the client had not seen the change yet), not forged.
     pub previous: Option<Ticket>,
+    /// When the open window opened: a spark for the window before counts as late only while
+    /// this is younger than [`LATE_GRACE`].
+    pub opened: std::time::Instant,
+    /// The target of the first window (a spark worth 256 hashes; lower only in load tests).
+    pub first_target: u64,
     /// The floor of the price of a miracle, in work units (spec §19, `P_min`).
     pub price_min: u128,
 }
@@ -162,7 +167,17 @@ fn operator_key(data: &Path) -> Result<[u8; 32], String> {
     }
 }
 
+/// How long after a window opens a spark for the window before is taken as late, not forged:
+/// long enough for a client to see the change, short enough that a forger cannot make every
+/// check cost two hashes.
+pub const LATE_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
 impl Intake {
+    /// The window before the open one, while a spark for it may still be only late.
+    pub fn late_ticket(&self) -> Option<Ticket> {
+        self.previous.filter(|_| self.opened.elapsed() < LATE_GRACE)
+    }
+
     pub fn open(
         data: &Path,
         world_id: [u8; 16],
@@ -249,6 +264,8 @@ impl Intake {
             seen: HashSet::new(),
             sth: None,
             previous: None,
+            opened: std::time::Instant::now(),
+            first_target: FIRST_TARGET,
             price_min,
         })
     }
@@ -600,7 +617,7 @@ impl Intake {
                 let target = match last {
                     Some((t, Some(accepted))) => next_target(t as u64, accepted as u64),
                     Some((t, None)) => t as u64,
-                    None => FIRST_TARGET,
+                    None => self.first_target,
                 };
                 let c = challenge(&self.world_id, epoch, prev_root);
                 self.conn
@@ -650,6 +667,7 @@ impl Intake {
             .collect();
         self.seen = rows.iter().map(|(id, _)| blob32(id.clone())).collect();
         self.open = true;
+        self.opened = std::time::Instant::now();
         self.sign_head(false)?;
         Ok(())
     }

@@ -162,6 +162,8 @@ Used to reject duplicates and to reference receipts.
 
 An invalid PoW blocks the key and the IP temporarily (candidate: 1 hour). The verification queue is bounded; when it is full, the server responds with `E_OVERLOADED` and `Retry-After`.
 
+In the world server (**Proposed**): a request takes a token from its address (40, refilled at 10 a second), its subnet (/24 or /48; 160, at 40 a second) and each miner key in it (40, at 10 a second). The first forged spark ends the check of its batch: the rest are answered `E_BANNED` without a hash. A spark that fails the open window is checked against the window before only during the first 30 s after the change (then it is late, `E_WINDOW_CLOSED`; later it is forged), so a forged spark costs one hash, not two. The PoW is checked on two threads with a queue of 512 sparks.
+
 ### 5.7 Target adjustment (candidate)
 
 `t_E` changes only between epochs. Aim: about 20,000 accepted sparks per epoch across the network; step at most ±25%.

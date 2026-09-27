@@ -22,6 +22,7 @@ protogaea-server — runs a Protogaea world and serves its read API
 USAGE:
   protogaea-server [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
                    [--archive-every K] [--price-min WORK] [--beacon drand|stand-in]
+                   [--first-weight H]
                    [--ruleset FILE] [--viewer DIR]
 
   --seed N           the world's seed for a new world (1); a saved world keeps its own
@@ -31,7 +32,9 @@ USAGE:
   --archive-every K  keep a snapshot every K epochs for the time machine (36)
   --beacon SOURCE    drand (the default: each epoch waits for its quicknet round, 10 s after its
                      window closes) or stand-in (derived from the seed, for offline runs)
-  --price-min WORK   the floor of the price of a miracle in work units (2900000: about 8 hours
+  --price-min WORK   the floor of the price of a miracle in work units
+  --first-weight H   hashes a spark is worth in a new log's first window (default 256; for load
+                     tests) (2900000: about 8 hours
                      of one core of the reference CPU with every core busy)
   --ruleset FILE     a ruleset for a new world (the default ruleset)
   --viewer DIR       serve the viewer's static files from DIR at /app/
@@ -86,6 +89,10 @@ fn run() -> Result<(), String> {
         epoch_seconds: number(&args, "epoch-seconds", 300)?,
         archive_every: number(&args, "archive-every", 36)?,
         price_min: number(&args, "price-min", 2_900_000u128)?,
+        first_weight: value(&args, "first-weight")
+            .map(str::parse::<u64>)
+            .transpose()
+            .map_err(|e| format!("--first-weight: {e}"))?,
         drand: match value(&args, "beacon").unwrap_or("drand") {
             "drand" => true,
             "stand-in" => false,
