@@ -7,6 +7,7 @@ mod intake;
 mod intake_api;
 mod model;
 mod names;
+mod packed;
 mod store;
 mod visits;
 mod world;

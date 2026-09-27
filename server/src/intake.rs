@@ -8,7 +8,8 @@
 //!
 //! The spark log lives in `sparks.sqlite`, apart from the world's database: the world may roll
 //! back to its last snapshot after a crash, the log never does (the miracles applied past the
-//! snapshot are rolled back with the world).
+//! snapshot are rolled back with the world). The open window's sparks are rows; when it closes
+//! they are packed into one blob of about 10 bytes a spark (`packed`).
 //!
 //! The ledger (spec §19) runs when a window closes: wishes whose work covers their price are
 //! ready; the ready ones are ranked by the share of the price they cover and up to three that do
@@ -143,6 +144,101 @@ pub struct Intake {
     pub price_min: u128,
 }
 
+fn insert_spark(c: &Connection, epoch: u64, idx: u64, s: &Spark) -> Result<(), String> {
+    c.execute(
+        "INSERT INTO sparks (epoch, idx, proposal_id, miner, nonce) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            epoch as i64,
+            idx as i64,
+            s.proposal_id.to_vec(),
+            s.miner.to_vec(),
+            s.nonce as i64
+        ],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+/// An epoch's sparks kept as rows, in log order.
+fn spark_rows(c: &Connection, epoch: u64) -> Result<Vec<Spark>, String> {
+    let mut stmt = c
+        .prepare("SELECT proposal_id, miner, nonce FROM sparks WHERE epoch = ?1 ORDER BY idx")
+        .map_err(err)?;
+    let rows = stmt
+        .query_map([epoch as i64], |r| {
+            Ok(Spark {
+                proposal_id: blob32(r.get(0)?),
+                miner: blob32(r.get(1)?),
+                nonce: r.get::<_, i64>(2)? as u64,
+            })
+        })
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err);
+    rows
+}
+
+/// Packs a closed epoch's rows into one blob and drops them. Returns its sparks.
+fn pack_epoch(c: &Connection, epoch: u64) -> Result<Vec<Spark>, String> {
+    let sparks = spark_rows(c, epoch)?;
+    c.execute(
+        "INSERT OR REPLACE INTO logs (epoch, sparks) VALUES (?1, ?2)",
+        params![epoch as i64, crate::packed::pack(&sparks)],
+    )
+    .map_err(err)?;
+    c.execute("DELETE FROM sparks WHERE epoch = ?1", [epoch as i64])
+        .map_err(err)?;
+    Ok(sparks)
+}
+
+/// A log from before packing: its rows lose the spark id and the weight (both follow from the
+/// rest), the closed epochs are packed and keep only their final tree heads, and the file is
+/// compacted.
+fn migrate_sparks(c: &Connection) -> Result<(), String> {
+    if c.prepare("SELECT id, weight FROM sparks LIMIT 0").is_err() {
+        return Ok(());
+    }
+    c.execute_batch(
+        "BEGIN;
+         CREATE TABLE sparks_lean (
+             epoch INTEGER NOT NULL,
+             idx INTEGER NOT NULL,
+             proposal_id BLOB NOT NULL,
+             miner BLOB NOT NULL,
+             nonce INTEGER NOT NULL,
+             PRIMARY KEY (epoch, idx)
+         ) WITHOUT ROWID;
+         INSERT INTO sparks_lean SELECT epoch, idx, proposal_id, miner, nonce FROM sparks;
+         DROP TABLE sparks;
+         ALTER TABLE sparks_lean RENAME TO sparks;
+         COMMIT;",
+    )
+    .map_err(err)?;
+    let closed: Vec<i64> = c
+        .prepare(
+            "SELECT DISTINCT s.epoch FROM sparks s JOIN windows w ON w.epoch = s.epoch
+             WHERE w.accepted IS NOT NULL",
+        )
+        .map_err(err)?
+        .query_map([], |r| r.get(0))
+        .map_err(err)?
+        .collect::<Result<_, _>>()
+        .map_err(err)?;
+    c.execute_batch("BEGIN").map_err(err)?;
+    for e in &closed {
+        pack_epoch(c, *e as u64)?;
+    }
+    c.execute(
+        "DELETE FROM sths WHERE final = 0
+         AND epoch IN (SELECT epoch FROM windows WHERE accepted IS NOT NULL)",
+        [],
+    )
+    .map_err(err)?;
+    c.execute_batch("COMMIT; VACUUM;").map_err(err)?;
+    println!("packed the spark log of {} closed epochs", closed.len());
+    Ok(())
+}
+
 /// Reads the operator's secret key from the data directory, or makes one.
 fn operator_key(data: &Path) -> Result<[u8; 32], String> {
     let path = data.join(KEY);
@@ -206,13 +302,12 @@ impl Intake {
              CREATE TABLE IF NOT EXISTS sparks (
                  epoch INTEGER NOT NULL,
                  idx INTEGER NOT NULL,
-                 id BLOB NOT NULL UNIQUE,
                  proposal_id BLOB NOT NULL,
                  miner BLOB NOT NULL,
                  nonce INTEGER NOT NULL,
-                 weight INTEGER NOT NULL,
                  PRIMARY KEY (epoch, idx)
-             );
+             ) WITHOUT ROWID;
+             CREATE TABLE IF NOT EXISTS logs (epoch INTEGER PRIMARY KEY, sparks BLOB NOT NULL);
              CREATE TABLE IF NOT EXISTS sths (
                  epoch INTEGER NOT NULL,
                  tree_size INTEGER NOT NULL,
@@ -249,6 +344,7 @@ impl Intake {
         for column in ["reason TEXT", "executed_epoch INTEGER"] {
             let _ = conn.execute(&format!("ALTER TABLE wishes ADD COLUMN {column}"), []);
         }
+        migrate_sparks(&conn)?;
         let operator = wish::public_key(&secret);
         Ok(Intake {
             conn,
@@ -629,27 +725,21 @@ impl Intake {
                 (c, target)
             }
         };
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT id, proposal_id, miner, nonce FROM sparks WHERE epoch = ?1 ORDER BY idx",
-            )
-            .map_err(err)?;
-        let rows: Vec<(Vec<u8>, Spark)> = stmt
-            .query_map([epoch as i64], |r| {
-                Ok((
-                    r.get::<_, Vec<u8>>(0)?,
-                    Spark {
-                        proposal_id: blob32(r.get(1)?),
-                        miner: blob32(r.get(2)?),
-                        nonce: r.get::<_, i64>(3)? as u64,
-                    },
-                ))
-            })
-            .map_err(err)?
-            .collect::<Result<_, _>>()
-            .map_err(err)?;
-        drop(stmt);
+        // A window closed before (the world rolled back past it) takes sparks again: back to rows.
+        let rows = self.epoch_sparks(epoch)?;
+        {
+            let tx = self.conn.transaction().map_err(err)?;
+            if tx
+                .execute("DELETE FROM logs WHERE epoch = ?1", [epoch as i64])
+                .map_err(err)?
+                > 0
+            {
+                for (i, s) in rows.iter().enumerate() {
+                    insert_spark(&tx, epoch, i as u64, s)?;
+                }
+            }
+            tx.commit().map_err(err)?;
+        }
         if self.challenge != [0; 32] && self.epoch + 1 == epoch {
             self.previous = Some(Ticket {
                 epoch: self.epoch,
@@ -661,11 +751,8 @@ impl Intake {
         self.epoch = epoch;
         self.challenge = challenge;
         self.target = target;
-        self.leaves = rows
-            .iter()
-            .map(|(_, s)| leaf_hash(&s.leaf(epoch)))
-            .collect();
-        self.seen = rows.iter().map(|(id, _)| blob32(id.clone())).collect();
+        self.leaves = rows.iter().map(|s| leaf_hash(&s.leaf(epoch))).collect();
+        self.seen = rows.iter().map(|s| s.id(epoch)).collect();
         self.open = true;
         self.opened = std::time::Instant::now();
         self.sign_head(false)?;
@@ -688,23 +775,23 @@ impl Intake {
             params![epoch, self.leaves.len() as i64],
         )
         .map_err(err)?;
-        let sums: Vec<(Vec<u8>, i64)> = {
-            let mut stmt = tx
-                .prepare("SELECT proposal_id, sum(weight) FROM sparks WHERE epoch = ?1 GROUP BY proposal_id")
-                .map_err(err)?;
-            let rows = stmt
-                .query_map([epoch], |r| Ok((r.get(0)?, r.get(1)?)))
-                .map_err(err)?
-                .collect::<Result<_, _>>()
-                .map_err(err)?;
-            rows
-        };
+        // The heads signed along the way are no longer needed: each receipt carries its own, and
+        // any of them is proven consistent with the final one from the leaves.
+        tx.execute("DELETE FROM sths WHERE epoch = ?1 AND final = 0", [epoch])
+            .map_err(err)?;
+        // Every spark of a window weighs the same: the weight of its target.
+        let each = u128::from(protogaea_pow::weight(self.target));
+        let mut sums: std::collections::BTreeMap<Hash, u128> = std::collections::BTreeMap::new();
+        for s in pack_epoch(&tx, self.epoch)? {
+            *sums.entry(s.proposal_id).or_default() += each;
+        }
         for (id, add) in sums {
+            let id = id.to_vec();
             let work: Option<String> = tx
                 .query_row("SELECT work FROM wishes WHERE id = ?1", [&id], |r| r.get(0))
                 .optional()
                 .map_err(err)?;
-            let total = work.and_then(|w| w.parse::<u128>().ok()).unwrap_or(0) + add as u128;
+            let total = work.and_then(|w| w.parse::<u128>().ok()).unwrap_or(0) + add;
             tx.execute(
                 "UPDATE wishes SET work = ?2 WHERE id = ?1",
                 params![id, total.to_string()],
@@ -861,7 +948,7 @@ impl Intake {
     ) -> Result<Vec<Result<Receipt, Refusal>>, String> {
         let mut placed: Vec<Result<(Spark, u64), Refusal>> = Vec::new();
         let tx = self.conn.transaction().map_err(err)?;
-        for (s, weight) in sparks {
+        for (s, _) in sparks {
             if !self.open || self.epoch != ticket.epoch {
                 placed.push(Err(Refusal::WindowClosed));
                 continue;
@@ -872,20 +959,7 @@ impl Intake {
                 continue;
             }
             let idx = self.leaves.len() as u64;
-            tx.execute(
-                "INSERT INTO sparks (epoch, idx, id, proposal_id, miner, nonce, weight)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    self.epoch as i64,
-                    idx as i64,
-                    id.to_vec(),
-                    s.proposal_id.to_vec(),
-                    s.miner.to_vec(),
-                    s.nonce as i64,
-                    (*weight).min(i64::MAX as u64) as i64
-                ],
-            )
-            .map_err(err)?;
+            insert_spark(&tx, self.epoch, idx, s)?;
             self.leaves.push(leaf_hash(&s.leaf(self.epoch)));
             placed.push(Ok((*s, idx)));
         }
@@ -929,21 +1003,29 @@ impl Intake {
         if epoch == self.epoch {
             return Ok(self.leaves.clone());
         }
-        let mut stmt = self
+        Ok(self
+            .epoch_sparks(epoch)?
+            .iter()
+            .map(|s| leaf_hash(&s.leaf(epoch)))
+            .collect())
+    }
+
+    /// An epoch's sparks in log order: packed once its window closed, rows while it is open.
+    fn epoch_sparks(&self, epoch: u64) -> Result<Vec<Spark>, String> {
+        let packed: Option<Vec<u8>> = self
             .conn
-            .prepare("SELECT proposal_id, miner, nonce FROM sparks WHERE epoch = ?1 ORDER BY idx")
+            .query_row(
+                "SELECT sparks FROM logs WHERE epoch = ?1",
+                [epoch as i64],
+                |r| r.get(0),
+            )
+            .optional()
             .map_err(err)?;
-        let rows = stmt
-            .query_map([epoch as i64], |r| {
-                Ok(Spark {
-                    proposal_id: blob32(r.get(0)?),
-                    miner: blob32(r.get(1)?),
-                    nonce: r.get::<_, i64>(2)? as u64,
-                })
-            })
-            .map_err(err)?;
-        rows.map(|r| r.map(|s| leaf_hash(&s.leaf(epoch))).map_err(err))
-            .collect()
+        match packed {
+            Some(b) => crate::packed::unpack(&b)
+                .ok_or_else(|| format!("the packed log of epoch {epoch} does not read")),
+            None => spark_rows(&self.conn, epoch),
+        }
     }
 
     /// The spark log of an epoch as a watcher needs it: the window's challenge and target, how
@@ -961,22 +1043,11 @@ impl Intake {
         let Some((challenge, target, accepted)) = window else {
             return Ok(None);
         };
-        let mut stmt = self
-            .conn
-            .prepare("SELECT proposal_id, miner, nonce FROM sparks WHERE epoch = ?1 ORDER BY idx")
-            .map_err(err)?;
-        let sparks = stmt
-            .query_map([epoch as i64], |r| {
-                Ok(hex(&Spark {
-                    proposal_id: blob32(r.get(0)?),
-                    miner: blob32(r.get(1)?),
-                    nonce: r.get::<_, i64>(2)? as u64,
-                }
-                .to_bytes()))
-            })
-            .map_err(err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(err)?;
+        let sparks: Vec<String> = self
+            .epoch_sparks(epoch)?
+            .iter()
+            .map(|s| hex(&s.to_bytes()))
+            .collect();
         Ok(Some(json!({
             "epoch": epoch,
             "challenge": hex(&challenge),
@@ -1130,6 +1201,53 @@ mod tests {
         }
     }
 
+    /// A log from before packing: its closed epochs are packed and the open one stays as rows.
+    #[test]
+    fn an_old_log_is_packed() {
+        let dir = std::env::temp_dir().join(format!("protogaea-intake-old-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let c = Connection::open(dir.join(DB)).unwrap();
+            c.execute_batch(
+                "CREATE TABLE sparks (epoch INTEGER NOT NULL, idx INTEGER NOT NULL, id BLOB NOT NULL UNIQUE,
+                   proposal_id BLOB NOT NULL, miner BLOB NOT NULL, nonce INTEGER NOT NULL,
+                   weight INTEGER NOT NULL, PRIMARY KEY (epoch, idx));
+                 CREATE TABLE windows (epoch INTEGER PRIMARY KEY, challenge BLOB NOT NULL,
+                   target INTEGER NOT NULL, accepted INTEGER);
+                 INSERT INTO windows VALUES (4, x'00', 1, 2), (5, x'00', 1, NULL);",
+            )
+            .unwrap();
+            for (e, i, n) in [(4, 0, 7), (4, 1, 8), (5, 0, 9)] {
+                c.execute(
+                    "INSERT INTO sparks VALUES (?1, ?2, ?3, ?4, ?5, ?6, 2)",
+                    params![e, i, vec![n as u8; 32], vec![1u8; 32], vec![2u8; 32], n],
+                )
+                .unwrap();
+            }
+        }
+        let intake = Intake::open(&dir, [1; 16], [2; 32], 1_000_000).unwrap();
+        let nonces = |e| {
+            intake
+                .epoch_sparks(e)
+                .unwrap()
+                .iter()
+                .map(|s| s.nonce)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(nonces(4), [7, 8]);
+        assert_eq!(nonces(5), [9]);
+        let (rows, logs): (i64, i64) = intake
+            .conn
+            .query_row(
+                "SELECT (SELECT count(*) FROM sparks), (SELECT count(*) FROM logs)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((rows, logs), (1, 1), "the open epoch stays as rows");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A wish with its sparks through a window: receipts that verify, duplicates and a closed
     /// window refused, work added at the close, and the log's proofs.
     #[test]
@@ -1204,6 +1322,26 @@ mod tests {
         intake.close_window().unwrap();
         let selected = intake.select_miracles(&[0; 32]).unwrap();
         assert!(selected.is_empty(), "far below the price");
+        // The closed log is packed: no rows left, and the log and its proofs read from the blob.
+        let rows: i64 = intake
+            .conn
+            .query_row("SELECT count(*) FROM sparks WHERE epoch = 10", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 0);
+        let log = intake.log_of(10).unwrap().unwrap();
+        assert_eq!(log["sparks"][1], hex(&b.0.to_bytes()));
+        intake.epoch = 11; // as if the next window were open, so the proof reads the blob
+        let path = intake.inclusion(10, 1, 2).unwrap().unwrap();
+        assert!(protogaea_protocol::log::verify_inclusion(
+            &leaf_hash(&b.0.leaf(10)),
+            1,
+            2,
+            &path,
+            &intake.head(10).unwrap().unwrap().root
+        ));
+        intake.epoch = 10;
         let fin = intake.head(10).unwrap().unwrap();
         assert!(fin.verify(&intake.operator));
         assert_eq!(fin.tree_size, 2);

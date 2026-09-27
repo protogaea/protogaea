@@ -103,7 +103,13 @@ Run with the load test of the spark client ([`spark/examples/load.rs`](../spark/
 
 **What it leaves open.**
 - A flood from fresh addresses for every request (a large IPv6 range) is not stopped by bans: each request costs a hash, and at about 600 hashes a second the two threads and their queue fill, so honest sparks would get `E_OVERLOADED` too. The subnet limit bounds it per /48; a queue that serves keys with accepted sparks first is a candidate.
-- **The spark log grows about 190 bytes a spark** (with its indexes): at 20,000 sparks an epoch, about 1.1 GB a day and some 46 GB a season. It needs pruning or archiving of closed epochs (their leaves stay provable from the published logs) before the public season.
+- ~~The spark log grew about 190 bytes a spark~~ (a row with the spark id, its weight and two indexes: 1.1 GB a day at the target). **Now packed:** see [the spark log on disk](#the-spark-log-on-disk).
+
+## The spark log on disk
+
+The open window's sparks are rows (`sparks`, without the spark id or the weight: the id follows from the spark and the epoch, the weight from the window's target). When the window closes they are packed into one blob per epoch (`logs`, [`src/packed.rs`](src/packed.rs)): the epoch's wishes and miners are written once and each spark keeps their numbers and its nonce, and the tree heads signed along the way are dropped (each receipt carries its own; the final head stays). Everything that reads a closed log (`/v0/log/{epoch}`, the proofs, a restart that reopens a window after the world rolled back) reads the blob; the answers are the same.
+
+Measured on the test server with 16 miners: **10.0 bytes a spark** packed (19,233 sparks in 192,912 bytes), against about 190 as rows; the file adds about 10 bytes a spark over a constant of a few MB for the open window's rows. At 20,000 sparks an epoch that is about 58 MB a day and 2.4 GB a season, instead of 46 GB. A log from before packing is converted on start (closed epochs packed, the file compacted). The watcher replays the packed logs: all holds.
 
 ## The Telegram bot
 
