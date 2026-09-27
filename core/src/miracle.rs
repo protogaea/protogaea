@@ -8,8 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::genome::{TRAIT_COUNT, TRAIT_MAX};
-use crate::state::{Clade, Cooldown, Effect, EffectKind, Organism, World};
+use crate::genome::{GIFTS, TRAIT_COUNT, TRAIT_MAX};
+use crate::state::{Clade, CladeEffect, Cooldown, Effect, EffectKind, Organism, World};
 use crate::{Genome, Ruleset};
 
 /// A miracle as the core applies it. Cells are indexes `x + y · width`.
@@ -27,6 +27,14 @@ pub enum Miracle {
         steps: Vec<(u8, u8)>,
         at: u16,
     },
+    /// A patron's action for or against a clade around `center` (spec v0.3, draft): easing
+    /// (`SHELTER`, `FORAGE`, `CURE`), harm (`BLIGHT`, `EXPOSE`, `SICKNESS`), or `GIFT + k` for the
+    /// gift `genome::GIFTS[k]`.
+    Clade {
+        action: u8,
+        clade_id: u32,
+        center: u16,
+    },
 }
 
 impl Miracle {
@@ -36,6 +44,7 @@ impl Miracle {
             Miracle::Weather { .. } => 0,
             Miracle::Migrate { .. } => 1,
             Miracle::Revive { .. } => 2,
+            Miracle::Clade { .. } => 3,
         }
     }
 }
@@ -45,6 +54,23 @@ pub const COOLDOWN_WEATHER: u8 = 0;
 pub const COOLDOWN_MIGRATE: u8 = 1;
 pub const COOLDOWN_MUSEUM: u8 = 2;
 pub const COOLDOWN_SPORE: u8 = 3;
+pub const COOLDOWN_RESPITE: u8 = 4;
+pub const COOLDOWN_GIFT: u8 = 5;
+pub const COOLDOWN_CURE: u8 = 6;
+
+/// Patrons' actions (spec v0.3, draft).
+pub const SHELTER: u8 = 1;
+pub const FORAGE: u8 = 2;
+pub const CURE: u8 = 3;
+pub const BLIGHT: u8 = 4;
+pub const EXPOSE: u8 = 5;
+pub const SICKNESS: u8 = 6;
+pub const GIFT: u8 = 16;
+
+/// Whether an action harms the clade it names.
+pub fn is_harm(action: u8) -> bool {
+    (BLIGHT..=SICKNESS).contains(&action)
+}
 
 fn chebyshev(world: &World, a: usize, b: usize) -> i32 {
     let ((ax, ay), (bx, by)) = (world.coords(a), world.coords(b));
@@ -217,6 +243,67 @@ pub fn check(world: &World, rules: &Ruleset, m: &Miracle) -> Result<(), &'static
             }
             Ok(())
         }
+        Miracle::Clade {
+            action,
+            clade_id,
+            center,
+        } => {
+            let p = rules.patrons.as_ref().ok_or("no patrons in these rules")?;
+            let center = usize::from(*center);
+            if center >= cells {
+                return Err("outside the map");
+            }
+            let clade = world
+                .clades
+                .get(clade_id)
+                .filter(|c| c.living > 0)
+                .ok_or("no such living clade")?;
+            let r = i32::from(p.target_radius);
+            let here = world
+                .organisms
+                .iter()
+                .filter(|o| {
+                    o.clade_id == *clade_id && chebyshev(world, usize::from(o.cell), center) <= r
+                })
+                .count();
+            if here < p.min_members as usize {
+                return Err("too few of the clade in the area");
+            }
+            match *action {
+                SHELTER | FORAGE | CURE => {
+                    if *action == CURE && cooling(world, COOLDOWN_CURE, |k| k == *clade_id) {
+                        return Err("the clade was cured recently");
+                    }
+                    let reach = 2 * i32::from(p.area_radius);
+                    if world.clade_effects.iter().any(|e| {
+                        e.kind == *action
+                            && e.clade_id == *clade_id
+                            && chebyshev(world, usize::from(e.center), center) <= reach
+                    }) {
+                        return Err("the area overlaps an active effect");
+                    }
+                }
+                BLIGHT | EXPOSE | SICKNESS => {
+                    let population = world.organisms.len() as u64;
+                    if clade.living < p.protect_min_living
+                        || u64::from(clade.living) * 1000
+                            < u64::from(p.protect_min_permille) * population
+                    {
+                        return Err("the clade is protected");
+                    }
+                    if cooling(world, COOLDOWN_RESPITE, |k| k == *clade_id) {
+                        return Err("the clade rests from harm");
+                    }
+                }
+                a if a >= GIFT && usize::from(a - GIFT) < GIFTS.len() => {
+                    if cooling(world, COOLDOWN_GIFT, |k| k == *clade_id) {
+                        return Err("the clade was gifted recently");
+                    }
+                }
+                _ => return Err("no such action"),
+            }
+            Ok(())
+        }
     }
 }
 
@@ -232,6 +319,9 @@ pub fn is_transient(reason: &str) -> bool {
             | "too crowded around the start"
             | "no free land at the target"
             | "extinct too recently"
+            | "the clade was cured recently"
+            | "the clade rests from harm"
+            | "the clade was gifted recently"
     )
 }
 
@@ -267,7 +357,12 @@ pub fn apply(
     out
 }
 
-fn apply_one(world: &mut World, rules: &Ruleset, m: &Miracle, clades_founded: &mut Vec<u32>) {
+pub(crate) fn apply_one(
+    world: &mut World,
+    rules: &Ruleset,
+    m: &Miracle,
+    clades_founded: &mut Vec<u32>,
+) {
     let mr = &rules.miracles;
     let epoch = world.epoch;
     match m {
@@ -394,6 +489,68 @@ fn apply_one(world: &mut World, rules: &Ruleset, m: &Miracle, clades_founded: &m
                 key: *entry_id,
                 until: epoch + u64::from(rules.epochs_per_day),
             });
+        }
+        Miracle::Clade {
+            action,
+            clade_id,
+            center,
+        } => {
+            let p = rules.patrons.as_ref().expect("checked");
+            let tpe = u64::from(rules.ticks_per_epoch);
+            if *action < GIFT {
+                let ticks = if *action == CURE {
+                    p.cure_ticks
+                } else {
+                    p.effect_ticks
+                };
+                world.clade_effects.push(CladeEffect {
+                    kind: *action,
+                    clade_id: *clade_id,
+                    center: *center,
+                    radius: p.area_radius,
+                    remaining_ticks: ticks,
+                });
+                if is_harm(*action) {
+                    world.cooldowns.push(Cooldown {
+                        kind: COOLDOWN_RESPITE,
+                        key: *clade_id,
+                        until: epoch
+                            + u64::from(p.effect_ticks).div_ceil(tpe)
+                            + u64::from(p.harm_respite_epochs),
+                    });
+                } else if *action == CURE {
+                    world.cooldowns.push(Cooldown {
+                        kind: COOLDOWN_CURE,
+                        key: *clade_id,
+                        until: epoch + u64::from(p.cure_cooldown_epochs),
+                    });
+                }
+            } else {
+                // The gift goes to the youngest of the clade around the center that have room
+                // (the highest ids): they have their lives ahead to pass it on.
+                let gift = GIFTS[usize::from(action - GIFT)];
+                let r = i32::from(p.target_radius);
+                let center = usize::from(*center);
+                let takers: Vec<usize> = (0..world.organisms.len())
+                    .rev()
+                    .filter(|&k| {
+                        let o = &world.organisms[k];
+                        o.clade_id == *clade_id
+                            && !o.genome.has(gift)
+                            && o.genome.gifts.count_ones() < p.max_gifts
+                            && chebyshev(world, usize::from(o.cell), center) <= r
+                    })
+                    .take(p.gift_count as usize)
+                    .collect();
+                for k in takers {
+                    world.organisms[k].genome.gifts |= gift;
+                }
+                world.cooldowns.push(Cooldown {
+                    kind: COOLDOWN_GIFT,
+                    key: *clade_id,
+                    until: epoch + u64::from(p.gift_cooldown_epochs),
+                });
+            }
         }
     }
 }
@@ -585,5 +742,135 @@ mod tests {
         let ob = apply(&mut b, &rules, &[rain, revive], &mut Vec::new());
         assert_eq!(a.state_root(), b.state_root());
         assert_eq!(oa.applied.len(), ob.applied.len());
+    }
+}
+
+#[cfg(test)]
+mod patron_tests {
+    use super::*;
+    use crate::genome::SWIM;
+    use crate::ruleset::Patrons;
+    use crate::run::Run;
+
+    fn patron_rules() -> Ruleset {
+        Ruleset {
+            patrons: Some(Patrons::default()),
+            ..Ruleset::default()
+        }
+    }
+
+    /// The clade with the most members around one cell, and that cell.
+    fn densest(w: &World) -> (u32, u16) {
+        w.organisms
+            .iter()
+            .map(|o| {
+                let n = w
+                    .organisms
+                    .iter()
+                    .filter(|p| {
+                        p.clade_id == o.clade_id
+                            && chebyshev(w, usize::from(p.cell), usize::from(o.cell)) <= 2
+                    })
+                    .count();
+                (n, o.clade_id, o.cell)
+            })
+            .max()
+            .map(|(_, c, cell)| (c, cell))
+            .expect("organisms")
+    }
+
+    #[test]
+    fn easing_harm_and_gifts() {
+        let rules = patron_rules();
+        let mut run = Run::new(11, rules.clone());
+        for _ in 0..3 {
+            run.step();
+        }
+        let mut w = run.world;
+        let (clade_id, center) = densest(&w);
+        let act = |action| Miracle::Clade {
+            action,
+            clade_id,
+            center,
+        };
+
+        // Without patrons in the rules the action does not exist.
+        assert_eq!(
+            check(&w, &Ruleset::default(), &act(SHELTER)),
+            Err("no patrons in these rules")
+        );
+
+        let out = apply(
+            &mut w,
+            &rules,
+            &[act(SHELTER), act(SHELTER)],
+            &mut Vec::new(),
+        );
+        assert_eq!(out.applied, vec![0]);
+        assert_eq!(out.refused, vec![(1, "the area overlaps an active effect")]);
+        assert_eq!(w.clade_effects.len(), 1);
+        assert!(w.state_roots().clade_effects.is_some());
+
+        let out = apply(&mut w, &rules, &[act(GIFT), act(GIFT + 1)], &mut Vec::new());
+        assert_eq!(out.applied, vec![0]);
+        assert_eq!(out.refused, vec![(1, "the clade was gifted recently")]);
+        let gifted = w.organisms.iter().filter(|o| o.genome.has(SWIM)).count();
+        assert!((1..=10).contains(&gifted), "{gifted} gifted");
+
+        let living = w.clades[&clade_id].living;
+        let share = u64::from(living) * 1000 / w.organisms.len() as u64;
+        if living >= 20 && share >= 20 {
+            let out = apply(&mut w, &rules, &[act(BLIGHT), act(EXPOSE)], &mut Vec::new());
+            assert_eq!(out.applied, vec![0]);
+            assert_eq!(out.refused, vec![(1, "the clade rests from harm")]);
+        }
+        let strict = Ruleset {
+            patrons: Some(Patrons {
+                protect_min_living: u32::MAX,
+                ..Patrons::default()
+            }),
+            ..Ruleset::default()
+        };
+        w.cooldowns.clear();
+        assert_eq!(
+            check(&w, &strict, &act(SICKNESS)),
+            Err("the clade is protected")
+        );
+    }
+
+    #[test]
+    fn gifts_are_inherited_and_weather_falls_by_itself() {
+        let mut rules = patron_rules();
+        rules.patrons.as_mut().expect("patrons").weather_ppm = 1_000_000;
+        let mut run = Run::new(11, rules.clone());
+        let first = run.step();
+        assert!(first.natural_weather > 0, "every region gets weather");
+        for _ in 0..2 {
+            run.step();
+        }
+        let (clade_id, center) = densest(&run.world);
+        let mut w = run.world.clone();
+        let gift = Miracle::Clade {
+            action: GIFT,
+            clade_id,
+            center,
+        };
+        let out = apply(&mut w, &rules, &[gift], &mut Vec::new());
+        assert_eq!(out.applied, vec![0]);
+        assert!(w.organisms.iter().any(|o| o.genome.has(SWIM)));
+
+        // Newborns inherit gifts and lose each with `gift_loss_ppm`.
+        let parent = crate::Genome {
+            gifts: SWIM,
+            ..rules.founders[0].genome
+        };
+        let rng = crate::rng::Rng::new(&[7; 32]);
+        let kept = (0..10_000u64)
+            .filter(|&id| crate::genome::mutate(&parent, &rules, &rng, 0, id).has(SWIM))
+            .count();
+        assert!(
+            (9_700..10_000).contains(&kept),
+            "{kept} of 10,000 kept the gift"
+        );
     }
 }

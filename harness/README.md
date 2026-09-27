@@ -25,6 +25,9 @@ cargo run --release -p protogaea-harness -- arena --seeds 1..21 --days 3
 # One hunters-versus-grazers world, day by day
 cargo run --release -p protogaea-harness -- arena --trace 5
 
+# Patron bots (spec v0.3, draft): each strategy over the seeds, the §28 checks and the patrons' measures
+cargo run --release -p protogaea-harness -- patrons --seeds 1..17 --days 14 --work 150
+
 # Performance on one thread: epoch times over a world day after two days of warm-up
 cargo run --release -p protogaea-harness -- bench --seed 1 --warmup 2 --days 1
 # The same under WASI
@@ -181,6 +184,18 @@ Measured on 2026-09-26 over full 42-day seasons on fresh seeds 101 to 113 (12 se
 - **Arms races were almost never told** at either size (0.1 and 0 a season): the detector compared world-wide daily means, which swing with the hunters' booms and busts (15 to 500 hunters from one day to the next). It now compares two three-day windows with enough hunters in both; with the Season 1 numbers it tells 7 arms races in 12 seasons, in half of them.
 
 Season 1 stays at 64 × 64 unless the core gets about 2.5 times faster.
+
+## Findings (spec v0.3 draft: patrons of clades)
+
+The v0.3 draft lets players back clades: easing for their own clade (`shelter`, `forage`, `cure`), harm to a rival's (`blight`, `expose`, `sickness`), six heritable gifts, and weather as a natural event. It lives in the core behind the ruleset's optional `patrons` section: a ruleset without it keeps its id, and worlds without it keep their roots (checked byte for byte against `hash`). `patrons` runs bots that put 150 work units an epoch into wishes (about 1.5 miracles an epoch at a 10% share) under eight strategies: none, for the leader, for the weakest, random, a whale with half of all work behind one lineage, harassing the smallest clade, a war of two camps, and a mix.
+
+Four runs of 14 world days, the last on 16 seeds (2026-09-27):
+
+- **The world holds under every strategy.** No extinction; 6+ clades of 20+ during 99–100% of the time after day 3; no clade above 60% for more than a day.
+- **Helping the leader had to cost more.** With a price ×2.5 at a 20% share, the leader changed less than once in 3 days (0.96). Priced at `share² / 100` (×4 at 20%, ×9 at 30%, none at 50%+) it changes 1.6 ± 0.3 times, the no-player baseline being 1.9 ± 0.6.
+- **Harassment had to be bounded.** At 2% protection and a 12-epoch respite, 12% more named clades died than without players; at 3% and 24 epochs, 348 ± 11 against 350 ± 15.
+- **A lineage's long lead is natural.** The lineage leading after day one holds over 60% of the living for about 9 days and ends ahead of the second on 15 of 16 seeds with no players at all; a whale (9.1 days) and a war (13 of 16) do not change it.
+- **Gifts:** with five gifted organisms and 2% loss per birth, most gifts were lost to drift within 3 days and `scavenge` kept 91%; with ten gifted, 0.5% loss, `scavenge` at a third of food's value and a heavier upkeep, 20–34% of gifts are still held 3 days later, `keen` 16% (now +4 defense).
 
 ## Findings (stage A3: the Season 1 numbers)
 

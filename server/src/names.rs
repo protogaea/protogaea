@@ -188,6 +188,7 @@ mod tests {
             dispersal: 0,
             boldness: 0,
             hue: 0,
+            gifts: 0,
         }
     }
 

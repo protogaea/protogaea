@@ -62,6 +62,9 @@ pub struct Roots {
     /// Present only while miracles' cooldowns run.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cooldowns: Option<String>,
+    /// Present only while patrons' easing or harm runs (spec v0.3, draft).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub clade_effects: Option<String>,
 }
 
 impl From<&StateRoots> for Roots {
@@ -77,6 +80,7 @@ impl From<&StateRoots> for Roots {
             spore_bank: hex(&r.spore_bank),
             revivals: hex(&r.revivals),
             cooldowns: r.cooldowns.as_ref().map(|c| hex(c)),
+            clade_effects: r.clade_effects.as_ref().map(|c| hex(c)),
         }
     }
 }
@@ -187,6 +191,11 @@ pub fn miracle_events(
                     "revive",
                     from_museum.then_some(*entry_id),
                     json!({ "source": if *from_museum { "museum" } else { "spore_bank" }, "entry_id": entry_id, "at": xy(*at), "cell": at }),
+                ),
+                Miracle::Clade { action, clade_id, center } => (
+                    "clade",
+                    Some(*clade_id),
+                    json!({ "kind": action, "at": xy(*center), "cell": center }),
                 ),
             };
             data["action"] = json!(action);

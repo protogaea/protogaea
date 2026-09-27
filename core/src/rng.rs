@@ -84,6 +84,15 @@ pub enum Purpose {
     RevivalSite = 34,
     /// Which biome mix goes to which plate at genesis.
     PlateMix = 35,
+    /// Whether a newborn loses a gift; `k` is the gift's bit.
+    GiftLoss = 36,
+    /// Whether a member of a clade under `sickness` dies this tick.
+    Sickness = 37,
+    /// Natural weather: whether a region gets it this epoch (the subject is the region), where,
+    /// and whether it is rain.
+    WeatherChance = 38,
+    WeatherSite = 39,
+    WeatherKind = 40,
 }
 
 /// A stateless source of randomness bound to one seed.

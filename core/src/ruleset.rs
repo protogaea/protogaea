@@ -80,6 +80,7 @@ fn default_founders() -> Vec<Founder> {
             dispersal,
             boldness,
             hue,
+            gifts: 0,
         },
         biome,
     };
@@ -277,6 +278,91 @@ impl Default for Miracles {
     }
 }
 
+/// Patrons of clades (spec v0.3, draft): help for a clade (easing, gifts), harm to a rival, and
+/// weather as a natural event. A ruleset without this section plays as v0.2.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Patrons {
+    /// Easing and harm cover the square of this radius (3: 7 × 7) around their center.
+    pub area_radius: u8,
+    /// A clade's members counted around the center (2: 5 × 5), and how many are needed there.
+    pub target_radius: u8,
+    pub min_members: u32,
+    /// How long easing and harm last, and `cure`; a clade is cured at most once per
+    /// `cure_cooldown_epochs`.
+    pub effect_ticks: u32,
+    pub cure_ticks: u32,
+    pub cure_cooldown_epochs: u32,
+    /// `shelter` adds to the clade's defense, `expose` takes from it.
+    pub shelter_defense: i32,
+    pub expose_defense: i32,
+    /// `forage` lowers the clade's metabolism, `blight` raises it, in percent.
+    pub forage_metabolism_pct: i32,
+    pub blight_metabolism_pct: i32,
+    /// `sickness`: the chance per tick that a member of the clade in the area dies.
+    pub sickness_ppm: u32,
+    /// Harm is refused against a clade with fewer members than this or a smaller share of the
+    /// living (per mille); after harm, a clade rests from harm for `harm_respite_epochs`.
+    pub protect_min_living: u32,
+    pub protect_min_permille: u32,
+    pub harm_respite_epochs: u32,
+    /// A gift goes to this many members around the center; a clade gets at most one gift per
+    /// `gift_cooldown_epochs`. A newborn loses each gift with `gift_loss_ppm`; an organism holds
+    /// at most `max_gifts`.
+    pub gift_count: u32,
+    pub gift_cooldown_epochs: u32,
+    pub gift_loss_ppm: u32,
+    pub max_gifts: u32,
+    /// Energy per tick for each gift held, in the order of `genome::GIFTS`.
+    pub gift_upkeep: [i32; 6],
+    /// `venom`, `camo` and `keen` (which sees danger coming) add to defense; a hunter that kills
+    /// a venomous organism loses this share of its energy.
+    pub venom_defense: i32,
+    pub venom_drain_pct: i32,
+    pub camo_defense: i32,
+    pub keen_defense: i32,
+    /// `scavenge`: detritus eaten is worth this share of food, in percent.
+    pub scavenge_value_pct: i32,
+    /// Natural weather: the map is split into regions, and each gets rain or drought with this
+    /// chance per epoch (the effect of the v0.2 `weather` miracle).
+    pub weather_regions_x: u8,
+    pub weather_regions_y: u8,
+    pub weather_ppm: u32,
+}
+
+impl Default for Patrons {
+    fn default() -> Self {
+        Self {
+            area_radius: 3,
+            target_radius: 2,
+            min_members: 10,
+            effect_ticks: 36,
+            cure_ticks: 72,
+            cure_cooldown_epochs: 36,
+            shelter_defense: 10,
+            expose_defense: 10,
+            forage_metabolism_pct: 20,
+            blight_metabolism_pct: 20,
+            sickness_ppm: 10_000,
+            protect_min_living: 20,
+            protect_min_permille: 30,
+            harm_respite_epochs: 24,
+            gift_count: 10,
+            gift_cooldown_epochs: 36,
+            gift_loss_ppm: 5_000,
+            max_gifts: 2,
+            gift_upkeep: [10, 10, 10, 2, 5, 15],
+            venom_defense: 6,
+            venom_drain_pct: 30,
+            camo_defense: 6,
+            keen_defense: 4,
+            scavenge_value_pct: 33,
+            weather_regions_x: 4,
+            weather_regions_y: 2,
+            weather_ppm: 30_000,
+        }
+    }
+}
+
 /// Natural revival from the spore bank and the end of a season by extinction (spec §12).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revival {
@@ -364,6 +450,10 @@ pub struct Ruleset {
     pub weights: MoveWeights,
     #[serde(default)]
     pub miracles: Miracles,
+    /// Patrons of clades (spec v0.3, draft). Absent, the world plays as v0.2, and the ruleset id
+    /// stays what it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patrons: Option<Patrons>,
 }
 
 impl Default for Ruleset {
@@ -503,6 +593,7 @@ impl Default for Ruleset {
                 dispersal_per_step: 10,
             },
             miracles: Miracles::default(),
+            patrons: None,
         }
     }
 }
@@ -619,6 +710,29 @@ impl Ruleset {
                     "reproduction at fertility {fertility} is inconsistent: the threshold must be \
                      at most energy_max and above the child's energy plus birth_cost"
                 ));
+            }
+        }
+        if let Some(p) = &self.patrons {
+            if p.area_radius == 0 || p.area_radius > 8 || p.target_radius > 8 {
+                return Err("patrons: radii must be 1..=8".into());
+            }
+            if p.sickness_ppm > 1_000_000
+                || p.gift_loss_ppm > 1_000_000
+                || p.weather_ppm > 1_000_000
+            {
+                return Err("patrons: chances are in ppm, at most 1,000,000".into());
+            }
+            if p.max_gifts == 0 || p.max_gifts > 6 {
+                return Err("patrons: max_gifts must be 1..=6".into());
+            }
+            if p.weather_regions_x == 0
+                || p.weather_regions_y == 0
+                || u32::from(p.weather_regions_x) * u32::from(p.weather_regions_y) > 64
+            {
+                return Err("patrons: 1 to 64 weather regions".into());
+            }
+            if !(0..100).contains(&p.forage_metabolism_pct) || p.blight_metabolism_pct < 0 {
+                return Err("patrons: forage must be 0..100 percent, blight at least 0".into());
             }
         }
         Ok(())

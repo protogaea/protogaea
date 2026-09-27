@@ -3,6 +3,7 @@
 mod arena;
 mod live;
 mod metrics;
+mod patrons;
 mod report;
 mod runner;
 
@@ -38,6 +39,11 @@ USAGE:
       Performance on one thread (spec §29): after D world days of warm-up, the time of each epoch
       (the step and the state root) over the next D days, against the targets of a world day
       under 30 s and an epoch under 100 ms at the 95th percentile.
+  protogaea-harness patrons [--strategies all] [--seeds 1..9] [--days D] [--work W] [--threads N]
+                            [--ruleset FILE]
+      Patron bots (spec v0.3, draft): for each strategy (none, leader, weak, random, whale,
+      harass, war, mixed) the seeds run with bots that back clades with W work units an epoch
+      (150: about 1.5 miracles an epoch at a 10% share); the §28 checks and the patrons' measures.
   protogaea-harness ruleset
       Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
   protogaea-harness live    [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
@@ -63,6 +69,7 @@ fn main() -> ExitCode {
         "maps" => cmd_maps(rest),
         "bench" => cmd_bench(rest),
         "arena" => cmd_arena(rest),
+        "patrons" => cmd_patrons(rest),
         "ruleset" => cmd_ruleset(),
         "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
@@ -775,6 +782,163 @@ fn cmd_live(args: &[String]) -> Result<(), String> {
         rules: load_rules(&opts)?,
         credentials,
     })
+}
+
+fn cmd_patrons(args: &[String]) -> Result<(), String> {
+    use patrons::{Bots, Strategy, Tally};
+    let opts = Options::parse(
+        args,
+        &["strategies", "seeds", "days", "work", "threads", "ruleset"],
+    )?;
+    let strategies: Vec<Strategy> = match opts.value("strategies").unwrap_or("all") {
+        "all" => Strategy::ALL.to_vec(),
+        list => list
+            .split(',')
+            .map(Strategy::parse)
+            .collect::<Result<_, _>>()?,
+    };
+    let seeds = parse_seeds(opts.value("seeds").unwrap_or("1..9"))?;
+    let days: f64 = opts.get("days", 14.0)?;
+    let work: u64 = opts.get("work", 150)?;
+    let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let threads: usize = opts.get("threads", default_threads)?;
+    let mut rules = load_rules(&opts)?;
+    if rules.patrons.is_none() {
+        rules.patrons = Some(protogaea_core::ruleset::Patrons::default());
+    }
+    rules.validate()?;
+    let epochs = epochs_for(days, &rules);
+    let jobs: Vec<(Strategy, u64)> = strategies
+        .iter()
+        .flat_map(|&st| seeds.iter().map(move |&seed| (st, seed)))
+        .collect();
+    println!(
+        "{} strategies × {} seeds × {days} world days, {work} work units an epoch, on {threads} threads",
+        strategies.len(),
+        seeds.len()
+    );
+    let started = std::time::Instant::now();
+    let results: Mutex<Vec<Option<(Summary, Tally)>>> = Mutex::new(vec![None; jobs.len()]);
+    let next = AtomicUsize::new(0);
+    let work_fn = || loop {
+        let k = next.fetch_add(1, Ordering::Relaxed);
+        let Some(&(strategy, seed)) = jobs.get(k) else {
+            break;
+        };
+        let mut run = Run::new(seed, rules.clone());
+        let mut tracker = Tracker::new(&run.world, &run.rules, &run.plan);
+        let mut bots = Bots::new(strategy, work, seed, &run.world);
+        for _ in 0..epochs {
+            let miracles = bots.plan(&run.world, &run.rules);
+            let report = run.step_with(&miracles);
+            bots.after(&run.world, &report, &run.rules);
+            tracker.record(&run.world, &report, &run.rules);
+            if run.world.finished(&run.rules) {
+                break;
+            }
+        }
+        let summary = tracker.summary(seed, &run.rules);
+        println!(
+            "  {:>7} seed {seed:>2}: {}/{} checks, {} help, {} harm, {} gifts",
+            strategy.name(),
+            passed(&summary),
+            summary.checks().len(),
+            bots.tally.applied_help,
+            bots.tally.applied_harm,
+            bots.tally.applied_gifts,
+        );
+        results.lock().expect("no thread panicked")[k] = Some((summary, bots.tally));
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..threads.min(jobs.len()).max(1) {
+            scope.spawn(work_fn);
+        }
+    });
+    let results: Vec<(Summary, Tally)> = results
+        .into_inner()
+        .expect("no thread panicked")
+        .into_iter()
+        .map(|r| r.expect("every job ran"))
+        .collect();
+
+    println!(
+        "\n{:>8} {:>6} {:>7} {:>7} {:>8} {:>10} {:>7} {:>6} {:>6} {:>6} {:>9} {:>9} {:>8}  {:>5}",
+        "strategy",
+        "checks",
+        "extinct",
+        "cl20≥6%",
+        "longest",
+        "dom.chg",
+        "equil%",
+        "help",
+        "harm",
+        "gifts",
+        "named†",
+        "backed60d",
+        "backed%",
+        "A>B"
+    );
+    let mut gift_events = [0u32; 6];
+    let mut gift_kept = [0u32; 6];
+    for &st in &strategies {
+        let rows: Vec<&(Summary, Tally)> = jobs
+            .iter()
+            .zip(&results)
+            .filter(|((s, _), _)| *s == st)
+            .map(|(_, r)| r)
+            .collect();
+        let n = rows.len() as f64;
+        let mean =
+            |f: &dyn Fn(&(Summary, Tally)) -> f64| rows.iter().map(|r| f(r)).sum::<f64>() / n;
+        // The standard error of a mean, to tell an effect from the spread between seeds.
+        let se = |f: &dyn Fn(&(Summary, Tally)) -> f64| {
+            let m = mean(f);
+            let var = rows.iter().map(|r| (f(r) - m).powi(2)).sum::<f64>() / (n - 1.0).max(1.0);
+            (var / n).sqrt()
+        };
+        let checks_total: usize = rows.iter().map(|r| r.0.checks().len()).sum();
+        let checks_pass: usize = rows.iter().map(|r| passed(&r.0)).sum();
+        for (_, t) in &rows {
+            for i in 0..6 {
+                gift_events[i] += t.gift_events[i];
+                gift_kept[i] += t.gift_kept[i];
+            }
+        }
+        println!(
+            "{:>8} {:>5.0}% {:>7} {:>6.0}% {:>7.1}d {:>5.2}±{:<4.2} {:>6.0}% {:>6.0} {:>6.0} {:>6.0} {:>5.0}±{:<3.0} {:>8.1}d {:>7.0}%  {:>2}/{}",
+            st.name(),
+            100.0 * checks_pass as f64 / checks_total.max(1) as f64,
+            rows.iter().filter(|r| r.0.extinct).count(),
+            mean(&|r| r.0.diverse_pct_after_day_3.unwrap_or(0.0)),
+            mean(&|r| r.0.longest_dominance_days),
+            mean(&|r| r.0.dominant_changes_per_3_days),
+            se(&|r| r.0.dominant_changes_per_3_days),
+            mean(&|r| r.0.equilibrium_pct),
+            mean(&|r| f64::from(r.1.applied_help)),
+            mean(&|r| f64::from(r.1.applied_harm)),
+            mean(&|r| f64::from(r.1.applied_gifts)),
+            mean(&|r| f64::from(r.1.named_extinct)),
+            se(&|r| f64::from(r.1.named_extinct)),
+            mean(&|r| r.1.backed_over_60_days),
+            mean(&|r| r.1.backed_final_permille as f64 / 10.0),
+            rows.iter()
+                .filter(|r| r.1.war.is_some_and(|(_, _, a, b)| a > b))
+                .count(),
+            rows.len(),
+        );
+    }
+    println!("         † named clades extinct, mean per seed; backed60d: the longest time the backed lineage held over 60%;");
+    println!("           A>B: seeds where the lineage leading after day one ends larger than the second (a war's camp A and B)");
+    let names = ["swim", "venom", "camo", "keen", "hardy", "scavenge"];
+    let kept: Vec<String> = (0..6)
+        .map(|i| format!("{} {}/{}", names[i], gift_kept[i], gift_events[i]))
+        .collect();
+    println!(
+        "gifts still held in the lineage 3 days later (kept/given): {}",
+        kept.join(", ")
+    );
+    println!("{:.0} s", started.elapsed().as_secs_f64());
+    Ok(())
 }
 
 fn passed(summary: &Summary) -> usize {

@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 
 use crate::climate::{self, SPRING, SUMMER};
-use crate::genome::{mutate, FERTILITY, HUNTING, PLANT};
+use crate::genome::{mutate, FERTILITY, HARDY, HUNTING, PLANT, SCAVENGE, SWIM, VENOM};
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
 use crate::state::{Biome, Clade, Effect, EffectKind, MuseumEntry, Organism, RiftPhase, World};
@@ -61,6 +61,8 @@ pub struct EpochReport {
     pub deaths_list: Vec<(Organism, DeathCause)>,
     /// The miracles given for this epoch that were applied, and those refused with the reason.
     pub miracles: crate::miracle::Outcomes,
+    /// Rain or drought that fell by itself (spec v0.3, draft).
+    pub natural_weather: u32,
 }
 
 /// `BLAKE3("PROTOGAEA/EPOCH_SEED/V0" ‖ world_id ‖ E ‖ beacon_E ‖ header_hash_{E−1})` (spec §14).
@@ -137,6 +139,7 @@ fn epoch_boundary(
         _ => {}
     }
     plague(world, rules, rng, report);
+    natural_weather(world, rules, rng, report);
     // 3. Miracles: weather, migrate, revive.
     report.miracles = crate::miracle::apply(world, rules, miracles, &mut report.clades_founded);
     // 4. Natural revival.
@@ -371,6 +374,54 @@ fn drought(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochRepo
     report.droughts += 1;
 }
 
+/// Weather as a natural event (spec v0.3, draft): in a world with patrons, each region of the map
+/// may get rain or drought at the epoch boundary, where a `weather` miracle could fall.
+fn natural_weather(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
+    let Some(p) = &rules.patrons else {
+        return;
+    };
+    let (w, h) = (i32::from(world.width), i32::from(world.height));
+    let (nx, ny) = (
+        i32::from(p.weather_regions_x),
+        i32::from(p.weather_regions_y),
+    );
+    for ry in 0..ny {
+        for rx in 0..nx {
+            let subject = world.epoch * 64 + (ry * nx + rx) as u64;
+            if !rng.chance_ppm(0, Purpose::WeatherChance, subject, p.weather_ppm) {
+                continue;
+            }
+            let (x0, x1) = (rx * w / nx, (rx + 1) * w / nx);
+            let (y0, y1) = (ry * h / ny, (ry + 1) * h / ny);
+            let x = x0 + rng.below(0, Purpose::WeatherSite, subject, (x1 - x0) as u64) as i32;
+            let y = y0 + rng.below(1, Purpose::WeatherSite, subject, (y1 - y0) as u64) as i32;
+            let Some(c) = world.index(x, y) else {
+                continue;
+            };
+            if !world.cells[c].biome.is_land() {
+                continue;
+            }
+            let m = crate::Miracle::Weather {
+                center: c as u16,
+                rain: rng.below(0, Purpose::WeatherKind, subject, 2) == 0,
+            };
+            if crate::miracle::check(world, rules, &m).is_ok() {
+                crate::miracle::apply_one(world, rules, &m, &mut Vec::new());
+                report.natural_weather += 1;
+            }
+        }
+    }
+}
+
+/// Whether an organism is under a patron's `cure` (spec v0.3, draft).
+fn is_cured(world: &World, o: &Organism) -> bool {
+    world.clade_effects.iter().any(|e| {
+        e.kind == crate::miracle::CURE
+            && e.clade_id == o.clade_id
+            && e.covers(world, usize::from(o.cell))
+    })
+}
+
 /// "Kill the winner": the more the largest clade dominates, the likelier a plague strikes it.
 fn plague(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochReport) {
     let ev = &rules.events;
@@ -416,6 +467,9 @@ fn plague(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut EpochRepor
     let mut dead = vec![false; world.organisms.len()];
     for i in reached {
         let o = world.organisms[i];
+        if is_cured(world, &o) {
+            continue;
+        }
         if rng.chance_ppm(0, Purpose::PlagueDeath, o.id, ev.plague_mortality_ppm) {
             dead[i] = true;
             world
@@ -585,6 +639,51 @@ struct Scratch {
     biome: Vec<Biome>,
     /// The energy cost of stepping into each cell this tick.
     move_cost: Vec<i32>,
+    /// What patrons' easing and harm do to each organism this tick (spec v0.3, draft); empty
+    /// while none runs.
+    boost: Vec<Boost>,
+}
+
+/// A patron's easing and harm on one organism, summed (spec v0.3, draft).
+#[derive(Clone, Copy, Default)]
+struct Boost {
+    defense: i32,
+    metabolism_pct: i32,
+    cured: bool,
+    sick: bool,
+}
+
+fn boost(s: &Scratch, i: usize) -> Boost {
+    s.boost.get(i).copied().unwrap_or_default()
+}
+
+/// Sums the clade effects over every organism at the start of a tick.
+fn boosts(world: &World, rules: &Ruleset, s: &mut Scratch) {
+    s.boost.clear();
+    let Some(p) = &rules.patrons else {
+        return;
+    };
+    if world.clade_effects.is_empty() {
+        return;
+    }
+    s.boost.resize(world.organisms.len(), Boost::default());
+    for (i, o) in world.organisms.iter().enumerate() {
+        for e in &world.clade_effects {
+            if e.clade_id != o.clade_id || !e.covers(world, usize::from(o.cell)) {
+                continue;
+            }
+            let b = &mut s.boost[i];
+            match e.kind {
+                crate::miracle::SHELTER => b.defense += p.shelter_defense,
+                crate::miracle::EXPOSE => b.defense -= p.expose_defense,
+                crate::miracle::FORAGE => b.metabolism_pct -= p.forage_metabolism_pct,
+                crate::miracle::BLIGHT => b.metabolism_pct += p.blight_metabolism_pct,
+                crate::miracle::CURE => b.cured = true,
+                crate::miracle::SICKNESS => b.sick = true,
+                _ => {}
+            }
+        }
+    }
 }
 
 impl Scratch {
@@ -638,6 +737,7 @@ fn run_tick(
 
     // Index organisms by cell, and note what each cell looks like to its neighbors.
     s.reset(world.cells.len(), world.organisms.len());
+    boosts(world, rules, s);
     for (i, o) in world.organisms.iter().enumerate() {
         let c = usize::from(o.cell);
         s.add(c, i as u32);
@@ -647,7 +747,7 @@ fn run_tick(
                 s.hunter[c] = (power, o.clade_id);
             }
         }
-        let defense = o.genome.defense(rules) + cover(rules, s.biome[c]);
+        let defense = o.genome.defense(rules) + cover(rules, s.biome[c]) + boost(s, i).defense;
         if defense < s.prey[c].0 {
             s.prey[c] = (defense, o.clade_id);
         }
@@ -689,15 +789,21 @@ fn run_tick(
             let delta = cost * rules.habitat_modifier_pct / 100;
             cost = if biome == preferred {
                 cost - delta
+            } else if o.genome.has(HARDY) {
+                cost + delta / 2
             } else {
                 cost + delta
             };
+        }
+        let b = boost(s, i);
+        if b.metabolism_pct != 0 {
+            cost += cost * b.metabolism_pct / 100;
         }
         if !cold.is_empty() {
             let row = usize::from(o.cell) / usize::from(world.width);
             cost += (i64::from(cost) * cold[row] / 100) as i32;
         }
-        if biome == Biome::Shallows {
+        if biome == Biome::Shallows && !o.genome.has(SWIM) {
             cost += rules.shallow_drain;
         }
         let energy = o.energy - cost - s.spent[i];
@@ -705,6 +811,13 @@ fn run_tick(
         if energy <= 0 {
             kill(world, rules, s, report, i, DeathCause::Starvation);
             continue;
+        }
+        if b.sick && !b.cured {
+            let ppm = rules.patrons.as_ref().map_or(0, |p| p.sickness_ppm);
+            if rng.chance_ppm(tick, Purpose::Sickness, o.id, ppm) {
+                kill(world, rules, s, report, i, DeathCause::Plague);
+                continue;
+            }
         }
         let age = o.age + 1;
         world.organisms[i].age = age;
@@ -825,6 +938,10 @@ fn environment(world: &mut World, rules: &Ruleset, tick: u32, s: &mut Scratch) {
         e.remaining_ticks -= 1;
         e.remaining_ticks > 0
     });
+    world.clade_effects.retain_mut(|e| {
+        e.remaining_ticks -= 1;
+        e.remaining_ticks > 0
+    });
 }
 
 /// Movement, then an attack or a meal (spec §11.2–11.4).
@@ -841,7 +958,7 @@ fn act(
     let mut pos = usize::from(me.cell);
     let steps = me.genome.steps();
     if steps > 0 {
-        let target = choose_target(world, rules, rng, tick, &me, s);
+        let target = choose_target(world, rules, rng, tick, i, &me, s);
         if target != pos {
             pos = walk(world, rules, s, i, pos, target, steps);
             world.organisms[i].cell = pos as u16;
@@ -860,6 +977,7 @@ fn act(
             let prey = world.organisms[j];
             let defense = prey.genome.defense(rules)
                 + cover(rules, s.biome[usize::from(prey.cell)])
+                + boost(s, j).defense
                 + rng.below(tick, Purpose::DefenseRoll, me.id, span) as i32;
             if attack > defense {
                 kill(world, rules, s, report, j, DeathCause::Predation);
@@ -867,6 +985,11 @@ fn act(
                     prey.energy.max(0) * rules.predation_efficiency_pct / 100 + rules.body_value;
                 let energy = &mut world.organisms[i].energy;
                 *energy = (*energy + gain).min(rules.energy_max);
+                if prey.genome.has(VENOM) {
+                    if let Some(p) = &rules.patrons {
+                        *energy -= *energy * p.venom_drain_pct / 100;
+                    }
+                }
             }
         }
     }
@@ -876,8 +999,17 @@ fn act(
         let cell = &mut world.cells[pos];
         let eaten = cell.food.min(bite);
         cell.food -= eaten;
+        // A scavenger fills the rest of its bite with detritus, worth `scavenge_value_pct` of food.
+        let mut scraps = 0;
+        if me.genome.has(SCAVENGE) && eaten < bite {
+            scraps = cell.detritus.min(bite - eaten);
+            cell.detritus -= scraps;
+        }
+        let scrap_pct = rules.patrons.as_ref().map_or(0, |p| p.scavenge_value_pct);
+        let gain = eaten as i32 * rules.plant_efficiency
+            + scraps as i32 * rules.plant_efficiency * scrap_pct / 100;
         let energy = &mut world.organisms[i].energy;
-        *energy = (*energy + eaten as i32 * rules.plant_efficiency).min(rules.energy_max);
+        *energy = (*energy + gain).min(rules.energy_max);
     }
 }
 
@@ -887,6 +1019,7 @@ fn choose_target(
     rules: &Ruleset,
     rng: &Rng,
     tick: u32,
+    i: usize,
     me: &Organism,
     s: &Scratch,
 ) -> usize {
@@ -898,7 +1031,7 @@ fn choose_target(
     let bite = u32::from(g.traits[PLANT]) * rules.bite_per_point;
     let hunter = is_hungry_hunter(me, rules);
     let my_attack = g.attack(rules);
-    let my_defense = g.defense(rules);
+    let my_defense = g.defense(rules) + boost(s, i).defense;
     let preferred = Biome::from_habitat(g.habitat);
     let caution = 4 - i64::from(g.boldness);
 
@@ -1025,7 +1158,11 @@ fn walk(
         };
         s.remove(pos, i as u32);
         s.add(n, i as u32);
-        s.spent[i] += s.move_cost[n];
+        s.spent[i] += if s.biome[n] == Biome::Shallows && world.organisms[i].genome.has(SWIM) {
+            s.move_cost[n] / 2
+        } else {
+            s.move_cost[n]
+        };
         pos = n;
     }
     pos
@@ -1057,7 +1194,10 @@ fn choose_prey(
                 if other.genome.distance(&me.genome) <= rules.kin_distance {
                     continue;
                 }
-                let margin = my_attack - (other.genome.defense(rules) + cover(rules, s.biome[n]));
+                let margin = my_attack
+                    - (other.genome.defense(rules)
+                        + cover(rules, s.biome[n])
+                        + boost(s, j).defense);
                 if margin < 0 {
                     continue;
                 }

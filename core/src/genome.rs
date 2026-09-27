@@ -20,6 +20,20 @@ pub const DISPERSAL_MAX: u8 = 3;
 pub const BOLDNESS_MAX: u8 = 3;
 pub const HUE_RANGE: u16 = 360;
 
+/// Gifts (spec v0.3, draft): heritable abilities outside the trait budget, one bit each.
+pub const SWIM: u8 = 1;
+pub const VENOM: u8 = 2;
+pub const CAMO: u8 = 4;
+pub const KEEN: u8 = 8;
+pub const HARDY: u8 = 16;
+pub const SCAVENGE: u8 = 32;
+/// The gifts in the order of `Patrons::gift_upkeep`.
+pub const GIFTS: [u8; 6] = [SWIM, VENOM, CAMO, KEEN, HARDY, SCAVENGE];
+
+fn no_gifts(g: &u8) -> bool {
+    *g == 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genome {
     /// Movement, perception, plant eating, hunting, defense and fertility: each 0–8, summing
@@ -33,6 +47,10 @@ pub struct Genome {
     pub boldness: u8,
     /// A neutral color, 0–359.
     pub hue: u16,
+    /// Gifts held (spec v0.3, draft), as bits of `GIFTS`. Absent in worlds without patrons, so
+    /// their genomes, roots and rulesets read as before.
+    #[serde(default, skip_serializing_if = "no_gifts")]
+    pub gifts: u8,
 }
 
 impl Genome {
@@ -44,6 +62,11 @@ impl Genome {
             && self.dispersal <= DISPERSAL_MAX
             && self.boldness <= BOLDNESS_MAX
             && self.hue < HUE_RANGE
+            && self.gifts < 64
+    }
+
+    pub fn has(&self, gift: u8) -> bool {
+        self.gifts & gift != 0
     }
 
     /// The number of mutation steps between two genomes: half the sum of the absolute trait
@@ -65,7 +88,7 @@ impl Genome {
 
     /// Sight radius: `1 + P / 3`.
     pub fn sight(&self) -> i32 {
-        1 + i32::from(self.traits[PERCEPTION]) / 3
+        1 + i32::from(self.traits[PERCEPTION]) / 3 + i32::from(self.has(KEEN))
     }
 
     /// `H × attack_weight + P`, before the roll.
@@ -75,9 +98,17 @@ impl Genome {
 
     /// `D × defense_weight + M + P / 2`, before the roll.
     pub fn defense(&self, rules: &Ruleset) -> i32 {
-        i32::from(self.traits[DEFENSE]) * rules.defense_weight
+        let mut d = i32::from(self.traits[DEFENSE]) * rules.defense_weight
             + i32::from(self.traits[MOVEMENT])
-            + i32::from(self.traits[PERCEPTION]) / 2
+            + i32::from(self.traits[PERCEPTION]) / 2;
+        if self.gifts != 0 {
+            if let Some(p) = &rules.patrons {
+                d += i32::from(self.has(VENOM)) * p.venom_defense
+                    + i32::from(self.has(CAMO)) * p.camo_defense
+                    + i32::from(self.has(KEEN)) * p.keen_defense;
+            }
+        }
+        d
     }
 
     /// Base metabolism plus trait upkeep, per tick, before habitat and movement.
@@ -85,6 +116,15 @@ impl Genome {
         let mut total = rules.base_metabolism;
         for (k, &t) in self.traits.iter().enumerate() {
             total += rules.trait_upkeep[k] * i32::from(t);
+        }
+        if self.gifts != 0 {
+            if let Some(p) = &rules.patrons {
+                for (k, &gift) in GIFTS.iter().enumerate() {
+                    if self.has(gift) {
+                        total += p.gift_upkeep[k];
+                    }
+                }
+            }
         }
         total
     }
@@ -147,6 +187,18 @@ pub fn mutate(parent: &Genome, rules: &Ruleset, rng: &Rng, tick: u32, subject: u
             (g.hue + HUE_RANGE - delta) % HUE_RANGE
         };
     }
+    if g.gifts != 0 {
+        if let Some(p) = &rules.patrons {
+            for (k, &gift) in GIFTS.iter().enumerate() {
+                if g.has(gift)
+                    && rng.raw(tick, Purpose::GiftLoss, subject, k as u32) % 1_000_000
+                        < u64::from(p.gift_loss_ppm)
+                {
+                    g.gifts &= !gift;
+                }
+            }
+        }
+    }
     debug_assert!(g.is_valid(rules.trait_budget));
     g
 }
@@ -172,6 +224,7 @@ mod tests {
         dispersal: 1,
         boldness: 3,
         hue: 355,
+        gifts: 0,
     };
 
     #[test]

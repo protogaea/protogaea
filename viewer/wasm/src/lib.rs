@@ -48,6 +48,9 @@ struct RootsJson {
     /// Present only while miracles' cooldowns run.
     #[serde(default)]
     cooldowns: Option<String>,
+    /// Present only while patrons' easing or harm runs (spec v0.3, draft).
+    #[serde(default)]
+    clade_effects: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -93,6 +96,7 @@ pub fn verify_proof(input: &[u8]) -> Result<bool, String> {
             spore_bank: unhex(&r.spore_bank)?,
             revivals: unhex(&r.revivals)?,
             cooldowns: r.cooldowns.as_deref().map(unhex).transpose()?,
+            clade_effects: r.clade_effects.as_deref().map(unhex).transpose()?,
         },
     };
     Ok(proof.verify(&unhex(&v.state_root)?))

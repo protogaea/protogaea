@@ -159,6 +159,26 @@ impl Effect {
     }
 }
 
+/// An effect on the members of one clade in an area (spec v0.3, draft): a patron's easing of their
+/// clade or harm to a rival. Only the clade's members in the square feel it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CladeEffect {
+    /// `miracle::SHELTER` … `miracle::SICKNESS`.
+    pub kind: u8,
+    pub clade_id: u32,
+    pub center: u16,
+    pub radius: u8,
+    pub remaining_ticks: u32,
+}
+
+impl CladeEffect {
+    pub fn covers(&self, world: &World, cell: usize) -> bool {
+        let (cx, cy) = world.coords(usize::from(self.center));
+        let (x, y) = world.coords(cell);
+        (x - cx).abs().max((y - cy).abs()) <= i32::from(self.radius)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Organism {
     pub id: u64,
@@ -211,6 +231,9 @@ pub struct World {
     /// Miracles' cooldowns still running (spec §5), in the order they started.
     #[serde(default)]
     pub cooldowns: Vec<Cooldown>,
+    /// Patrons' easing and harm still running (spec v0.3, draft), in the order they started.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clade_effects: Vec<CladeEffect>,
     /// The season ended by extinction (spec §12).
     pub ended: bool,
     pub next_organism_id: u64,
@@ -348,6 +371,12 @@ impl World {
                     self.cooldowns.iter().map(cooldown_bytes).collect(),
                 )
             }),
+            clade_effects: (!self.clade_effects.is_empty()).then(|| {
+                tree(
+                    CLADE_EFFECT,
+                    self.clade_effects.iter().map(clade_effect_bytes).collect(),
+                )
+            }),
         }
     }
 
@@ -476,6 +505,7 @@ const RIFT: &[u8] = b"PROTOGAEA/STATE/A3/RIFT";
 const SPORE: &[u8] = b"PROTOGAEA/STATE/A3/SPORE";
 const REVIVAL: &[u8] = b"PROTOGAEA/STATE/A3/REVIVAL";
 const COOLDOWN: &[u8] = b"PROTOGAEA/STATE/A3/COOLDOWN";
+const CLADE_EFFECT: &[u8] = b"PROTOGAEA/STATE/A3/CLADE_EFFECT";
 
 /// A miracle's cooldown (spec §5): a weather region (by its center), a relocated clade or a
 /// revived entry, until an epoch.
@@ -485,6 +515,16 @@ pub struct Cooldown {
     pub kind: u8,
     pub key: u32,
     pub until: u64,
+}
+
+fn clade_effect_bytes(e: &CladeEffect) -> Vec<u8> {
+    let mut out = Vec::with_capacity(12);
+    out.push(e.kind);
+    out.extend_from_slice(&e.clade_id.to_le_bytes());
+    out.extend_from_slice(&e.center.to_le_bytes());
+    out.push(e.radius);
+    out.extend_from_slice(&e.remaining_ticks.to_le_bytes());
+    out
 }
 
 fn cooldown_bytes(c: &Cooldown) -> Vec<u8> {
@@ -519,6 +559,9 @@ pub struct StateRoots {
     /// the root they had before miracles existed.
     #[serde(default)]
     pub cooldowns: Option<Hash>,
+    /// Patrons' easing and harm; absent while there are none (spec v0.3, draft).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clade_effects: Option<Hash>,
 }
 
 impl StateRoots {
@@ -541,6 +584,9 @@ impl StateRoots {
             h.update(part);
         }
         if let Some(c) = &self.cooldowns {
+            h.update(c);
+        }
+        if let Some(c) = &self.clade_effects {
             h.update(c);
         }
         *h.finalize().as_bytes()
@@ -651,4 +697,8 @@ fn push_genome(out: &mut Vec<u8>, g: &Genome) {
     out.push(g.dispersal);
     out.push(g.boldness);
     out.extend_from_slice(&g.hue.to_le_bytes());
+    // Gifts (spec v0.3, draft) only when held: genomes without them encode as before.
+    if g.gifts != 0 {
+        out.push(g.gifts);
+    }
 }
