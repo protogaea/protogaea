@@ -8,11 +8,13 @@
 //!   and consistency proofs;
 //! - [`sth`]: signed tree heads and receipts;
 //! - [`header`]: signed epoch headers with the ledger and miracles roots;
-//! - [`ledger`]: the selection of miracles and the price.
+//! - [`ledger`]: the selection of miracles and the price;
+//! - [`beacon`]: drand's quicknet rounds, their verification and the round of an epoch.
 //!
 //! Everything here is deterministic and builds for WebAssembly, so the server, the spark clients
 //! and independent watchers share one implementation.
 
+pub mod beacon;
 pub mod header;
 pub mod ledger;
 pub mod log;

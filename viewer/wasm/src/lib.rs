@@ -128,15 +128,28 @@ pub fn step_epochs(n: u32) -> u64 {
     })
 }
 
-/// Steps the loaded world one epoch with the miracles given for it (a JSON array of the core's
-/// `Miracle`, as `/v0/miracles` serves them, in their order). Returns the epoch it is at.
+/// Steps the loaded world one epoch. The JSON is either an array of the core's `Miracle` (as
+/// `/v0/miracles` serves them, in order; the stand-in beacon), or, for an epoch seeded by drand,
+/// `{"miracles": [...], "beacon": hex, "prev": hex}` with the beacon and the previous header's
+/// hash from the epoch's signed header. Returns the epoch it is at.
 pub fn step_with_miracles(json: &[u8]) -> Result<u64, String> {
+    let v: serde_json::Value = serde_json::from_slice(json).map_err(|e| e.to_string())?;
+    let (list, seed) = if v.is_array() {
+        (v, None)
+    } else {
+        let beacon: [u8; 32] = hex_arr(&v["beacon"])?;
+        let prev: [u8; 32] = hex_arr(&v["prev"])?;
+        (v["miracles"].clone(), Some((beacon, prev)))
+    };
     let miracles: Vec<protogaea_core::Miracle> =
-        serde_json::from_slice(json).map_err(|e| e.to_string())?;
+        serde_json::from_value(list).map_err(|e| e.to_string())?;
     Ok(RUN.with(|r| {
         let mut r = r.borrow_mut();
         let run = r.as_mut().expect("a world is loaded");
-        run.step_with(&miracles);
+        match seed {
+            Some((beacon, prev)) => run.step_seeded(&miracles, &beacon, &prev),
+            None => run.step_with(&miracles),
+        };
         run.world.epoch
     }))
 }
@@ -471,6 +484,7 @@ fn spark_op(req: &serde_json::Value) -> Result<serde_json::Value, String> {
                 sth_size: num(&h["sth_size"])?,
                 sth_root: hex_arr(&h["sth_root"])?,
                 beacon: hex_arr(&h["beacon"])?,
+                beacon_round: num(&h["beacon_round"]).unwrap_or(0),
                 miracles_root: hex_arr(&h["miracles_root"])?,
                 timestamp_ms: num(&h["timestamp_ms"])?,
             };

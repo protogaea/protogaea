@@ -359,6 +359,7 @@ impl Intake {
         ruleset_id: Hash,
         state_root: Hash,
         beacon: Hash,
+        beacon_round: u64,
     ) -> Result<Hash, String> {
         let prev: Option<Vec<u8>> = self
             .conn
@@ -379,6 +380,7 @@ impl Intake {
             sth_size: sth.map_or(0, |s| s.tree_size),
             sth_root: sth.map_or_else(|| root(&[]), |s| s.root),
             beacon,
+            beacon_round,
             miracles_root: self.miracles_root(epoch)?,
             timestamp_ms: now_ms(),
         };
@@ -451,7 +453,7 @@ impl Intake {
 
     /// The ledger (spec §19), after the window's work was added: ready wishes, ranked, up to
     /// three selected without conflicts, and the next price. Returns the selected wishes.
-    fn select_miracles(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
+    pub fn select_miracles(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
         let price = self.price()?;
         let rows: Vec<(Vec<u8>, Vec<u8>, String)> = {
             let mut stmt = self
@@ -655,9 +657,9 @@ impl Intake {
     /// Closes the window: the final signed tree head, the work of its sparks added to their
     /// wishes, open wishes past their lifetime expired (queued ones wait), and the ledger's
     /// selection. Returns the wishes selected for the epoch.
-    pub fn close_window(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
+    pub fn close_window(&mut self) -> Result<(), String> {
         if !self.open {
-            return Ok(Vec::new());
+            return Ok(());
         }
         self.open = false;
         let sth = self.sign_head(true)?;
@@ -698,7 +700,7 @@ impl Intake {
         .map_err(err)?;
         tx.commit().map_err(err)?;
         let _ = sth;
-        self.select_miracles(beacon)
+        Ok(())
     }
 
     /// Signs and records a tree head of the current log.
@@ -1032,20 +1034,21 @@ impl Intake {
 /// A header's fields from its bytes (the fixed layout of `protocol::header`), with its hash and
 /// signature, as the API serves it.
 fn header_json(b: &[u8], hash: &[u8], signature: &[u8]) -> Value {
-    let t = protogaea_protocol::header::HEADER_TAG.len();
-    let u64_at = |i: usize| u64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes"));
-    let h32 = |i: usize| hex(&b[i..i + 32]);
+    let Some(h) = Header::from_bytes(b) else {
+        return json!({ "error": "an unreadable header" });
+    };
     json!({
-        "epoch": u64_at(t),
-        "prev_header_hash": h32(t + 8),
-        "ruleset_id": h32(t + 40),
-        "state_root": h32(t + 72),
-        "ledger_root": h32(t + 104),
-        "sth_size": u64_at(t + 136),
-        "sth_root": h32(t + 144),
-        "beacon": h32(t + 176),
-        "miracles_root": h32(t + 208),
-        "timestamp_ms": u64_at(t + 240),
+        "epoch": h.epoch,
+        "prev_header_hash": hex(&h.prev_header_hash),
+        "ruleset_id": hex(&h.ruleset_id),
+        "state_root": hex(&h.state_root),
+        "ledger_root": hex(&h.ledger_root),
+        "sth_size": h.sth_size,
+        "sth_root": hex(&h.sth_root),
+        "beacon": hex(&h.beacon),
+        "beacon_round": h.beacon_round,
+        "miracles_root": hex(&h.miracles_root),
+        "timestamp_ms": h.timestamp_ms,
         "hash": hex(hash),
         "signature": hex(signature),
     })
@@ -1180,7 +1183,8 @@ mod tests {
             &proof
         ));
 
-        let selected = intake.close_window(&[0; 32]).unwrap();
+        intake.close_window().unwrap();
+        let selected = intake.select_miracles(&[0; 32]).unwrap();
         assert!(selected.is_empty(), "far below the price");
         let fin = intake.head(10).unwrap().unwrap();
         assert!(fin.verify(&intake.operator));
@@ -1195,7 +1199,7 @@ mod tests {
         assert_eq!(wishes[0]["status"], "open");
 
         // A signed header seals the epoch; the next one chains to it.
-        let h10 = intake.seal(10, [2; 32], [7; 32], [8; 32]).unwrap();
+        let h10 = intake.seal(10, [2; 32], [7; 32], [8; 32], 0).unwrap();
         assert_eq!(intake.header_hash(10).unwrap(), Some(h10));
         let row = &intake.headers(10, 10).unwrap()[0];
         assert_eq!(row["sth_size"], 2, "the final tree head of the epoch");
@@ -1227,6 +1231,7 @@ mod tests {
             sth_size: 2,
             sth_root: fin.root,
             beacon: [8; 32],
+            beacon_round: 0,
             miracles_root: root(&[]),
             timestamp_ms: row["timestamp_ms"].as_u64().unwrap(),
         };
@@ -1236,9 +1241,10 @@ mod tests {
         // The next window: a new challenge, and at its close the wish expires.
         intake.open_window(11, &[4; 32]).unwrap();
         assert_ne!(intake.challenge, t.challenge);
-        intake.close_window(&[0; 32]).unwrap();
+        intake.close_window().unwrap();
+        intake.select_miracles(&[0; 32]).unwrap();
         assert_eq!(intake.wishes(Some("expired"), 10).unwrap().len(), 1);
-        intake.seal(11, [2; 32], [9; 32], [8; 32]).unwrap();
+        intake.seal(11, [2; 32], [9; 32], [8; 32], 0).unwrap();
         assert_eq!(
             intake.headers(11, 11).unwrap()[0]["prev_header_hash"],
             hex(&h10)

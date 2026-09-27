@@ -4,10 +4,13 @@
 //! The encoding (Proposed) is fixed-width, little-endian:
 //!
 //! ```text
-//! "PROTOGAEA/HEADER/V0" ‖ epoch u64 ‖ prev_header_hash [32] ‖ ruleset_id [32] ‖ state_root [32]
-//! ‖ ledger_root [32] ‖ sth_size u64 ‖ sth_root [32] ‖ beacon [32] ‖ miracles_root [32]
-//! ‖ timestamp_ms u64
+//! "PROTOGAEA/HEADER/V1" ‖ epoch u64 ‖ prev_header_hash [32] ‖ ruleset_id [32] ‖ state_root [32]
+//! ‖ ledger_root [32] ‖ sth_size u64 ‖ sth_root [32] ‖ beacon [32] ‖ beacon_round u64
+//! ‖ miracles_root [32] ‖ timestamp_ms u64
 //! ```
+//!
+//! V1 carries the drand round whose value is the epoch's beacon. A header with no round (the
+//! stand-in beacon, before the world used drand) keeps the V0 layout, without `beacon_round`.
 //!
 //! `header_hash = BLAKE3(bytes)`, and the signature is Ed25519 over `header_hash`. The ledger root
 //! commits to the price and to every wish still open or queued with its work; the miracles root
@@ -18,7 +21,8 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use crate::log::{leaf_hash, root};
 use crate::{hash, Hash};
 
-pub const HEADER_TAG: &[u8] = b"PROTOGAEA/HEADER/V0";
+pub const HEADER_TAG: &[u8] = b"PROTOGAEA/HEADER/V1";
+pub const HEADER_TAG_V0: &[u8] = b"PROTOGAEA/HEADER/V0";
 pub const LEDGER_TAG: &[u8] = b"PROTOGAEA/LEDGER/V0";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +36,8 @@ pub struct Header {
     pub sth_size: u64,
     pub sth_root: Hash,
     pub beacon: Hash,
+    /// The drand round whose value is `beacon`; 0 for the stand-in beacon (a V0 header).
+    pub beacon_round: u64,
     pub miracles_root: Hash,
     /// Informational only.
     pub timestamp_ms: u64,
@@ -39,7 +45,11 @@ pub struct Header {
 
 impl Header {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = HEADER_TAG.to_vec();
+        let mut out = if self.beacon_round > 0 {
+            HEADER_TAG.to_vec()
+        } else {
+            HEADER_TAG_V0.to_vec()
+        };
         out.extend_from_slice(&self.epoch.to_le_bytes());
         out.extend_from_slice(&self.prev_header_hash);
         out.extend_from_slice(&self.ruleset_id);
@@ -48,9 +58,66 @@ impl Header {
         out.extend_from_slice(&self.sth_size.to_le_bytes());
         out.extend_from_slice(&self.sth_root);
         out.extend_from_slice(&self.beacon);
+        if self.beacon_round > 0 {
+            out.extend_from_slice(&self.beacon_round.to_le_bytes());
+        }
         out.extend_from_slice(&self.miracles_root);
         out.extend_from_slice(&self.timestamp_ms.to_le_bytes());
         out
+    }
+
+    /// Parses either layout; `None` for bytes that are neither.
+    pub fn from_bytes(b: &[u8]) -> Option<Header> {
+        let v1 = b.starts_with(HEADER_TAG);
+        if !v1 && !b.starts_with(HEADER_TAG_V0) {
+            return None;
+        }
+        let mut at = HEADER_TAG.len();
+        let want = at + 8 + 32 * 4 + 8 + 32 * 3 + 8 + if v1 { 8 } else { 0 };
+        if b.len() != want {
+            return None;
+        }
+        let mut u64_ = || {
+            let v = u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+            at += 8;
+            v
+        };
+        let epoch = u64_();
+        let h = |at: &mut usize| {
+            let v: Hash = b[*at..*at + 32].try_into().expect("32 bytes");
+            *at += 32;
+            v
+        };
+        let prev_header_hash = h(&mut at);
+        let ruleset_id = h(&mut at);
+        let state_root = h(&mut at);
+        let ledger_root = h(&mut at);
+        let sth_size = u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+        at += 8;
+        let sth_root = h(&mut at);
+        let beacon = h(&mut at);
+        let beacon_round = if v1 {
+            let r = u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+            at += 8;
+            r
+        } else {
+            0
+        };
+        let miracles_root = h(&mut at);
+        let timestamp_ms = u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+        Some(Header {
+            epoch,
+            prev_header_hash,
+            ruleset_id,
+            state_root,
+            ledger_root,
+            sth_size,
+            sth_root,
+            beacon,
+            beacon_round,
+            miracles_root,
+            timestamp_ms,
+        })
     }
 
     pub fn hash(&self) -> Hash {
@@ -109,6 +176,7 @@ mod tests {
             sth_size: 9,
             sth_root: [4; 32],
             beacon: [5; 32],
+            beacon_round: 0,
             miracles_root: root(&[miracle_leaf(&[7; 32], 0)]),
             timestamp_ms: 1_790_000_000_000,
         }
@@ -133,7 +201,24 @@ mod tests {
         assert!(!other.verify(&op, &sig), "the price is in the ledger root");
     }
 
-    /// Test vector: the sample header's hash.
+    /// Both layouts parse back to the same header; a V1 header differs from its V0 twin.
+    #[test]
+    fn layouts_round_trip() {
+        let v0 = sample();
+        assert!(v0.to_bytes().starts_with(HEADER_TAG_V0));
+        assert_eq!(Header::from_bytes(&v0.to_bytes()), Some(v0));
+        let v1 = Header {
+            beacon_round: 1_000_000,
+            ..v0
+        };
+        assert!(v1.to_bytes().starts_with(HEADER_TAG));
+        assert_eq!(v1.to_bytes().len(), v0.to_bytes().len() + 8);
+        assert_eq!(Header::from_bytes(&v1.to_bytes()), Some(v1));
+        assert_ne!(v1.hash(), v0.hash());
+        assert_eq!(Header::from_bytes(&v1.to_bytes()[1..]), None);
+    }
+
+    /// Test vector: the sample header's hash (V0, no drand round).
     #[test]
     fn header_vector() {
         assert_eq!(

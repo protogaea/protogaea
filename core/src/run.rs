@@ -77,6 +77,25 @@ impl Run {
         report
     }
 
+    /// One epoch seeded as in a live season (spec §14): by the beacon's value for the epoch and
+    /// the hash of the previous signed header, instead of the stand-in beacon and the state root.
+    pub fn step_seeded(
+        &mut self,
+        miracles: &[Miracle],
+        beacon: &[u8; 32],
+        prev_header_hash: &[u8; 32],
+    ) -> EpochReport {
+        let seed = epoch_seed(
+            &self.world.world_id,
+            self.world.epoch,
+            beacon,
+            prev_header_hash,
+        );
+        let report = step_epoch_with(&mut self.world, &self.rules, &seed, miracles);
+        self.last_hash = self.world.state_root();
+        report
+    }
+
     /// The `state_root` of the current state; it also serves as the previous header hash.
     pub fn state_root(&self) -> [u8; 32] {
         self.last_hash

@@ -32,6 +32,8 @@ pub struct Options {
     pub archive_every: u64,
     /// The floor of the price of a miracle, in work units.
     pub price_min: u128,
+    /// Seed epochs from drand (the live season) or from the stand-in beacon (offline runs).
+    pub drand: bool,
 }
 
 /// What the API reads while the loop runs.
@@ -53,6 +55,7 @@ pub struct Shared {
     pub data: PathBuf,
     pub epoch_seconds: u64,
     pub archive_every: u64,
+    pub drand: bool,
 }
 
 impl Shared {
@@ -166,6 +169,10 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         .unwrap_or_else(|| run.state_root());
     intake.open_window(run.world.epoch + 1, &prev)?;
     intake.soft_check(&run.world, &run.rules)?;
+    // The chain of signed headers starts at genesis.
+    if run.world.epoch == 0 && intake.header_hash(0)?.is_none() {
+        intake.seal(0, run.world.ruleset_id, run.state_root(), [0; 32], 0)?;
+    }
     let shared = Arc::new(Shared {
         intake: Mutex::new(intake),
         live: RwLock::new(Live {
@@ -179,6 +186,7 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         data: opts.data,
         epoch_seconds: opts.epoch_seconds,
         archive_every: opts.archive_every.max(1),
+        drand: opts.drand,
     });
     Ok((run, detectors, store, shared))
 }
@@ -203,19 +211,43 @@ pub fn run_loop(
             continue;
         }
         let started = Instant::now();
-        // The window of this epoch closes before the world steps into it (spec §20), and the
-        // ledger selects its miracles; ties are broken by the epoch's beacon.
-        let beacon = run.beacon(run.world.epoch);
-        let selected = shared
+        // The window of this epoch closes before the world steps into it (spec §20). Its round
+        // is the first drand round at least 10 s later; the loop waits for it, then the ledger
+        // selects the miracles (ties broken by the beacon) and the world steps, seeded by the
+        // beacon and the previous signed header.
+        let close_ms = now_ms();
+        shared
             .intake
             .lock()
             .expect("the lock is never poisoned")
-            .close_window(&beacon)?;
+            .close_window()?;
+        let (round, beacon) = if shared.drand {
+            let round = protogaea_protocol::beacon::round_for_close(close_ms);
+            (round, crate::beacon::wait_for(round))
+        } else {
+            (0, run.beacon(run.world.epoch))
+        };
+        let (selected, prev_header) = {
+            let mut intake = shared.intake.lock().expect("the lock is never poisoned");
+            let selected = intake.select_miracles(&beacon)?;
+            (
+                selected,
+                intake.header_hash(run.world.epoch)?.unwrap_or([0; 32]),
+            )
+        };
         let miracles: Vec<Miracle> = selected
             .iter()
             .map(|(_, w)| crate::intake::to_miracle(w, run.world.width))
             .collect();
-        let (header, outcomes) = step(&mut run, &mut detectors, &mut store, &shared, &miracles)?;
+        let seed = (round > 0).then_some((beacon, prev_header));
+        let (header, outcomes) = step(
+            &mut run,
+            &mut detectors,
+            &mut store,
+            &shared,
+            &miracles,
+            seed,
+        )?;
         shared
             .intake
             .lock()
@@ -239,6 +271,7 @@ pub fn run_loop(
                 run.world.ruleset_id,
                 run.state_root(),
                 beacon,
+                round,
             )?;
         save(&shared.data, &run, &detectors, shared.archive_every)?;
         shared
@@ -267,13 +300,17 @@ pub fn step(
     store: &mut Store,
     shared: &Shared,
     miracles: &[Miracle],
+    seed: Option<(protogaea_protocol::Hash, protogaea_protocol::Hash)>,
 ) -> Result<(Header, Outcomes), String> {
     let before = {
         let live = shared.live.read().expect("the lock is never poisoned");
         Before::of(&run.world, live.hour_dominant)
     };
     let max_id_before = run.world.organisms.last().map_or(0, |o| o.id);
-    let report = run.step_with(miracles);
+    let report = match seed {
+        Some((beacon, prev_header)) => run.step_seeded(miracles, &beacon, &prev_header),
+        None => run.step_with(miracles),
+    };
     let header = model::header(&run.world, &report, &run.rules);
     let mut events = model::events(&before, &run.world, &report, &header, &run.rules);
     events.extend(model::miracle_events(
@@ -370,6 +407,7 @@ mod tests {
             epoch_seconds: 0,
             archive_every: 4,
             price_min: 1_000_000,
+            drand: false,
         }
     }
 
@@ -383,7 +421,7 @@ mod tests {
     ) {
         for _ in 0..epochs {
             let (header, _) =
-                step(run, detectors, store, shared, &[]).expect("the epoch is recorded");
+                step(run, detectors, store, shared, &[], None).expect("the epoch is recorded");
             {
                 let mut live = shared.live.write().unwrap();
                 if header.epoch.is_multiple_of(DOMINANT_EVERY) {

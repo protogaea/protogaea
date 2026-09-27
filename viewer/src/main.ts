@@ -856,13 +856,21 @@ function allNames(): Promise<Record<string, string>> {
   return treeNames;
 }
 
-/** The miracles given to the world in epochs `from` to `to`, as the core's JSON per epoch. */
+/**
+ * How to step into each epoch from `from` to `to`, as the core's JSON: the miracles given to the
+ * world, and, for an epoch seeded by drand, its beacon and the previous header's hash from its
+ * signed header.
+ */
 async function miraclesBetween(from: number, to: number): Promise<Record<number, string>> {
   if (to < from) return {};
-  const { miracles } = await api.miracles(from, to);
+  const [{ miracles }, { headers }] = await Promise.all([api.miracles(from, to), api.signedHeaders(from, to).catch(() => ({ headers: [] }))]);
   const by: Record<number, unknown[]> = {};
   for (const m of miracles) (by[m.epoch] ??= []).push(m.miracle);
-  return Object.fromEntries(Object.entries(by).map(([e, list]) => [Number(e), JSON.stringify(list)]));
+  const out: Record<number, string> = {};
+  for (const [e, list] of Object.entries(by)) out[Number(e)] = JSON.stringify(list);
+  for (const h of headers)
+    if (h.beacon_round > 0) out[h.epoch] = JSON.stringify({ miracles: by[h.epoch] ?? [], beacon: h.beacon, prev: h.prev_header_hash });
+  return out;
 }
 
 /** Recomputes a past epoch in the browser from the nearest earlier snapshot and checks it. */

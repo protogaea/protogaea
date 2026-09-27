@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- The drand beacon: each epoch waits for its quicknet round (10 s after its window closes), checks its BLS signature (`protocol::beacon`), breaks the ledger's ties with it and seeds the step with it and the previous signed header's hash (`Run::step_seeded`); headers V1 carry the round. The time machine and the watcher replay drand-seeded epochs, and the watcher checks each round against drand and against the final tree head's time.
 - The watcher replays the ledger: every spark's PoW and wish, the log each header commits to, the target rule, the selection of miracles and the signed ledger root; the selection rules moved to `protocol::ledger`, shared by the server and the watcher; `/v0/log/{epoch}` serves an epoch's whole spark log.
 - `protogaea-watcher`, an independent watcher: it follows the spark log's signed tree heads and checks each extends the last, checks the signed headers and their chain, and replays the world from genesis with the logged miracles; tested against a cheating operator. The server serves the latest tree head of an epoch, not the largest.
 - Signed epoch headers (`protocol::header`, `/v0/headers`): chained by hash, committing to the state root, the ledger root (the price and the open and queued wishes), the final tree head of the spark log, the beacon and the miracles root, signed with the operator key; the next window's challenge commits to the header hash, and the time machine checks the signed header in the browser.

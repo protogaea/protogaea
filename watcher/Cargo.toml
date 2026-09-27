@@ -11,4 +11,4 @@ protogaea-core.workspace = true
 protogaea-pow = { path = "../pow" }
 protogaea-protocol = { path = "../protocol" }
 serde_json.workspace = true
-ureq = { version = "3", default-features = false, features = ["json"] }
+ureq = { version = "3", features = ["json"] }

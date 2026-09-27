@@ -118,6 +118,7 @@ fn header_of(v: &Value) -> Result<(Header, Hash, [u8; 64])> {
             sth_size: v["sth_size"].as_u64().ok_or("no size")?,
             sth_root: unhex(&v["sth_root"])?,
             beacon: unhex(&v["beacon"])?,
+            beacon_round: v["beacon_round"].as_u64().unwrap_or(0),
             miracles_root: unhex(&v["miracles_root"])?,
             timestamp_ms: v["timestamp_ms"].as_u64().ok_or("no time")?,
         },
@@ -346,11 +347,20 @@ impl Watcher {
                     {
                         self.books.active = true;
                     }
-                    if h["beacon"].as_str() != Some(&hex(&self.run.beacon(self.run.world.epoch))) {
-                        self.alarm(
-                            "the header's beacon is not the epoch's",
-                            json!({ "epoch": e }),
-                        );
+                    let round = h["beacon_round"].as_u64().unwrap_or(0);
+                    if round == 0 {
+                        if h["beacon"].as_str()
+                            != Some(&hex(&self.run.beacon(self.run.world.epoch)))
+                        {
+                            self.alarm(
+                                "the header's beacon is not the epoch's",
+                                json!({ "epoch": e }),
+                            );
+                        }
+                    } else {
+                        for (what, detail) in check_drand(&self.client, e, round, h) {
+                            self.alarm(what, detail);
+                        }
                     }
                 }
                 let selected = match (&header, self.books.active) {
@@ -391,7 +401,20 @@ impl Watcher {
                     }
                     _ => None,
                 };
-                let report = self.run.step_with(&given);
+                let seeded = header.as_ref().and_then(|h| {
+                    (h["beacon_round"].as_u64().unwrap_or(0) > 0)
+                        .then(|| {
+                            Some((
+                                unhex::<32>(&h["beacon"]).ok()?,
+                                unhex::<32>(&h["prev_header_hash"]).ok()?,
+                            ))
+                        })
+                        .flatten()
+                });
+                let report = match seeded {
+                    Some((beacon, prev)) => self.run.step_seeded(&given, &beacon, &prev),
+                    None => self.run.step_with(&given),
+                };
                 done += 1;
                 if let (Some(sel), Some(h)) = (&selected, &header) {
                     let mut alarms = Vec::new();
@@ -420,6 +443,42 @@ impl Watcher {
         }
         Ok(done)
     }
+}
+
+/// A drand-seeded epoch: the header's beacon must be the round's verified randomness (read from
+/// drand itself), and the round must come at least 10 s after the epoch's final tree head was
+/// signed, so the operator committed to the sparks before anyone knew the value.
+fn check_drand(client: &Client, e: u64, round: u64, h: &Value) -> Vec<(&'static str, Value)> {
+    use protogaea_protocol::beacon::{round_for_close, verify, QUICKNET_HASH};
+    let mut alarms = Vec::new();
+    let fetched = ["https://drand.cloudflare.com", "https://api.drand.sh"]
+        .iter()
+        .find_map(|m| {
+            let mut res = ureq::get(&format!("{m}/{QUICKNET_HASH}/public/{round}"))
+                .call()
+                .ok()?;
+            let v: Value = res.body_mut().read_json().ok()?;
+            let sig = v["signature"].as_str()?;
+            (0..sig.len() / 2)
+                .map(|i| u8::from_str_radix(&sig[2 * i..2 * i + 2], 16).ok())
+                .collect::<Option<Vec<u8>>>()
+        });
+    match fetched.and_then(|sig| verify(round, &sig)) {
+        Some(r) if h["beacon"].as_str() == Some(&hex(&r)) => {}
+        Some(_) => alarms.push(("the header's beacon is not its drand round", json!({ "epoch": e, "round": round }))),
+        None => eprintln!("note: drand round {round} could not be read or verified; epoch {e}'s beacon is not checked"),
+    }
+    if let Ok(v) = client.get(&format!("/v0/sth?epoch={e}")) {
+        if let Some(t) = v["timestamp_ms"].as_u64() {
+            if round < round_for_close(t) {
+                alarms.push((
+                    "the beacon round came too soon after the final tree head",
+                    json!({ "epoch": e, "round": round, "final_head_ms": t }),
+                ));
+            }
+        }
+    }
+    alarms
 }
 
 fn now_ms() -> u64 {

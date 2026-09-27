@@ -217,6 +217,8 @@ export const api = {
     }>(`/v0/digest?since=${since}&until=${until}`),
   miracles: (from: number, to: number) =>
     get<{ miracles: { epoch: number; proposal_id: string; miracle: unknown; outcome: string }[] }>(`/v0/miracles?from=${from}&to=${to}`),
+  signedHeaders: (from: number, to: number) =>
+    get<{ headers: { epoch: number; beacon: string; beacon_round: number; prev_header_hash: string }[] }>(`/v0/headers?from=${from}&to=${to}`),
   signedHeader: (n: number) => get<Record<string, unknown> & { state_root: string }>(`/v0/headers/${n}`),
   muller: () => get<{ every: number; rows: [number, number, number][] }>('/v0/muller'),
   clade: (id: number) => get<CladeInfo>(`/v0/clades/${id}`),

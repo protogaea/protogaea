@@ -221,6 +221,7 @@ The timeline is in [spec §20](spec/spec-v0.2.md#20-epoch-timeline) and in the [
 - **Beacon (candidate):** drand quicknet (a round every 3 s).
 - **Round rule (candidate):** `R_E` is the first round whose time is at least `close_E + 10 s`. For drand, round `r` has time `genesis_time + (r − 1) × period`, so `R_E = ceil((close_E + 10 − genesis_time) / period) + 1`.
 - **Verification:** the round signature is checked against the network's public key.
+- **In code** ([`protocol/src/beacon.rs`](../protocol/src/beacon.rs)): the quicknet key, genesis and period, the round rule, and BLS verification with `drand-verify`; the beacon value is the round's randomness, `SHA-256(signature)`. The world server waits for the round of each epoch (mirrors: drand.cloudflare.com, api.drand.sh, api2, api3), and the step is seeded by it and the previous header's hash.
 - **Delay:** the epoch waits for the round. There is no fallback seed.
 - **Epoch seed:**
 
@@ -242,11 +243,13 @@ Fields ([spec §15](spec/spec-v0.2.md#15-state-snapshots-and-the-log)):
 Encoding (**Proposed**, [`protocol/src/header.rs`](../protocol/src/header.rs)), fixed-width and little-endian:
 
 ```
-"PROTOGAEA/HEADER/V0" ‖ epoch u64 ‖ prev_header_hash ‖ ruleset_id ‖ state_root ‖ ledger_root
-‖ sth_size u64 ‖ sth_root ‖ beacon ‖ miracles_root ‖ timestamp_ms u64
+"PROTOGAEA/HEADER/V1" ‖ epoch u64 ‖ prev_header_hash ‖ ruleset_id ‖ state_root ‖ ledger_root
+‖ sth_size u64 ‖ sth_root ‖ beacon ‖ beacon_round u64 ‖ miracles_root ‖ timestamp_ms u64
 ```
 
-`header_hash = BLAKE3(header_bytes)`; the signature is `Ed25519_sign(operator_key, header_hash)`. `ledger_root = BLAKE3("PROTOGAEA/LEDGER/V0" ‖ price u128 ‖ root(leaves))` with a leaf `proposal_id ‖ work u128 ‖ queued u8` for every open or queued wish, sorted by `proposal_id`; `miracles_root` is the root of the leaves `proposal_id ‖ outcome u8` (0 applied, 1 deferred, 2 refused for good) of the miracles given to the epoch, in their order. The events root and the list of applied miracles are not in the header yet. The next window's challenge commits to `header_hash`. The core's epoch seed still commits to the previous `state_root`, not to the header hash (a deviation to remove before the public season). Once an hour, the header hash is anchored through OpenTimestamps.
+A header with no drand round (the stand-in beacon, before a world used drand) keeps the V0 layout: tag `PROTOGAEA/HEADER/V0` and no `beacon_round`. Replayers step an epoch whose header has a round from `epoch_seed(world_id, e, beacon, prev_header_hash)`, and one without from the stand-in beacon and the previous state root.
+
+`header_hash = BLAKE3(header_bytes)`; the signature is `Ed25519_sign(operator_key, header_hash)`. `ledger_root = BLAKE3("PROTOGAEA/LEDGER/V0" ‖ price u128 ‖ root(leaves))` with a leaf `proposal_id ‖ work u128 ‖ queued u8` for every open or queued wish, sorted by `proposal_id`; `miracles_root` is the root of the leaves `proposal_id ‖ outcome u8` (0 applied, 1 deferred, 2 refused for good) of the miracles given to the epoch, in their order. The events root and the list of applied miracles are not in the header yet. The next window's challenge commits to `header_hash`, and so does the next epoch's seed (with drand). Once an hour, the header hash is anchored through OpenTimestamps.
 
 ## 10. Error codes
 

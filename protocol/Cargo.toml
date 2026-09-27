@@ -8,5 +8,7 @@ repository.workspace = true
 
 [dependencies]
 blake3.workspace = true
+drand-verify = { version = "0.6", default-features = false }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize"] }
 protogaea-pow = { path = "../pow" }
+sha2 = "0.10"
