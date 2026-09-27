@@ -181,9 +181,20 @@ fn spark_rows(c: &Connection, epoch: u64) -> Result<Vec<Spark>, String> {
 /// Packs a closed epoch's rows into one blob and drops them. Returns its sparks.
 fn pack_epoch(c: &Connection, epoch: u64) -> Result<Vec<Spark>, String> {
     let sparks = spark_rows(c, epoch)?;
+    let mut number = std::collections::HashMap::new();
+    for k in crate::packed::keys(&sparks) {
+        c.prepare_cached("INSERT OR IGNORE INTO dict (key) VALUES (?1)")
+            .and_then(|mut s| s.execute([k.to_vec()]))
+            .map_err(err)?;
+        let n: i64 = c
+            .prepare_cached("SELECT n FROM dict WHERE key = ?1")
+            .and_then(|mut s| s.query_row([k.to_vec()], |r| r.get(0)))
+            .map_err(err)?;
+        number.insert(k, n as u64);
+    }
     c.execute(
         "INSERT OR REPLACE INTO logs (epoch, sparks) VALUES (?1, ?2)",
-        params![epoch as i64, crate::packed::pack(&sparks)],
+        params![epoch as i64, crate::packed::pack(&sparks, &number)],
     )
     .map_err(err)?;
     c.execute("DELETE FROM sparks WHERE epoch = ?1", [epoch as i64])
@@ -308,6 +319,7 @@ impl Intake {
                  PRIMARY KEY (epoch, idx)
              ) WITHOUT ROWID;
              CREATE TABLE IF NOT EXISTS logs (epoch INTEGER PRIMARY KEY, sparks BLOB NOT NULL);
+             CREATE TABLE IF NOT EXISTS dict (n INTEGER PRIMARY KEY, key BLOB NOT NULL UNIQUE);
              CREATE TABLE IF NOT EXISTS sths (
                  epoch INTEGER NOT NULL,
                  tree_size INTEGER NOT NULL,
@@ -1022,8 +1034,15 @@ impl Intake {
             .optional()
             .map_err(err)?;
         match packed {
-            Some(b) => crate::packed::unpack(&b)
-                .ok_or_else(|| format!("the packed log of epoch {epoch} does not read")),
+            Some(b) => crate::packed::unpack(&b, |n| {
+                self.conn
+                    .query_row("SELECT key FROM dict WHERE n = ?1", [n as i64], |r| {
+                        r.get::<_, Vec<u8>>(0)
+                    })
+                    .ok()
+                    .and_then(|k| k.try_into().ok())
+            })
+            .ok_or_else(|| format!("the packed log of epoch {epoch} does not read")),
             None => spark_rows(&self.conn, epoch),
         }
     }
