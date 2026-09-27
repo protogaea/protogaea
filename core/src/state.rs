@@ -432,7 +432,7 @@ impl World {
             if !o.genome.is_valid(rules.trait_budget) {
                 return Err(format!("organism {} has an invalid genome", o.id));
             }
-            if o.energy <= 0 || o.energy > rules.energy_max {
+            if o.energy <= 0 || o.energy > o.genome.energy_cap(rules) {
                 return Err(format!("organism {} has energy {}", o.id, o.energy));
             }
             let cell = usize::from(o.cell);
@@ -697,8 +697,12 @@ fn push_genome(out: &mut Vec<u8>, g: &Genome) {
     out.push(g.dispersal);
     out.push(g.boldness);
     out.extend_from_slice(&g.hue.to_le_bytes());
-    // Gifts (spec v0.3, draft) only when held: genomes without them encode as before.
+    // Gifts and the v0.3 traits (spec v0.3, draft) only when present: genomes without them
+    // encode as before.
     if g.gifts != 0 {
         out.push(g.gifts);
+    }
+    if g.extra != [0, 0] {
+        out.extend_from_slice(&g.extra);
     }
 }

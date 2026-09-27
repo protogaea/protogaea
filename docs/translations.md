@@ -11,6 +11,7 @@
 |---|---|---|
 | README | [README.md](../README.md) | [README.ru.md](../README.ru.md) |
 | Specification v0.2 | [spec-v0.2.md](spec/spec-v0.2.md) | [spec-v0.2.ru.md](spec/translations/ru/spec-v0.2.ru.md) |
+| Specification v0.3 draft | [spec-v0.3-draft.md](spec/spec-v0.3-draft.md) | [spec-v0.3-draft.ru.md](spec/translations/ru/spec-v0.3-draft.ru.md) |
 | Specification v0.1 (archived) | — | [spec-v0.1.ru.md](spec/archive/spec-v0.1.ru.md) — the original draft, never translated |
 | Other documents | Yes | Not yet |
 

@@ -243,6 +243,11 @@ pub struct Tally {
     pub war: Option<(u32, u32, u32, u32)>,
     /// The backed lineage's share at the end, per mille.
     pub backed_final_permille: u64,
+    /// At the end, under v0.3 traits: burrowers, swimmers, scavengers by birth, giants (size 6+),
+    /// and the mean size and longevity ×10.
+    pub niches: [u32; 4],
+    pub size_x10: u32,
+    pub longevity_x10: u32,
 }
 
 pub struct Bots {
@@ -587,6 +592,27 @@ impl Bots {
             }
             self.tally.backed_over_60_days =
                 self.backed_longest as f64 / f64::from(rules.epochs_per_day);
+        }
+        if let Some(t) = &rules.traits8 {
+            let mut n = [0u32; 4];
+            let (mut size, mut long) = (0u64, 0u64);
+            for o in &world.organisms {
+                let g = &o.genome;
+                n[0] += u32::from(
+                    g.traits[0] <= t.burrow_max_movement && g.traits[4] >= t.burrow_min_defense,
+                );
+                n[1] += u32::from(g.has(protogaea_core::genome::SWIM));
+                n[2] += u32::from(
+                    g.traits[2] >= t.scavenger_min_plants && g.traits[3] >= t.scavenger_min_hunting,
+                );
+                n[3] += u32::from(g.extra[0] >= 6);
+                size += u64::from(g.extra[0]);
+                long += u64::from(g.extra[1]);
+            }
+            let pop = (world.organisms.len() as u64).max(1);
+            self.tally.niches = n;
+            self.tally.size_x10 = (size * 10 / pop) as u32;
+            self.tally.longevity_x10 = (long * 10 / pop) as u32;
         }
         if let Some((a, b, _, _)) = self.tally.war {
             let count = |l| world.organisms.iter().filter(|o| o.lineage_id == l).count() as u32;

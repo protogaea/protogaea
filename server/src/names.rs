@@ -189,6 +189,7 @@ mod tests {
             boldness: 0,
             hue: 0,
             gifts: 0,
+            extra: [0, 0],
         }
     }
 

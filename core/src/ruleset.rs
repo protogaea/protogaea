@@ -81,6 +81,7 @@ fn default_founders() -> Vec<Founder> {
             boldness,
             hue,
             gifts: 0,
+            extra: [0, 0],
         },
         biome,
     };
@@ -98,6 +99,75 @@ fn default_founders() -> Vec<Founder> {
         // Generalist omnivore.
         founder([4, 4, 4, 4, 4, 4], 5, 1, 2, 170, Biome::Forest),
     ]
+}
+
+/// The ten founders of spec v0.3 (draft): the six of v0.2 with size and longevity, and four new
+/// ones for the new niches. Traits: movement, perception, plants, hunting, defense, fertility; then
+/// size and longevity; all eight sum to 32.
+fn v03_founders() -> Vec<Founder> {
+    let founder = |traits, extra, gifts, habitat, dispersal, boldness, hue, biome| Founder {
+        genome: Genome {
+            traits,
+            habitat,
+            dispersal,
+            boldness,
+            hue,
+            gifts,
+            extra,
+        },
+        biome,
+    };
+    use crate::genome::SWIM;
+    vec![
+        founder([2, 3, 8, 0, 4, 7], [3, 5], 0, 0, 1, 1, 120, Biome::Forest),
+        founder([6, 6, 0, 8, 2, 2], [5, 3], 0, 1, 2, 3, 0, Biome::Steppe),
+        founder(
+            [1, 2, 6, 0, 8, 7],
+            [5, 3],
+            0,
+            3,
+            0,
+            2,
+            215,
+            Biome::Mountains,
+        ),
+        founder([5, 5, 6, 0, 3, 5], [3, 5], 0, 2, 2, 1, 40, Biome::Desert),
+        founder([3, 3, 7, 0, 3, 8], [4, 4], 0, 4, 1, 0, 285, Biome::Swamp),
+        founder([4, 4, 4, 4, 4, 4], [4, 4], 0, 5, 1, 2, 170, Biome::Forest),
+        // Scavenger: eats plants and detritus, hunts a little.
+        founder([4, 4, 6, 3, 3, 4], [4, 4], 0, 1, 1, 2, 75, Biome::Steppe),
+        // Coastal swimmer: grazes the algae of the shallows.
+        founder([4, 3, 7, 0, 3, 7], [3, 5], SWIM, 4, 2, 1, 190, Biome::Swamp),
+        // Burrower: slow and armored, hides from hunters.
+        founder([1, 4, 6, 0, 7, 6], [4, 4], 0, 2, 0, 1, 25, Biome::Desert),
+        // Giant: huge, slow to breed, hard to kill.
+        founder([2, 2, 8, 2, 6, 2], [8, 2], 0, 1, 0, 3, 330, Biome::Steppe),
+    ]
+}
+
+impl Ruleset {
+    /// The rules of spec v0.3 (draft): patrons, eight traits with a budget of 32, the ten
+    /// founders at 40 each, and algae in the shallows for swimmers.
+    pub fn v03() -> Ruleset {
+        let mut r = Ruleset {
+            patrons: Some(Patrons::default()),
+            traits8: Some(Traits8::default()),
+            trait_budget: 32,
+            founders: v03_founders(),
+            organisms_per_lineage: 40,
+            // Eight traits give more ways to drift apart: a clade splits a step later.
+            clade_split_distance: 4,
+            ..Ruleset::default()
+        };
+        r.biomes[Biome::Shallows as usize] = BiomeParams {
+            passable: true,
+            base_regen: 35,
+            food_max: 120,
+            move_cost: 90,
+            cover: 0,
+        };
+        r
+    }
 }
 
 /// Times of year and moisture (spec §10). Times of year are, in order: spring, summer,
@@ -363,6 +433,60 @@ impl Default for Patrons {
     }
 }
 
+/// Size, longevity and the niches of spec v0.3 (draft). A ruleset without this section plays with
+/// the six traits of v0.2.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Traits8 {
+    /// The energy an organism holds: `energy_max × (base + per point of size) / 100`.
+    pub size_energy_base_pct: i32,
+    pub size_energy_pct: i32,
+    /// Per point of size: attack, defense, energy per tick, and the energy to breed and the
+    /// newborn's, both higher.
+    pub size_attack: i32,
+    pub size_defense: i32,
+    pub size_upkeep: i32,
+    pub size_repro: i32,
+    pub size_child: i32,
+    /// Aging starts and death comes at `(base + per point of longevity)%` of the rules' ages;
+    /// longevity costs energy per tick.
+    pub longevity_base_pct: u32,
+    pub longevity_pct: u32,
+    pub longevity_upkeep: i32,
+    /// Burrowers: an organism this slow and this armored hides when a hunter is near, skipping
+    /// the tick with extra defense.
+    pub burrow_max_movement: u8,
+    pub burrow_min_defense: u8,
+    pub burrow_defense: i32,
+    /// Scavengers by birth: plant eating and hunting at least these eat detritus, worth this
+    /// share of food.
+    pub scavenger_min_plants: u8,
+    pub scavenger_min_hunting: u8,
+    pub scavenger_value_pct: i32,
+}
+
+impl Default for Traits8 {
+    fn default() -> Self {
+        Self {
+            size_energy_base_pct: 70,
+            size_energy_pct: 11,
+            size_attack: 1,
+            size_defense: 1,
+            size_upkeep: 6,
+            size_repro: 300,
+            size_child: 150,
+            longevity_base_pct: 80,
+            longevity_pct: 7,
+            longevity_upkeep: 8,
+            burrow_max_movement: 3,
+            burrow_min_defense: 5,
+            burrow_defense: 25,
+            scavenger_min_plants: 6,
+            scavenger_min_hunting: 3,
+            scavenger_value_pct: 50,
+        }
+    }
+}
+
 /// Natural revival from the spore bank and the end of a season by extinction (spec §12).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Revival {
@@ -454,6 +578,9 @@ pub struct Ruleset {
     /// stays what it was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patrons: Option<Patrons>,
+    /// Size, longevity and the new niches (spec v0.3, draft). Absent, genomes have six traits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traits8: Option<Traits8>,
 }
 
 impl Default for Ruleset {
@@ -594,6 +721,7 @@ impl Default for Ruleset {
             },
             miracles: Miracles::default(),
             patrons: None,
+            traits8: None,
         }
     }
 }
@@ -710,6 +838,16 @@ impl Ruleset {
                     "reproduction at fertility {fertility} is inconsistent: the threshold must be \
                      at most energy_max and above the child's energy plus birth_cost"
                 ));
+            }
+        }
+        if let Some(t) = &self.traits8 {
+            for size in 0..=i32::from(TRAIT_MAX) {
+                let cap =
+                    self.energy_max * (t.size_energy_base_pct + t.size_energy_pct * size) / 100;
+                let threshold = self.repro_base + size * t.size_repro;
+                if threshold > cap {
+                    return Err(format!("traits8: at size {size} breeding needs more energy than the organism holds"));
+                }
             }
         }
         if let Some(p) = &self.patrons {

@@ -44,8 +44,8 @@ USAGE:
       Patron bots (spec v0.3, draft): for each strategy (none, leader, weak, random, whale,
       harass, war, mixed) the seeds run with bots that back clades with W work units an epoch
       (150: about 1.5 miracles an epoch at a 10% share); the §28 checks and the patrons' measures.
-  protogaea-harness ruleset
-      Prints the default ruleset as JSON; edit it and pass it back with --ruleset.
+  protogaea-harness ruleset [v03]
+      Prints the default ruleset (or the v0.3 draft's) as JSON; edit it and pass it back with --ruleset.
   protogaea-harness live    [--seed N] [--data DIR] [--listen ADDR] [--epoch-seconds S]
                             [--snapshot-every K] [--ruleset FILE]
       A live world in real time: one epoch every S seconds (300), its page on http://ADDR
@@ -70,7 +70,7 @@ fn main() -> ExitCode {
         "bench" => cmd_bench(rest),
         "arena" => cmd_arena(rest),
         "patrons" => cmd_patrons(rest),
-        "ruleset" => cmd_ruleset(),
+        "ruleset" => cmd_ruleset(rest),
         "live" => cmd_live(rest),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
@@ -740,8 +740,14 @@ fn biome_name(biome: Biome) -> &'static str {
     }
 }
 
-fn cmd_ruleset() -> Result<(), String> {
-    let json = serde_json::to_string_pretty(&Ruleset::default()).map_err(|e| e.to_string())?;
+fn cmd_ruleset(args: &[String]) -> Result<(), String> {
+    // `ruleset v03`: the rules of spec v0.3 (draft) instead of the default.
+    let rules = if args.first().map(String::as_str) == Some("v03") {
+        Ruleset::v03()
+    } else {
+        Ruleset::default()
+    };
+    let json = serde_json::to_string_pretty(&rules).map_err(|e| e.to_string())?;
     println!("{json}");
     Ok(())
 }
@@ -788,7 +794,15 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
     use patrons::{Bots, Strategy, Tally};
     let opts = Options::parse(
         args,
-        &["strategies", "seeds", "days", "work", "threads", "ruleset"],
+        &[
+            "strategies",
+            "seeds",
+            "days",
+            "work",
+            "threads",
+            "ruleset",
+            "v03",
+        ],
     )?;
     let strategies: Vec<Strategy> = match opts.value("strategies").unwrap_or("all") {
         "all" => Strategy::ALL.to_vec(),
@@ -802,7 +816,12 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
     let work: u64 = opts.get("work", 150)?;
     let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let threads: usize = opts.get("threads", default_threads)?;
-    let mut rules = load_rules(&opts)?;
+    // `--v03 yes`: the v0.3 rules (patrons, eight traits, ten founders, algae for swimmers).
+    let mut rules = if opts.value("v03").is_some_and(|v| v != "no") {
+        Ruleset::v03()
+    } else {
+        load_rules(&opts)?
+    };
     if rules.patrons.is_none() {
         rules.patrons = Some(protogaea_core::ruleset::Patrons::default());
     }
@@ -937,6 +956,29 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
         "gifts still held in the lineage 3 days later (kept/given): {}",
         kept.join(", ")
     );
+    if rules.traits8.is_some() {
+        println!("at the end (mean per seed): burrowers, swimmers, scavengers, giants; mean size and longevity");
+        for &st in &strategies {
+            let rows: Vec<&Tally> = jobs
+                .iter()
+                .zip(&results)
+                .filter(|((s, _), _)| *s == st)
+                .map(|(_, r)| &r.1)
+                .collect();
+            let n = rows.len().max(1) as f64;
+            let m = |f: &dyn Fn(&Tally) -> f64| rows.iter().map(|t| f(t)).sum::<f64>() / n;
+            println!(
+                "{:>8} {:>6.0} {:>6.0} {:>6.0} {:>6.0}   size {:.1} longevity {:.1}",
+                st.name(),
+                m(&|t| f64::from(t.niches[0])),
+                m(&|t| f64::from(t.niches[1])),
+                m(&|t| f64::from(t.niches[2])),
+                m(&|t| f64::from(t.niches[3])),
+                m(&|t| f64::from(t.size_x10)) / 10.0,
+                m(&|t| f64::from(t.longevity_x10)) / 10.0,
+            );
+        }
+    }
     println!("{:.0} s", started.elapsed().as_secs_f64());
     Ok(())
 }

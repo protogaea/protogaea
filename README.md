@@ -2,7 +2,7 @@
 
 *A persistent digital evolution world you can watch — and, rarely, touch.*
 
-> **Status: pre-alpha.** The deterministic core and the balance harness (stage A) are nearly done, and the observation stage (B) is under way: a world server keeps the event log and serves a read API, and a web viewer shows the living world on a test server. Nothing is public yet, and everything described here can change. The design is [specification v0.2](docs/spec/spec-v0.2.md).
+> **Status: pre-alpha.** The deterministic core and the balance harness (stage A) are nearly done, and the observation stage (B) is under way: a world server keeps the event log and serves a read API, and a web viewer shows the living world on a test server. Nothing is public yet, and everything described here can change. The design is [specification v0.2](docs/spec/spec-v0.2.md); the [v0.3 draft](docs/spec/spec-v0.3-draft.md), in which players become patrons of clades, is being checked in the balance harness.
 
 ![The viewer: the illustrated map of the supercontinent, the population by archetype and the event feed](docs/images/viewer.jpg)
 
@@ -50,7 +50,7 @@ Season 1, **The Breaking of Pangea**, begins with a single supercontinent that s
 
 | Stage | Goal | Status |
 |---|---|---|
-| Spec | Specification v0.2: English canonical, Russian translation | Done |
+| Spec | Specification v0.2: English canonical, Russian translation | Done; the v0.3 draft (patrons of clades, eight traits, new niches) is in the harness |
 | A | Deterministic core, WASM build, balance harness, Season 1 map generator | Nearly done: the parameter search for Season 1 is running |
 | B | Observation: map, Muller plot, clade tree, time machine, digests | In progress: the world server, the viewer with its map, clade names, the Muller plot, the clade tree, the stories of the day, the "While you were away" digest, the replay of the last day, predictions for tomorrow, the Telegram bot and the time machine (any past epoch recomputed in the browser and checked against the log, two moments compared, inclusion proofs checked in the browser), the museum and the daily chronicle are done; next are a region to follow and the tests with people |
 | B′ | Closed observation test with invited users, no PoW | Planned |
@@ -65,6 +65,7 @@ Details and exit criteria are in the [roadmap](docs/roadmap.md).
 - [Overview](docs/overview.md) — Protogaea in plain words
 - [FAQ](docs/faq.md)
 - [Specification v0.2](docs/spec/spec-v0.2.md) — canonical ([Russian translation](docs/spec/translations/ru/spec-v0.2.ru.md))
+- [Specification v0.3 draft](docs/spec/spec-v0.3-draft.md) — patrons of clades, not adopted ([Russian translation](docs/spec/translations/ru/spec-v0.3-draft.ru.md))
 - [Architecture](docs/architecture.md)
 - [Spark protocol](docs/protocol.md) — draft
 - [World rules](docs/ruleset.md) — draft

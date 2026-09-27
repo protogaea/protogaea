@@ -6,6 +6,8 @@ The specification is the single source of truth for Protogaea's design: the prod
 |---|---|---|---|
 | 0.2 | [spec-v0.2.md](spec-v0.2.md) | English | **Canonical**, current |
 | 0.2 | [translations/ru/spec-v0.2.ru.md](translations/ru/spec-v0.2.ru.md) | Russian | Translation |
+| 0.3 draft | [spec-v0.3-draft.md](spec-v0.3-draft.md) | English | **Draft**, not adopted: patrons of clades, eight traits, new niches. A document of changes against v0.2 |
+| 0.3 draft | [translations/ru/spec-v0.3-draft.ru.md](translations/ru/spec-v0.3-draft.ru.md) | Russian | Translation of the draft |
 | 0.1 | [archive/spec-v0.1.ru.md](archive/spec-v0.1.ru.md) | Russian | Archived — the original draft; only its working name was updated |
 
 ## Map of v0.2

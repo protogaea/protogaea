@@ -187,7 +187,7 @@ Season 1 stays at 64 × 64 unless the core gets about 2.5 times faster.
 
 ## Findings (spec v0.3 draft: patrons of clades)
 
-The v0.3 draft lets players back clades: easing for their own clade (`shelter`, `forage`, `cure`), harm to a rival's (`blight`, `expose`, `sickness`), six heritable gifts, and weather as a natural event. It lives in the core behind the ruleset's optional `patrons` section: a ruleset without it keeps its id, and worlds without it keep their roots (checked byte for byte against `hash`). `patrons` runs bots that put 150 work units an epoch into wishes (about 1.5 miracles an epoch at a 10% share) under eight strategies: none, for the leader, for the weakest, random, a whale with half of all work behind one lineage, harassing the smallest clade, a war of two camps, and a mix.
+The [v0.3 draft](../docs/spec/spec-v0.3-draft.md) lets players back clades: easing for their own clade (`shelter`, `forage`, `cure`), harm to a rival's (`blight`, `expose`, `sickness`), six heritable gifts, and weather as a natural event. It lives in the core behind the ruleset's optional `patrons` section: a ruleset without it keeps its id, and worlds without it keep their roots (checked byte for byte against `hash`). `patrons` runs bots that put 150 work units an epoch into wishes (about 1.5 miracles an epoch at a 10% share) under eight strategies: none, for the leader, for the weakest, random, a whale with half of all work behind one lineage, harassing the smallest clade, a war of two camps, and a mix.
 
 Four runs of 14 world days, the last on 16 seeds (2026-09-27):
 
@@ -196,6 +196,13 @@ Four runs of 14 world days, the last on 16 seeds (2026-09-27):
 - **Harassment had to be bounded.** At 2% protection and a 12-epoch respite, 12% more named clades died than without players; at 3% and 24 epochs, 348 ± 11 against 350 ± 15.
 - **A lineage's long lead is natural.** The lineage leading after day one holds over 60% of the living for about 9 days and ends ahead of the second on 15 of 16 seeds with no players at all; a whale (9.1 days) and a war (13 of 16) do not change it.
 - **Gifts:** with five gifted organisms and 2% loss per birth, most gifts were lost to drift within 3 days and `scavenge` kept 91%; with ten gifted, 0.5% loss, `scavenge` at a third of food's value and a heavier upkeep, 20–34% of gifts are still held 3 days later, `keen` 16% (now +4 defense).
+
+## Findings (spec v0.3 draft: size, longevity and new niches)
+
+Stage 1b adds two traits behind the ruleset's optional `traits8` section (a budget of 32 over eight traits): **size** (more energy held, attack and defense, a higher threshold to breed and a stronger newborn, for more upkeep) and **longevity** (aging and death later, for more upkeep); and three niches: scavengers by birth (plant eating 6+ and hunting 3+ eat detritus), coastal swimmers (algae grow in the shallows, eaten only with `swim`), and burrowers (movement 3 or less, defense 5+, hide from a hunter next to them). `Ruleset::v03()` gathers it with the patrons and ten founders of 40 (the six of v0.2 and a scavenger, a swimmer, a burrower and a giant); `ruleset v03` prints it and `patrons --v03 yes` runs it. Worlds without the section keep their roots (checked with `hash`).
+
+- **The price of the traits sets the world.** Cheap longevity (4 a point, +10% of life) drove every lineage to longevity 7–8; dear (12, +5%) to 0; cheap size (4, +12% energy) let giants take the world (500–1350 of them). A grid of nine prices (no players, 8 seeds × 7 days) found longevity 8 a point with +7% of life and size 6 with +11% energy: both stay in the middle, and all four niches live.
+- **On 16 seeds × 14 days with the eight strategies** (2026-09-28): no extinction; 6+ clades of 20+ during 90–98% of the time after day 3 (98% without players); no clade above 60% for more than 1.2 days; mean size 1.7–2.5 and longevity 3.3–5.5; swimmers 150–450 and giants 24–68 at the end, burrowers 4–7 and scavengers 2–33 (small niches); 352–432 named clades extinct (about 350 in v0.2). A clade splits at 4 steps instead of 3, or eight traits make it split too often (545 extinct).
 
 ## Findings (stage A3: the Season 1 numbers)
 

@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 
 use crate::climate::{self, SPRING, SUMMER};
-use crate::genome::{mutate, FERTILITY, HARDY, HUNTING, PLANT, SCAVENGE, SWIM, VENOM};
+use crate::genome::{mutate, DEFENSE, HARDY, HUNTING, MOVEMENT, PLANT, SCAVENGE, SWIM, VENOM};
 use crate::rng::{derive, Purpose, Rng};
 use crate::ruleset::Ruleset;
 use crate::state::{Biome, Clade, Effect, EffectKind, MuseumEntry, Organism, RiftPhase, World};
@@ -642,6 +642,8 @@ struct Scratch {
     /// What patrons' easing and harm do to each organism this tick (spec v0.3, draft); empty
     /// while none runs.
     boost: Vec<Boost>,
+    /// Burrowers hiding this tick (spec v0.3, draft); empty without v0.3 traits.
+    burrow: Vec<bool>,
 }
 
 /// A patron's easing and harm on one organism, summed (spec v0.3, draft).
@@ -655,6 +657,54 @@ struct Boost {
 
 fn boost(s: &Scratch, i: usize) -> Boost {
     s.boost.get(i).copied().unwrap_or_default()
+}
+
+fn burrowed(s: &Scratch, i: usize) -> bool {
+    s.burrow.get(i).copied().unwrap_or(false)
+}
+
+/// What a clade effect and a burrow add to an organism's defense this tick.
+fn guard(rules: &Ruleset, s: &Scratch, i: usize) -> i32 {
+    let hide = if burrowed(s, i) {
+        rules.traits8.as_ref().map_or(0, |t| t.burrow_defense)
+    } else {
+        0
+    };
+    boost(s, i).defense + hide
+}
+
+/// Burrowers (spec v0.3, draft): slow, armored organisms with a hunter of another clade in a
+/// neighbouring cell hide for the tick.
+fn burrows(world: &World, rules: &Ruleset, s: &mut Scratch) {
+    s.burrow.clear();
+    let Some(t) = &rules.traits8 else {
+        return;
+    };
+    s.burrow.resize(world.organisms.len(), false);
+    for (i, o) in world.organisms.iter().enumerate() {
+        let g = &o.genome;
+        if g.traits[MOVEMENT] > t.burrow_max_movement || g.traits[DEFENSE] < t.burrow_min_defense {
+            continue;
+        }
+        let (x, y) = world.coords(usize::from(o.cell));
+        'look: for dy in -1..=1 {
+            for dx in -1..=1 {
+                if let Some(n) = world.index(x + dx, y + dy) {
+                    let (power, clade) = s.hunter[n];
+                    if power != i32::MIN && clade != o.clade_id {
+                        s.burrow[i] = true;
+                        break 'look;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Whether an organism can eat in a biome: under v0.3 rules the algae of the shallows are for
+/// swimmers only.
+fn edible(rules: &Ruleset, me: &Organism, acting: Biome) -> bool {
+    rules.traits8.is_none() || acting != Biome::Shallows || me.genome.has(SWIM)
 }
 
 /// Sums the clade effects over every organism at the start of a tick.
@@ -753,6 +803,8 @@ fn run_tick(
         }
     }
 
+    burrows(world, rules, s);
+
     // 2. Queue: a stable permutation by H(epoch_seed, tick, organism_id).
     for (i, o) in world.organisms.iter().enumerate() {
         s.queue
@@ -763,7 +815,7 @@ fn run_tick(
     // 3. Actions, in queue order. An organism that died before its turn does not act.
     for q in 0..s.queue.len() {
         let i = s.queue[q].2 as usize;
-        if s.alive[i] {
+        if s.alive[i] && !burrowed(s, i) {
             act(world, rules, rng, tick, i, report, s);
         }
     }
@@ -821,11 +873,12 @@ fn run_tick(
         }
         let age = o.age + 1;
         world.organisms[i].age = age;
-        if age >= rules.max_age {
+        let (senescence, max_age) = o.genome.lifespan(rules);
+        if age >= max_age {
             kill(world, rules, s, report, i, DeathCause::OldAge);
-        } else if age > rules.senescence_start {
-            let span = u64::from(rules.max_age - rules.senescence_start);
-            let ppm = (u64::from(age - rules.senescence_start) * 1_000_000 / span) as u32;
+        } else if age > senescence {
+            let span = u64::from(max_age - senescence);
+            let ppm = (u64::from(age - senescence) * 1_000_000 / span) as u32;
             if rng.chance_ppm(tick, Purpose::Senescence, o.id, ppm) {
                 kill(world, rules, s, report, i, DeathCause::OldAge);
             }
@@ -977,14 +1030,14 @@ fn act(
             let prey = world.organisms[j];
             let defense = prey.genome.defense(rules)
                 + cover(rules, s.biome[usize::from(prey.cell)])
-                + boost(s, j).defense
+                + guard(rules, s, j)
                 + rng.below(tick, Purpose::DefenseRoll, me.id, span) as i32;
             if attack > defense {
                 kill(world, rules, s, report, j, DeathCause::Predation);
                 let gain =
                     prey.energy.max(0) * rules.predation_efficiency_pct / 100 + rules.body_value;
                 let energy = &mut world.organisms[i].energy;
-                *energy = (*energy + gain).min(rules.energy_max);
+                *energy = (*energy + gain).min(me.genome.energy_cap(rules));
                 if prey.genome.has(VENOM) {
                     if let Some(p) = &rules.patrons {
                         *energy -= *energy * p.venom_drain_pct / 100;
@@ -996,20 +1049,30 @@ fn act(
 
     if !attacked && me.genome.traits[PLANT] > 0 {
         let bite = u32::from(me.genome.traits[PLANT]) * rules.bite_per_point;
+        let can_eat = edible(rules, &me, s.biome[pos]);
+        let scavenger = me.genome.has(SCAVENGE)
+            || rules.traits8.as_ref().is_some_and(|t| {
+                me.genome.traits[PLANT] >= t.scavenger_min_plants
+                    && me.genome.traits[HUNTING] >= t.scavenger_min_hunting
+            });
         let cell = &mut world.cells[pos];
-        let eaten = cell.food.min(bite);
+        let eaten = if can_eat { cell.food.min(bite) } else { 0 };
         cell.food -= eaten;
         // A scavenger fills the rest of its bite with detritus, worth `scavenge_value_pct` of food.
         let mut scraps = 0;
-        if me.genome.has(SCAVENGE) && eaten < bite {
+        if scavenger && eaten < bite {
             scraps = cell.detritus.min(bite - eaten);
             cell.detritus -= scraps;
         }
-        let scrap_pct = rules.patrons.as_ref().map_or(0, |p| p.scavenge_value_pct);
+        let scrap_pct = if me.genome.has(SCAVENGE) {
+            rules.patrons.as_ref().map_or(33, |p| p.scavenge_value_pct)
+        } else {
+            rules.traits8.as_ref().map_or(33, |t| t.scavenger_value_pct)
+        };
         let gain = eaten as i32 * rules.plant_efficiency
             + scraps as i32 * rules.plant_efficiency * scrap_pct / 100;
         let energy = &mut world.organisms[i].energy;
-        *energy = (*energy + gain).min(rules.energy_max);
+        *energy = (*energy + gain).min(me.genome.energy_cap(rules));
     }
 }
 
@@ -1031,7 +1094,7 @@ fn choose_target(
     let bite = u32::from(g.traits[PLANT]) * rules.bite_per_point;
     let hunter = is_hungry_hunter(me, rules);
     let my_attack = g.attack(rules);
-    let my_defense = g.defense(rules) + boost(s, i).defense;
+    let my_defense = g.defense(rules) + guard(rules, s, i);
     let preferred = Biome::from_habitat(g.habitat);
     let caution = 4 - i64::from(g.boldness);
 
@@ -1053,7 +1116,7 @@ fn choose_target(
             let distance = i64::from(dx.abs().max(dy.abs()));
 
             let mut score = 0i64;
-            if bite > 0 {
+            if bite > 0 && edible(rules, me, acting) {
                 score += i64::from(food.min(bite))
                     * i64::from(rules.plant_efficiency)
                     * i64::from(w.food_pct)
@@ -1100,7 +1163,8 @@ fn cover(rules: &Ruleset, biome: Biome) -> i32 {
 /// Hunters hunt only while hungry (satiation, spec §11.3), which keeps them from wiping out
 /// their prey.
 fn is_hungry_hunter(me: &Organism, rules: &Ruleset) -> bool {
-    me.genome.traits[HUNTING] > 0 && me.energy < rules.energy_max * rules.hunt_hunger_pct / 100
+    me.genome.traits[HUNTING] > 0
+        && me.energy < me.genome.energy_cap(rules) * rules.hunt_hunger_pct / 100
 }
 
 /// The largest attack margin of a non-kin hunter within one cell of `c`, or 0.
@@ -1195,9 +1259,7 @@ fn choose_prey(
                     continue;
                 }
                 let margin = my_attack
-                    - (other.genome.defense(rules)
-                        + cover(rules, s.biome[n])
-                        + boost(s, j).defense);
+                    - (other.genome.defense(rules) + cover(rules, s.biome[n]) + guard(rules, s, j));
                 if margin < 0 {
                     continue;
                 }
@@ -1268,8 +1330,8 @@ fn births(
             continue;
         }
         let parent = world.organisms[i];
-        let fertility = i32::from(parent.genome.traits[FERTILITY]);
-        if parent.energy < rules.repro_base - fertility * rules.repro_per_fertility {
+        let (threshold, child_energy) = parent.genome.breeding(rules);
+        if parent.energy < threshold {
             continue;
         }
         if s.alive_count >= rules.max_organisms as usize {
@@ -1302,7 +1364,6 @@ fn births(
         };
 
         let genome = mutate(&parent.genome, rules, rng, tick, child_id);
-        let child_energy = rules.child_base - fertility * rules.child_per_fertility;
         world.organisms[i].energy -= child_energy + rules.birth_cost;
 
         let reference = world

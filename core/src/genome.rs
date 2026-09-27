@@ -34,6 +34,16 @@ fn no_gifts(g: &u8) -> bool {
     *g == 0
 }
 
+/// The v0.3 traits outside `traits` (spec v0.3, draft): size and longevity.
+pub const SIZE: usize = 0;
+pub const LONGEVITY: usize = 1;
+/// All traits under v0.3 rules: the six of v0.2 and the two of `extra`.
+pub const TRAIT_COUNT_V3: usize = TRAIT_COUNT + 2;
+
+fn no_extra(e: &[u8; 2]) -> bool {
+    *e == [0, 0]
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Genome {
     /// Movement, perception, plant eating, hunting, defense and fertility: each 0–8, summing
@@ -51,13 +61,26 @@ pub struct Genome {
     /// their genomes, roots and rulesets read as before.
     #[serde(default, skip_serializing_if = "no_gifts")]
     pub gifts: u8,
+    /// Size and longevity (spec v0.3, draft), within the trait budget under v0.3 rules; zero and
+    /// absent otherwise, so v0.2 genomes read and hash as before.
+    #[serde(default, skip_serializing_if = "no_extra")]
+    pub extra: [u8; 2],
 }
 
 impl Genome {
     /// Every gene in range, and the traits spend exactly `trait_budget`.
     pub fn is_valid(&self, trait_budget: u32) -> bool {
-        self.traits.iter().all(|&t| t <= TRAIT_MAX)
-            && self.traits.iter().map(|&t| u32::from(t)).sum::<u32>() == trait_budget
+        self.traits
+            .iter()
+            .chain(&self.extra)
+            .all(|&t| t <= TRAIT_MAX)
+            && self
+                .traits
+                .iter()
+                .chain(&self.extra)
+                .map(|&t| u32::from(t))
+                .sum::<u32>()
+                == trait_budget
             && self.habitat <= HABITAT_GENERALIST
             && self.dispersal <= DISPERSAL_MAX
             && self.boldness <= BOLDNESS_MAX
@@ -75,7 +98,8 @@ impl Genome {
         let total: u32 = self
             .traits
             .iter()
-            .zip(other.traits.iter())
+            .chain(&self.extra)
+            .zip(other.traits.iter().chain(&other.extra))
             .map(|(&a, &b)| u32::from(a.abs_diff(b)))
             .sum();
         total / 2
@@ -93,7 +117,55 @@ impl Genome {
 
     /// `H × attack_weight + P`, before the roll.
     pub fn attack(&self, rules: &Ruleset) -> i32 {
-        i32::from(self.traits[HUNTING]) * rules.attack_weight + i32::from(self.traits[PERCEPTION])
+        let size = rules
+            .traits8
+            .as_ref()
+            .map_or(0, |t| i32::from(self.extra[SIZE]) * t.size_attack);
+        i32::from(self.traits[HUNTING]) * rules.attack_weight
+            + i32::from(self.traits[PERCEPTION])
+            + size
+    }
+
+    /// The most energy the organism can hold: `energy_max`, scaled by size under v0.3 rules.
+    pub fn energy_cap(&self, rules: &Ruleset) -> i32 {
+        match &rules.traits8 {
+            Some(t) => {
+                rules.energy_max
+                    * (t.size_energy_base_pct + t.size_energy_pct * i32::from(self.extra[SIZE]))
+                    / 100
+            }
+            None => rules.energy_max,
+        }
+    }
+
+    /// When aging starts and the age of certain death, scaled by longevity under v0.3 rules.
+    pub fn lifespan(&self, rules: &Ruleset) -> (u32, u32) {
+        match &rules.traits8 {
+            Some(t) => {
+                let pct = t.longevity_base_pct + t.longevity_pct * u32::from(self.extra[LONGEVITY]);
+                (
+                    rules.senescence_start * pct / 100,
+                    rules.max_age * pct / 100,
+                )
+            }
+            None => (rules.senescence_start, rules.max_age),
+        }
+    }
+
+    /// The energy needed to breed, and the newborn's energy: bigger organisms breed later and
+    /// give more.
+    pub fn breeding(&self, rules: &Ruleset) -> (i32, i32) {
+        let f = i32::from(self.traits[FERTILITY]);
+        let s = rules.traits8.as_ref().map_or((0, 0), |t| {
+            (
+                i32::from(self.extra[SIZE]) * t.size_repro,
+                i32::from(self.extra[SIZE]) * t.size_child,
+            )
+        });
+        (
+            rules.repro_base - f * rules.repro_per_fertility + s.0,
+            rules.child_base - f * rules.child_per_fertility + s.1,
+        )
     }
 
     /// `D × defense_weight + M + P / 2`, before the roll.
@@ -101,6 +173,9 @@ impl Genome {
         let mut d = i32::from(self.traits[DEFENSE]) * rules.defense_weight
             + i32::from(self.traits[MOVEMENT])
             + i32::from(self.traits[PERCEPTION]) / 2;
+        if let Some(t) = &rules.traits8 {
+            d += i32::from(self.extra[SIZE]) * t.size_defense;
+        }
         if self.gifts != 0 {
             if let Some(p) = &rules.patrons {
                 d += i32::from(self.has(VENOM)) * p.venom_defense
@@ -116,6 +191,10 @@ impl Genome {
         let mut total = rules.base_metabolism;
         for (k, &t) in self.traits.iter().enumerate() {
             total += rules.trait_upkeep[k] * i32::from(t);
+        }
+        if let Some(t) = &rules.traits8 {
+            total += t.size_upkeep * i32::from(self.extra[SIZE])
+                + t.longevity_upkeep * i32::from(self.extra[LONGEVITY]);
         }
         if self.gifts != 0 {
             if let Some(p) = &rules.patrons {
@@ -134,12 +213,25 @@ impl Genome {
 pub fn mutate(parent: &Genome, rules: &Ruleset, rng: &Rng, tick: u32, subject: u64) -> Genome {
     let mut g = *parent;
     if rng.chance_ppm(tick, Purpose::MutationChance, subject, rules.mutation_ppm) {
-        // One step between a valid pair: choose uniformly among pairs that stay in range.
-        let mut pairs = [(0usize, 0usize); TRAIT_COUNT * (TRAIT_COUNT - 1)];
+        // One step between a valid pair: choose uniformly among pairs that stay in range. Under
+        // v0.3 rules size and longevity take part.
+        let count = if rules.traits8.is_some() {
+            TRAIT_COUNT_V3
+        } else {
+            TRAIT_COUNT
+        };
+        let get = |g: &Genome, k: usize| {
+            if k < TRAIT_COUNT {
+                g.traits[k]
+            } else {
+                g.extra[k - TRAIT_COUNT]
+            }
+        };
+        let mut pairs = [(0usize, 0usize); TRAIT_COUNT_V3 * (TRAIT_COUNT_V3 - 1)];
         let mut n = 0;
-        for i in 0..TRAIT_COUNT {
-            for j in 0..TRAIT_COUNT {
-                if i != j && g.traits[i] < TRAIT_MAX && g.traits[j] > 0 {
+        for i in 0..count {
+            for j in 0..count {
+                if i != j && get(&g, i) < TRAIT_MAX && get(&g, j) > 0 {
                     pairs[n] = (i, j);
                     n += 1;
                 }
@@ -147,8 +239,18 @@ pub fn mutate(parent: &Genome, rules: &Ruleset, rng: &Rng, tick: u32, subject: u
         }
         if n > 0 {
             let (i, j) = pairs[rng.below(tick, Purpose::MutationPair, subject, n as u64) as usize];
-            g.traits[i] += 1;
-            g.traits[j] -= 1;
+            for (k, up) in [(i, true), (j, false)] {
+                let v = if k < TRAIT_COUNT {
+                    &mut g.traits[k]
+                } else {
+                    &mut g.extra[k - TRAIT_COUNT]
+                };
+                if up {
+                    *v += 1;
+                } else {
+                    *v -= 1;
+                }
+            }
         }
     }
     if rng.chance_ppm(
@@ -225,6 +327,7 @@ mod tests {
         boldness: 3,
         hue: 355,
         gifts: 0,
+        extra: [0, 0],
     };
 
     #[test]

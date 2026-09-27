@@ -16,6 +16,7 @@ New here? Read the [overview](overview.md), then the [FAQ](faq.md), then the [sp
 |---|---|---|
 | [Specification v0.2](spec/spec-v0.2.md) | The complete design: product, world rules, protocol, architecture, acceptance | Canonical |
 | [Russian translation of v0.2](spec/translations/ru/spec-v0.2.ru.md) | Спецификация на русском | Translation |
+| [Specification v0.3 draft](spec/spec-v0.3-draft.md) | Patrons of clades, eight traits, new niches: changes against v0.2 ([Russian](spec/translations/ru/spec-v0.3-draft.ru.md)) | Draft |
 | [Specification v0.1](spec/archive/spec-v0.1.ru.md) | The original draft, in Russian | Archived |
 | [About the specification](spec/README.md) | Versions, the canonical language and how the spec changes | Current |
 
