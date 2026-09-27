@@ -102,6 +102,7 @@ pub fn routes() -> Router<Api> {
         .route("/v0/headers", get(headers))
         .route("/v0/headers/{epoch}", get(header_of))
         .route("/v0/miracles", get(miracles))
+        .route("/v0/log/{epoch}", get(log_of))
         .route("/v0/log/{epoch}/inclusion", get(inclusion))
         .route("/v0/log/{epoch}/consistency", get(consistency))
 }
@@ -553,6 +554,20 @@ async fn sth(State(api): State<Api>, Query(q): Query<EpochQuery>) -> Response {
         Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "E_NOT_FOUND", "message": "no tree head" })),
+        )
+            .into_response(),
+        Err(e) => internal(e),
+    }
+}
+
+/// The spark log of an epoch: its challenge, target and every spark in order, for watchers.
+async fn log_of(State(api): State<Api>, Path(epoch): Path<u64>) -> Response {
+    let intake = api.intake.lock().expect("the lock is never poisoned");
+    match intake.log_of(epoch) {
+        Ok(Some(v)) => Json(v).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "E_NOT_FOUND", "message": "no such window" })),
         )
             .into_response(),
         Err(e) => internal(e),

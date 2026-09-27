@@ -9,14 +9,19 @@
 //!   watcher saw during the window;
 //! - **the world:** it replays the world from genesis with the miracles the server logged, and the
 //!   `state_root` of every epoch must equal the one in the log (the signed header where there is
-//!   one).
+//!   one);
+//! - **the ledger:** from the first signed header on, it checks every spark in each epoch's log
+//!   (its PoW, its wish, the log's root), replays the work, the selection of miracles and the
+//!   price, and must arrive at the signed ledger root and at the miracles the server applied.
 //!
 //! Every alarm is printed and appended to `--report` (JSON lines). With `--once` it checks what is
 //! there and exits: status 0 if all holds, 1 on any alarm.
 //!
-//!   protogaea-watcher [--server URL] [--report FILE] [--once]
+//!   protogaea-watcher [--server URL] [--report FILE] [--threads N] [--once]
 
-use std::collections::BTreeMap;
+mod books;
+
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::time::{Duration, Instant};
 
@@ -134,6 +139,8 @@ struct Watcher {
     run: Run,
     /// Once the replay has diverged from the log, later epochs are not compared again.
     diverged: bool,
+    /// The ledger, replayed from the first signed header.
+    books: books::Books,
     /// Alarms already raised, so that one found at every poll is reported once.
     raised: std::collections::HashSet<String>,
 }
@@ -290,6 +297,28 @@ impl Watcher {
             let miracles = self
                 .client
                 .get(&format!("/v0/miracles?from={from}&to={to}"))?;
+            let known: HashMap<Hash, protogaea_protocol::wish::Wish> =
+                self.client.get("/v0/proposals?limit=1000")?["proposals"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| {
+                        let bytes: Vec<u8> = (0..p["bytes"].as_str()?.len() / 2)
+                            .map(|i| {
+                                u8::from_str_radix(&p["bytes"].as_str()?[2 * i..2 * i + 2], 16).ok()
+                            })
+                            .collect::<Option<_>>()?;
+                        let w = protogaea_protocol::wish::Wish::from_bytes(&bytes).ok()?;
+                        Some((w.id(), w))
+                    })
+                    .collect();
+            let header_of = |e: u64| -> Option<Value> {
+                signed["headers"]
+                    .as_array()?
+                    .iter()
+                    .find(|h| h["epoch"].as_u64() == Some(e))
+                    .cloned()
+            };
             let root_in = |list: &Value, key: &str, e: u64| -> Option<String> {
                 list[key]
                     .as_array()?
@@ -307,8 +336,71 @@ impl Watcher {
                         serde_json::from_value(m["miracle"].clone()).map_err(|x| x.to_string())
                     })
                     .collect::<Result<_>>()?;
-                self.run.step_with(&given);
+                // The ledger, from the first signed header on (its previous hash is all zeros).
+                let header = header_of(e);
+                if let Some(h) = &header {
+                    if !self.books.active
+                        && h["prev_header_hash"]
+                            .as_str()
+                            .is_some_and(|p| p.chars().all(|c| c == '0'))
+                    {
+                        self.books.active = true;
+                    }
+                    if h["beacon"].as_str() != Some(&hex(&self.run.beacon(self.run.world.epoch))) {
+                        self.alarm(
+                            "the header's beacon is not the epoch's",
+                            json!({ "epoch": e }),
+                        );
+                    }
+                }
+                let selected = match (&header, self.books.active) {
+                    (Some(h), true) => {
+                        let log = self.client.get(&format!("/v0/log/{e}"))?;
+                        let mut alarms = Vec::new();
+                        let sel = self.books.close(
+                            e,
+                            h,
+                            &log,
+                            &known,
+                            &self.run.world.world_id,
+                            &mut alarms,
+                        );
+                        let logged: Vec<String> = miracles["miracles"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|m| m["epoch"].as_u64() == Some(e))
+                            .filter_map(|m| m["proposal_id"].as_str().map(str::to_string))
+                            .collect();
+                        let mine: Vec<String> = sel.iter().map(|id| hex(id)).collect();
+                        if logged != mine {
+                            alarms.push((
+                                "the miracles applied are not the ones the ledger selects",
+                                json!({ "epoch": e, "selected": mine, "applied": logged }),
+                            ));
+                        }
+                        for (what, detail) in alarms {
+                            self.alarm(what, detail);
+                        }
+                        Some(sel)
+                    }
+                    (None, true) => {
+                        eprintln!("note: epoch {e} has no signed header; the ledger is no longer followed");
+                        self.books.active = false;
+                        None
+                    }
+                    _ => None,
+                };
+                let report = self.run.step_with(&given);
                 done += 1;
+                if let (Some(sel), Some(h)) = (&selected, &header) {
+                    let mut alarms = Vec::new();
+                    self.books
+                        .settle(e, sel, &report.miracles, &self.run, h, &mut alarms);
+                    for (what, detail) in alarms {
+                        self.alarm(what, detail);
+                    }
+                }
                 let mine = hex(&self.run.state_root());
                 let theirs =
                     root_in(&signed, "headers", e).or_else(|| root_in(&logged, "epochs", e));
@@ -366,6 +458,13 @@ fn run() -> Result<u32> {
         })
         .transpose()?;
     let operator: [u8; 32] = unhex(&client.get("/v0/operator")?["operator"])?;
+    let price_min: u128 = client.get("/v0/ledger")?["price_min"]
+        .as_str()
+        .and_then(|p| p.parse().ok())
+        .ok_or("no price floor")?;
+    let threads: usize = arg(&args, "--threads")
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(2);
     let world = client.get("/v0/world")?;
     let rules: Ruleset = serde_json::from_value(client.get("/v0/ruleset")?)
         .map_err(|e| format!("the ruleset: {e}"))?;
@@ -416,6 +515,7 @@ fn run() -> Result<u32> {
         run,
         diverged: false,
         raised: Default::default(),
+        books: books::Books::new(price_min, threads),
     };
     let mut last_replay = Instant::now() - Duration::from_secs(3600);
     loop {

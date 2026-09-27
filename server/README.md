@@ -83,6 +83,7 @@ Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed
 | `GET /v0/miracles?from=&to=` | the miracles given to the world by epoch, as the core applies them, with their outcomes |
 | `GET /v0/headers?from=&to=`, `GET /v0/headers/{epoch}` | signed epoch headers: the chain of header hashes, `state_root`, `ledger_root`, the epoch's final tree head, the beacon, `miracles_root`, the hash and the operator's signature |
 | `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |
+| `GET /v0/log/{epoch}` | an epoch's whole spark log for watchers: its window's challenge, target and accepted count, and every spark in log order |
 | `GET /v0/log/{epoch}/inclusion?index=&size=`, `GET /v0/log/{epoch}/consistency?first=&second=` | inclusion and consistency proofs in the epoch's log |
 
 ## The Telegram bot

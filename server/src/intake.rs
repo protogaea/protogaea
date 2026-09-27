@@ -23,6 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use protogaea_core::miracle::{check, is_transient, Outcomes};
 use protogaea_core::{Miracle, Ruleset, World};
 use protogaea_protocol::header::{ledger_leaf, ledger_root, miracle_leaf, Header};
+use protogaea_protocol::ledger::{select, Candidate};
 use protogaea_protocol::log::{consistency_proof, inclusion_proof, leaf_hash, root};
 use protogaea_protocol::spark::{challenge, next_target, Spark};
 use protogaea_protocol::sth::{Receipt, Sth};
@@ -37,10 +38,7 @@ const KEY: &str = "operator.key";
 const FIRST_TARGET: u64 = 1 << 56;
 /// Open wishes per author key at most (spec §17).
 pub const OPEN_PER_AUTHOR: i64 = 3;
-/// Miracles per epoch at most, and each action's price multiplier in percent (spec §19).
-pub const PER_EPOCH: usize = 3;
-pub const PRICE_MULT: [u128; 3] = [100, 120, 200];
-pub const TIEBREAK_TAG: &[u8] = b"PROTOGAEA/TIEBREAK/V0";
+pub use protogaea_protocol::ledger::{PER_EPOCH, PRICE_MULT};
 
 /// A wish's miracle for the core: cells as `x + y · width`.
 pub fn to_miracle(w: &Wish, width: u16) -> Miracle {
@@ -66,32 +64,6 @@ pub fn to_miracle(w: &Wish, width: u16) -> Miracle {
             steps: steps.clone(),
             at: cell(*at),
         },
-    }
-}
-
-/// Two miracles that cannot go in one epoch (spec §5): overlapping weather areas, one clade
-/// relocated twice, or targets whose 3 × 3 areas overlap.
-fn conflicts(a: &Action, b: &Action) -> bool {
-    let far = |p: (u8, u8), q: (u8, u8)| {
-        (i32::from(p.0) - i32::from(q.0))
-            .abs()
-            .max((i32::from(p.1) - i32::from(q.1)).abs())
-    };
-    let target = |a: &Action| match a {
-        Action::Migrate { to, .. } => Some(*to),
-        Action::Revive { at, .. } => Some(*at),
-        Action::Weather { .. } => None,
-    };
-    match (a, b) {
-        (Action::Weather { x, y, .. }, Action::Weather { x: x2, y: y2, .. }) => {
-            far((*x, *y), (*x2, *y2)) <= 6
-        }
-        (Action::Migrate { clade_id: c1, .. }, Action::Migrate { clade_id: c2, .. })
-            if c1 == c2 =>
-        {
-            true
-        }
-        _ => matches!((target(a), target(b)), (Some(p), Some(q)) if far(p, q) <= 2),
     }
 }
 
@@ -479,7 +451,7 @@ impl Intake {
 
     /// The ledger (spec §19), after the window's work was added: ready wishes, ranked, up to
     /// three selected without conflicts, and the next price. Returns the selected wishes.
-    fn select(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
+    fn select_miracles(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
         let price = self.price()?;
         let rows: Vec<(Vec<u8>, Vec<u8>, String)> = {
             let mut stmt = self
@@ -493,56 +465,37 @@ impl Intake {
                 .map_err(err)?;
             rows
         };
-        let mut ready: Vec<(Hash, Wish, u128, u128)> = Vec::new();
+        let mut wishes: std::collections::HashMap<Hash, Wish> = std::collections::HashMap::new();
+        let mut candidates = Vec::new();
         for (id, bytes, work) in rows {
             let Ok(w) = Wish::from_bytes(&bytes) else {
                 continue;
             };
-            let mult = PRICE_MULT[usize::from(w.action.code())];
-            let work: u128 = work.parse().unwrap_or(0);
-            if work >= price * mult / 100 {
+            let id = blob32(id);
+            candidates.push(Candidate {
+                id,
+                action: w.action.clone(),
+                work: work.parse().unwrap_or(0),
+            });
+            wishes.insert(id, w);
+        }
+        let s = select(&candidates, price, self.price_min, beacon);
+        for (ids, status) in [(&s.ready, "ready"), (&s.selected, "selected")] {
+            for id in ids {
                 self.conn
-                    .execute("UPDATE wishes SET status = 'ready' WHERE id = ?1", [&id])
+                    .execute(
+                        "UPDATE wishes SET status = ?2 WHERE id = ?1",
+                        params![id.to_vec(), status],
+                    )
                     .map_err(err)?;
-                ready.push((blob32(id), w, work, mult));
             }
         }
-        // By the share of the price covered, W / mult, compared by cross-multiplication; ties by
-        // BLAKE3(tag ‖ beacon ‖ proposal_id).
-        ready.sort_by(|a, b| {
-            (b.2 * a.3).cmp(&(a.2 * b.3)).then_with(|| {
-                protogaea_protocol::hash(&[TIEBREAK_TAG, beacon, &a.0])
-                    .cmp(&protogaea_protocol::hash(&[TIEBREAK_TAG, beacon, &b.0]))
-            })
-        });
-        let mut selected: Vec<(Hash, Wish)> = Vec::new();
-        for (id, w, _, _) in &ready {
-            if selected.len() == PER_EPOCH {
-                break;
-            }
-            if selected
-                .iter()
-                .any(|(_, s)| conflicts(&s.action, &w.action))
-            {
-                continue;
-            }
-            selected.push((*id, w.clone()));
-        }
-        for (id, _) in &selected {
-            self.conn
-                .execute(
-                    "UPDATE wishes SET status = 'selected' WHERE id = ?1",
-                    [id.to_vec()],
-                )
-                .map_err(err)?;
-        }
-        let next = if ready.len() > selected.len() {
-            price + price / 8
-        } else if selected.len() < PER_EPOCH {
-            (price - price / 8).max(self.price_min)
-        } else {
-            price
-        };
+        let next = s.next_price;
+        let selected: Vec<(Hash, Wish)> = s
+            .selected
+            .iter()
+            .map(|id| (*id, wishes[id].clone()))
+            .collect();
         self.set_price(next)?;
         Ok(selected)
     }
@@ -745,7 +698,7 @@ impl Intake {
         .map_err(err)?;
         tx.commit().map_err(err)?;
         let _ = sth;
-        self.select(beacon)
+        self.select_miracles(beacon)
     }
 
     /// Signs and records a tree head of the current log.
@@ -971,6 +924,46 @@ impl Intake {
             .map_err(err)?;
         rows.map(|r| r.map(|s| leaf_hash(&s.leaf(epoch))).map_err(err))
             .collect()
+    }
+
+    /// The spark log of an epoch as a watcher needs it: the window's challenge and target, how
+    /// many sparks it accepted, and the sparks in log order.
+    pub fn log_of(&self, epoch: u64) -> Result<Option<Value>, String> {
+        let window: Option<(Vec<u8>, i64, Option<i64>)> = self
+            .conn
+            .query_row(
+                "SELECT challenge, target, accepted FROM windows WHERE epoch = ?1",
+                [epoch as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        let Some((challenge, target, accepted)) = window else {
+            return Ok(None);
+        };
+        let mut stmt = self
+            .conn
+            .prepare("SELECT proposal_id, miner, nonce FROM sparks WHERE epoch = ?1 ORDER BY idx")
+            .map_err(err)?;
+        let sparks = stmt
+            .query_map([epoch as i64], |r| {
+                Ok(hex(&Spark {
+                    proposal_id: blob32(r.get(0)?),
+                    miner: blob32(r.get(1)?),
+                    nonce: r.get::<_, i64>(2)? as u64,
+                }
+                .to_bytes()))
+            })
+            .map_err(err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?;
+        Ok(Some(json!({
+            "epoch": epoch,
+            "challenge": hex(&challenge),
+            "target": (target as u64).to_string(),
+            "accepted": accepted,
+            "sparks": sparks,
+        })))
     }
 
     /// An inclusion proof for leaf `index` in the epoch's tree of `size` leaves.
