@@ -11,7 +11,7 @@ cargo run --release -p protogaea-server -- --seed 5 --data runs/server --listen 
 | `--seed N` | 1 | the seed of a new world; a saved world keeps its own |
 | `--data DIR` | `runs/server` | the world, snapshots and the database |
 | `--listen ADDR` | `127.0.0.1:8080` | the HTTP address |
-| `--epoch-seconds S` | 300 | one epoch every S seconds; 0 runs as fast as it can |
+| `--epoch-seconds S` | 300 | one epoch every S seconds: windows close on the wall-clock grid of S (with 300, at :00, :05, :10…) and stay open at least 2/5 of S, so a late header moves the close to the next grid point; 0 runs as fast as it can |
 | `--archive-every K` | 36 | keep a snapshot every K epochs for proofs and the time machine |
 | `--ruleset FILE` | the default ruleset | the rules of a new world |
 | `--viewer DIR` | — | serve the viewer's static files at `/app/` |

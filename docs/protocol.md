@@ -216,7 +216,7 @@ ledger_root = MerkleRoot(open wishes with W, price, queue)
 
 ## 8. Epoch timeline and beacon
 
-The timeline is in [spec §20](spec/spec-v0.2.md#20-epoch-timeline) and in the [architecture diagram](architecture.md#one-epoch).
+The timeline is in [spec §20](spec/spec-v0.2.md#20-epoch-timeline) and in the [architecture diagram](architecture.md#one-epoch). The world server follows it: a window closes at the first point of the wall-clock grid of whole epochs that leaves it open at least 2/5 of an epoch (`close_after` in [`server/src/world.rs`](../server/src/world.rs)); on live the close takes about 13 s to the next window (the wait for the drand round and the step).
 
 - **Beacon (candidate):** drand quicknet (a round every 3 s).
 - **Round rule (candidate):** `R_E` is the first round whose time is at least `close_E + 10 s`. For drand, round `r` has time `genesis_time + (r − 1) × period`, so `R_E = ceil((close_E + 10 − genesis_time) / period) + 1`.

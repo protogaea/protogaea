@@ -106,6 +106,27 @@ fn now_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// When a window opened at `opened_ms` closes (spec §20): on the grid of whole epochs since the
+/// Unix epoch (with 300 s, at :00, :05, :10…), at the first grid point that leaves the window at
+/// least 2/5 of an epoch (120 s of 300). A late header moves the close to a later grid point; a
+/// server that was down does not catch up.
+pub fn close_after(opened_ms: u64, epoch_seconds: u64) -> u64 {
+    let period = (epoch_seconds * 1000).max(1);
+    let min_window = period * 2 / 5;
+    (opened_ms + min_window).div_ceil(period) * period
+}
+
+/// Sleeps until a Unix time in milliseconds (in steps, so a clock set forward is followed).
+fn sleep_until(at_ms: u64) {
+    loop {
+        let now = now_ms();
+        if now >= at_ms {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis((at_ms - now).min(10_000)));
+    }
+}
+
 /// Opens or creates the world and its log. Returns the run, its story detectors, the store and
 /// the shared state for the API.
 pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), String> {
@@ -178,7 +199,7 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
         live: RwLock::new(Live {
             world: run.world.clone(),
             header,
-            next_epoch_ms: now_ms() + opts.epoch_seconds * 1000,
+            next_epoch_ms: close_after(now_ms(), opts.epoch_seconds),
             hour_dominant,
         }),
         seed: run.seed,
@@ -191,23 +212,27 @@ pub fn start(opts: Options) -> Result<(Run, Detectors, Store, Arc<Shared>), Stri
     Ok((run, detectors, store, shared))
 }
 
-/// Runs forever: one epoch every `epoch_seconds`. World time is logical: after a delay the
-/// world does not catch up (spec §20).
+/// Runs forever: one epoch every `epoch_seconds`, its window closing on the grid of
+/// `close_after`. World time is logical: after a delay the world does not catch up (spec §20).
 pub fn run_loop(
     mut run: Run,
     mut detectors: Detectors,
     mut store: Store,
     shared: Arc<Shared>,
 ) -> Result<(), String> {
-    let period = Duration::from_secs(shared.epoch_seconds);
-    let mut next = Instant::now() + period;
     loop {
-        let now = Instant::now();
-        if next > now {
-            std::thread::sleep(next - now);
-        }
-        next = Instant::now().max(next) + period;
+        let close_at = shared
+            .live
+            .read()
+            .expect("the lock is never poisoned")
+            .next_epoch_ms;
+        sleep_until(close_at);
         if run.world.finished(&run.rules) {
+            shared
+                .live
+                .write()
+                .expect("the lock is never poisoned")
+                .next_epoch_ms = close_after(now_ms(), shared.epoch_seconds);
             continue;
         }
         let started = Instant::now();
@@ -260,7 +285,6 @@ pub fn run_loop(
                 live.hour_dominant = header.dominant_clade;
             }
             live.header = header;
-            live.next_epoch_ms = now_ms() + period.as_millis() as u64;
         }
         let header_hash = shared
             .intake
@@ -279,6 +303,11 @@ pub fn run_loop(
             .lock()
             .expect("the lock is never poisoned")
             .open_window(run.world.epoch + 1, &header_hash)?;
+        shared
+            .live
+            .write()
+            .expect("the lock is never poisoned")
+            .next_epoch_ms = close_after(now_ms(), shared.epoch_seconds);
         shared
             .intake
             .lock()
@@ -392,6 +421,20 @@ fn save(data: &Path, run: &Run, detectors: &Detectors, archive_every: u64) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_close_on_the_grid() {
+        let m = 60_000;
+        // Opened 15 s after :00, the window closes at :05 (285 s).
+        assert_eq!(close_after(15_000, 300), 5 * m);
+        // Opened at 3:30 it would last 90 s: the close moves to :10.
+        assert_eq!(close_after(3 * m + 30_000, 300), 10 * m);
+        // Exactly 120 s is enough.
+        assert_eq!(close_after(3 * m, 300), 5 * m);
+        // Back after a long stop: the next grid point, no catching up.
+        assert_eq!(close_after(1000 * m + 1, 300), 1005 * m);
+        assert_eq!(close_after(7, 0), 7);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("protogaea-{name}-{}", std::process::id()));
