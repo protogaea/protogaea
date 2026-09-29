@@ -367,14 +367,7 @@ impl Watcher {
                     (Some(h), true) => {
                         let log = self.client.get(&format!("/v0/log/{e}"))?;
                         let mut alarms = Vec::new();
-                        let sel = self.books.close(
-                            e,
-                            h,
-                            &log,
-                            &known,
-                            &self.run.world.world_id,
-                            &mut alarms,
-                        );
+                        let sel = self.books.close(e, h, &log, &known, &self.run, &mut alarms);
                         let logged: Vec<String> = miracles["miracles"]
                             .as_array()
                             .into_iter()

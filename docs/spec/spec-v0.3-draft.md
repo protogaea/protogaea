@@ -1,6 +1,6 @@
 # Specification v0.3 draft: patrons of clades
 
-**Status:** draft, 2026-09-28. The first decisions are made (§13), and stages 1a and 1b have been checked in the balance harness (§11). Not adopted: Season 1 still runs on v0.2. [Russian translation](translations/ru/spec-v0.3-draft.ru.md).
+**Status:** draft, 2026-09-29. The first decisions are made (§13), and stages 1a, 1b and 1c have been checked in the balance harness (§11). Not adopted: Season 1 still runs on v0.2. [Russian translation](translations/ru/spec-v0.3-draft.ru.md).
 **Relation to v0.2:** this is a document of changes. Everything not mentioned here stays as in [v0.2](spec-v0.2.md). Section numbers of v0.2 are given in parentheses: (§6) is section 6 of specification v0.2.
 **Terms:** a "clade" is a branch of the lineage tree, what one would call a species in conversation (§12). "Patron" is a new term of this draft.
 **Numbers marked "candidate"** are chosen in the balance harness (§28) and frozen before a season.
@@ -123,7 +123,7 @@ Weather is no longer bought. Rain and drought (the effects of the former `weathe
 |---|---|
 | Parents | Two living clades, 5+ organisms of each in one 5 × 5 area |
 | Compatibility | The distance between the clades' reference genomes is 2 to 8 steps: closer, and it is the same clade; farther, and it is sterile |
-| Result | 4 hybrids in a 3 × 3 area: each trait is taken from one of the parents by counter-based randomness (§14), then the budget is brought to 32 by mutation steps under the rules of §11.1 |
+| Result | 8 hybrids in a 3 × 3 area (4 in the first draft; see §11): each trait is taken from one of the parents by counter-based randomness (§14), then the budget is brought to 32 by mutation steps under the rules of §11.1 |
 | Gifts | Each of the parents' gifts passes to a hybrid with probability 50%, at most 2 |
 | Clade | The hybrids found a new clade with two parents |
 | Limit | One pair of clades hybridizes at most once a world day; price multiplier 250 |
@@ -230,10 +230,10 @@ Next to a clade are its patrons with their shares. A patron's profile: "led 4 cl
 
 ## 10. Changes to the protocol and the state
 
-- **New actions in a wish** (§17): `shelter`, `forage`, `cure`, `gift` (with a gift code), `hybrid`, `blight`, `expose`, `sickness`. Each names a `clade_id` and an area; `hybrid` names two clades. `weather` leaves the wishes. Codes and the canonical encoding go into [`docs/protocol.md`](../protocol.md) once agreed.
-- **Already in the core** (behind the optional ruleset sections `patrons` and `traits8`, and `Ruleset::v03()`): relief, harm, gifts, natural weather, size, longevity and the niches. Without these sections the ruleset id and the state roots are unchanged (checked byte for byte). Hybridization is not there yet.
+- **New actions in a wish** (§17): `shelter`, `forage`, `cure`, `gift` (with a gift code), `hybrid`, `blight`, `expose`, `sickness`. Each names a `clade_id` and an area; `hybrid` names two clades. `weather` leaves the wishes: with patrons a `weather` wish is refused. Codes 3–10 and their canonical encoding are in [`docs/protocol.md`](../protocol.md) (Proposed), in the protocol crate, the server, the watcher and the spark client.
+- **Already in the core** (behind the optional ruleset sections `patrons` and `traits8`, and `Ruleset::v03()`): relief, harm, gifts, hybridization, natural weather, size, longevity and the niches. Without these sections the ruleset id and the state roots are unchanged (checked byte for byte).
 - **Natural weather** (§4.5) falls by the beacon and is part of the epoch's events, like wildfires and plague.
-- **Price** (§19): the share multiplier is computed from the state the miracle applies to (the end of epoch E−1), so it is deterministic and a watcher can replay it.
+- **Price** (§19): the share multiplier is computed from the state the miracle applies to (the end of epoch E−1), so it is deterministic and a watcher can replay it. The server and the watcher price wishes this way; a wish the share rule closes waits and is not a candidate that epoch. `GET /v0/ledger?clade=ID` gives a clade's multipliers.
 - **State** (§15): gift slots in an organism's genome; active reliefs and harms with their clade and area; clades' respites after harm; a clade's second parent; gift and hybridization cooldowns. All of it enters `state_root`.
 - **Ruleset:** a new `ruleset_id`. The live test world starts anew; there has been no public season yet, so the rule "a season's rules never change quietly" is not broken.
 - **The watcher and the time machine** replay the new actions just as they replay today's miracles.
@@ -257,6 +257,8 @@ Before any code in the live world, the mechanics are checked in the harness (§2
 
 **Results (stage 1b, 2026-09-28, the same 16 seeds × 14 days, the full v0.3 rules):** the world never went extinct; 6+ clades of 20+ organisms 90–98% of the time after day three (98% without players); no clade holds more than 60% for longer than 1.2 days; mean size 1.7–2.5 and longevity 3.3–5.5; at the end 150–450 swimmers and 24–68 giants, 4–7 burrowers and 2–33 scavengers (small niches); 352–432 named clades went extinct (about 350 in v0.2). The swimming gift is kept in 84% of cases: the algae make it strong ([details](../../harness/README.md#findings-spec-v03-draft-size-longevity-and-new-niches)).
 
+**Results (stage 1c, 2026-09-29, 16 seeds × 14 days, the full v0.3 rules with hybridization):** a hybrid clade lives about as long as a young clade of its size founded by mutation: with 4 hybrids 5% are alive with their descendants a day later and 2% three days later (young clades of 4+: 7% and 3%), with 8 hybrids 9% and 3% (young clades of 8+: 10% and 4%). Survival depends on the size of the start, so the crossing places 8. With 8 hybrids the world holds under every strategy: no extinction, 6+ clades of 20+ 95–99% of the time, no clade over 60% for longer than 0.9 days, 332–425 named clades extinct. A crossing is a lottery: about one hybrid clade in ten outlives its first day ([details](../../harness/README.md#findings-spec-v03-draft-hybridization)).
+
 **Passes if:**
 - the v0.2 health metrics (§28) are met under every strategy, "leader" and "whale" included;
 - the whale's clade does not hold more than 60% of the population for longer than 3 days;
@@ -267,9 +269,9 @@ Before any code in the live world, the mechanics are checked in the harness (§2
 
 ## 12. Stages
 
-1. **Harness**: done for 1a (relief, harm, gifts, natural weather, patron bots) and 1b (size, longevity, niches, 10 founders); the costs are chosen. Hybridization (1c) is next.
+1. **Harness**: done for 1a (relief, harm, gifts, natural weather, patron bots), 1b (size, longevity, niches, 10 founders) and 1c (hybridization); the costs are chosen.
 2. **Specification v0.3**: a draft in English and Russian; decisions go into the decision log when it is adopted.
-3. **Core, server, watcher:** the new actions, the share price, the state.
+3. **Core, server, watcher:** the new actions, the share price, the state. In progress: the actions and the share price are in the protocol, the server, the watcher and the spark client.
 4. **Viewer and bot:** "my clades", the patrons' card, the forecast, notifications.
 5. **A new test world** with the v0.3 ruleset.
 

@@ -49,7 +49,7 @@ CI builds the crate for `wasm32-unknown-unknown` and compares state roots across
 | Natural events (§10) | Floods, wildfire with ash, great drought, plague ("kill the winner") |
 | State root (§15) | Done: Merkle trees in the shape of RFC 9162 (see below), with inclusion proofs for organisms |
 | `ruleset_id` | BLAKE3 over serde's JSON encoding; the final canonicalization is TBD |
-| [v0.3 draft](../docs/spec/spec-v0.3-draft.md) | Behind two optional ruleset sections, for the harness only: `patrons` (the `Clade` miracle with relief, harm and six inherited gifts; natural rain and drought) and `traits8` (size and longevity, burrowers, scavengers by birth, algae in the shallows); `Ruleset::v03()` turns both on with ten founders. A ruleset without them keeps its id, and a world without them keeps its roots: gifts, the two extra traits and clade effects enter the state only when non-zero. Hybridization is not in yet |
+| [v0.3 draft](../docs/spec/spec-v0.3-draft.md) | Behind two optional ruleset sections, for the harness only: `patrons` (the `Clade` miracle with relief, harm and six inherited gifts; the `Hybrid` miracle, whose clade has two parents; the share rule of prices, `share_mult`; natural rain and drought, and bought weather refused) and `traits8` (size and longevity, burrowers, scavengers by birth, algae in the shallows); `Ruleset::v03()` turns both on with ten founders. A ruleset without them keeps its id, and a world without them keeps its roots: gifts, the two extra traits, clade effects and a clade's second parent enter the state only when non-zero |
 
 ## Differences from the specification
 

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use protogaea_core::miracle::{check, is_transient, Outcomes};
+use protogaea_core::miracle::{check_wish, is_transient, price_share, Outcomes};
 use protogaea_core::run::Run;
 use protogaea_core::Miracle;
 use protogaea_pow::{meets, spark_input, weight, Hasher, SPARK};
@@ -13,7 +13,7 @@ use protogaea_protocol::header::{ledger_leaf, ledger_root};
 use protogaea_protocol::ledger::{select, Candidate};
 use protogaea_protocol::log::{leaf_hash, root};
 use protogaea_protocol::spark::{challenge, next_target, Spark};
-use protogaea_protocol::wish::{Action, Source, Weather, Wish};
+use protogaea_protocol::wish::{Action, CladeAction, Source, Weather, Wish};
 use protogaea_protocol::{hex, Hash};
 use serde_json::{json, Value};
 
@@ -69,6 +69,38 @@ pub fn to_miracle(w: &Wish, width: u16) -> Miracle {
             steps: steps.clone(),
             at: cell(*at),
         },
+        Action::Clade {
+            action,
+            clade_id,
+            at,
+        } => Miracle::Clade {
+            action: clade_action(*action),
+            clade_id: *clade_id,
+            center: cell(*at),
+        },
+        Action::Hybrid {
+            clade_a,
+            clade_b,
+            at,
+        } => Miracle::Hybrid {
+            clade_a: *clade_a,
+            clade_b: *clade_b,
+            center: cell(*at),
+        },
+    }
+}
+
+/// A patron's action as the core codes it (`miracle::SHELTER` … and `GIFT + k`).
+pub fn clade_action(a: CladeAction) -> u8 {
+    use protogaea_core::miracle as m;
+    match a {
+        CladeAction::Shelter => m::SHELTER,
+        CladeAction::Forage => m::FORAGE,
+        CladeAction::Cure => m::CURE,
+        CladeAction::Gift(g) => m::GIFT + g,
+        CladeAction::Blight => m::BLIGHT,
+        CladeAction::Expose => m::EXPOSE,
+        CladeAction::Sickness => m::SICKNESS,
     }
 }
 
@@ -148,9 +180,10 @@ impl Books {
         header: &Value,
         log: &Value,
         known: &HashMap<Hash, Wish>,
-        world_id: &[u8; 16],
+        run: &Run,
         alarms: &mut Vec<Alarm>,
     ) -> Vec<Hash> {
+        let world_id = &run.world.world_id;
         let prev = h32(&header["prev_header_hash"]).unwrap_or([0; 32]);
         let ch = h32(&log["challenge"]).unwrap_or([0; 32]);
         if prev != [0; 32] && ch != challenge(world_id, e, &prev) {
@@ -238,10 +271,14 @@ impl Books {
             .wishes
             .iter()
             .filter(|(_, x)| matches!(x.status, Status::Open | Status::Ready))
-            .map(|(id, x)| Candidate {
-                id: *id,
-                action: x.wish.action.clone(),
-                work: x.work,
+            .filter_map(|(id, x)| {
+                let m = to_miracle(&x.wish, run.world.width);
+                Some(Candidate {
+                    id: *id,
+                    action: x.wish.action.clone(),
+                    work: x.work,
+                    share: u128::from(price_share(&run.world, &run.rules, &m)?),
+                })
             })
             .collect();
         let beacon = h32(&header["beacon"]).unwrap_or([0; 32]);
@@ -293,7 +330,7 @@ impl Books {
         }
         for x in self.wishes.values_mut() {
             if matches!(x.status, Status::Open | Status::Ready) {
-                if let Err(why) = check(
+                if let Err(why) = check_wish(
                     &run.world,
                     &run.rules,
                     &to_miracle(&x.wish, run.world.width),

@@ -7,12 +7,15 @@
 //! covers its price, which is a base price × the action's multiplier × the share multiplier of the
 //! clade it names (spec v0.3 §6); at most three ready wishes, the best covered first, go to the
 //! world each epoch. A refusal that passes by itself keeps the wish waiting; any other burns it.
+//!
+//! Helping groups also cross their clade with a compatible neighbour (`hybrid`, spec v0.3 §5); the
+//! report follows how many hybrid clades, with their descendants, live a day and three days on.
 
 use std::collections::BTreeMap;
 
 use protogaea_core::genome::GIFTS;
 use protogaea_core::miracle::{
-    is_harm, is_transient, BLIGHT, CURE, EXPOSE, FORAGE, GIFT, SHELTER, SICKNESS,
+    is_harm, is_transient, share_mult, BLIGHT, CURE, EXPOSE, FORAGE, GIFT, SHELTER, SICKNESS,
 };
 use protogaea_core::{Miracle, Ruleset, World};
 
@@ -97,43 +100,29 @@ struct Group {
 
 #[derive(Clone, Copy, Debug)]
 struct Wish {
-    miracle: (u8, u32, u16),
+    miracle: Plan,
     work: u64,
     waited: u64,
 }
 
+/// The bots' code for a hybrid wish (the core's miracle is `Miracle::Hybrid`).
+const HYBRID: u8 = 255;
+
+/// A wish's miracle: (action, clade, center, partner clade of a hybrid or 0).
+type Plan = (u8, u32, u16, u32);
+
 /// Prices (spec v0.3 §6, candidates), in the bots' work units.
 const BASE_PRICE: u64 = 100;
 fn action_mult(action: u8) -> u64 {
-    if action >= GIFT {
+    if action == HYBRID {
+        250
+    } else if action >= GIFT {
         150
     } else if is_harm(action) {
         120
     } else {
         100
     }
-}
-
-/// The share multiplier in percent, or `None` when the action is not available against a clade
-/// of this share (per mille of the living) and size.
-pub fn share_mult(action: u8, share_permille: u64, living: u32, rules: &Ruleset) -> Option<u64> {
-    let p = rules.patrons.as_ref()?;
-    if is_harm(action) {
-        if living < p.protect_min_living || share_permille < u64::from(p.protect_min_permille) {
-            return None;
-        }
-        return Some(match share_permille {
-            0..50 => 400,
-            50..100 => 200,
-            100..200 => 100,
-            _ => 75,
-        });
-    }
-    if share_permille >= 500 && action != CURE {
-        return None;
-    }
-    // Third run: steeper, ×4 at a 20% share (it was ×2.5): helping the leader kept it on top.
-    Some((share_permille * share_permille / 100).max(75))
 }
 
 /// A small generator for the bots' choices; outside consensus.
@@ -248,6 +237,14 @@ pub struct Tally {
     pub niches: [u32; 4],
     pub size_x10: u32,
     pub longevity_x10: u32,
+    /// Hybrid clades founded, and of those checked a day and three days on, how many were
+    /// alive then (the clade or a clade descended from it). To compare with, slots 2 and 3 are
+    /// the same for a sample of clades founded by mutation (those of every world hour's first
+    /// epoch), and slots 4 and 5 for clades founded by mutation within the last hour that
+    /// already have as many members as a hybrid clade starts with.
+    pub applied_hybrids: u32,
+    pub hybrid_checked: [u32; 6],
+    pub hybrid_alive: [u32; 6],
 }
 
 pub struct Bots {
@@ -255,9 +252,11 @@ pub struct Bots {
     /// Whales and camps choose their lineages after the first world day, when the strong show.
     assigned: bool,
     dice: Dice,
-    pending: Vec<(usize, (u8, u32, u16))>,
+    pending: Vec<(usize, Plan)>,
     /// (epoch due, gift index, lineage) for gifts to check later.
     gift_checks: Vec<(u64, usize, u32)>,
+    /// (epoch due, slot of `Tally::hybrid_checked`, clade) to check later.
+    hybrid_checks: Vec<(u64, usize, u32)>,
     backed: Option<u32>,
     backed_streak: u64,
     backed_longest: u64,
@@ -337,6 +336,7 @@ impl Bots {
             dice: Dice(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1),
             pending: Vec::new(),
             gift_checks: Vec::new(),
+            hybrid_checks: Vec::new(),
             backed,
             backed_streak: 0,
             backed_longest: 0,
@@ -345,11 +345,12 @@ impl Bots {
     }
 
     fn help_action(&mut self) -> u8 {
-        match self.dice.below(4) {
+        match self.dice.below(5) {
             0 => SHELTER,
             1 => FORAGE,
             2 => CURE,
-            _ => GIFT + self.dice.below(GIFTS.len() as u64) as u8,
+            3 => GIFT + self.dice.below(GIFTS.len() as u64) as u8,
+            _ => HYBRID,
         }
     }
 
@@ -364,12 +365,35 @@ impl Bots {
         world: &World,
         rules: &Ruleset,
         census: &Census,
-    ) -> Option<(u8, u32, u16)> {
+    ) -> Option<Plan> {
         let p = rules.patrons.as_ref()?;
         let r = i32::from(p.target_radius);
         let fits = |clade: u32| {
             let (cell, n) = densest(world, clade, r);
             (n >= p.min_members).then_some(cell)
+        };
+        // A hybrid's partner: the largest other clade with enough members around the cell and a
+        // reference genome within the crossing distances.
+        let partner = |clade: u32, cell: u16| -> Option<u32> {
+            let reference = world.clades.get(&clade)?.reference;
+            let (cx, cy) = world.coords(usize::from(cell));
+            let mut near: BTreeMap<u32, u32> = BTreeMap::new();
+            for o in &world.organisms {
+                let (x, y) = world.coords(usize::from(o.cell));
+                if o.clade_id != clade && (x - cx).abs().max((y - cy).abs()) <= r {
+                    *near.entry(o.clade_id).or_insert(0) += 1;
+                }
+            }
+            near.into_iter()
+                .filter(|&(c, n)| {
+                    n >= p.hybrid_min_each
+                        && world.clades.get(&c).is_some_and(|k| {
+                            let d = k.reference.distance(&reference);
+                            (p.hybrid_min_distance..=p.hybrid_max_distance).contains(&d)
+                        })
+                })
+                .max_by_key(|&(c, n)| (n, std::cmp::Reverse(c)))
+                .map(|(c, _)| c)
         };
         let order = census.by_size();
         let role = self.groups[g].role;
@@ -419,7 +443,12 @@ impl Bots {
         });
         for clade in reachable.take(40) {
             if let Some(cell) = fits(clade) {
-                return Some((action, clade, cell));
+                if action != HYBRID {
+                    return Some((action, clade, cell, 0));
+                }
+                if let Some(other) = partner(clade, cell) {
+                    return Some((action, clade, cell, other));
+                }
             }
         }
         None
@@ -469,7 +498,7 @@ impl Bots {
             self.assign(world);
         }
         let census = Census::of(world);
-        let mut ready: Vec<(u64, usize, (u8, u32, u16))> = Vec::new();
+        let mut ready: Vec<(u64, usize, Plan)> = Vec::new();
         for g in 0..self.groups.len() {
             if self.groups[g].wish.is_none() {
                 self.groups[g].wish = self.choose(g, world, rules, &census).map(|m| Wish {
@@ -484,7 +513,7 @@ impl Bots {
             };
             w.work += rate;
             w.waited += 1;
-            let (action, clade, _) = w.miracle;
+            let (action, clade, _, _) = w.miracle;
             let living = census.living.get(&clade).copied().unwrap_or(0);
             match share_mult(action, census.share(clade), living, rules) {
                 None => {
@@ -510,20 +539,46 @@ impl Bots {
         self.pending = ready.iter().map(|&(_, g, m)| (g, m)).collect();
         self.pending
             .iter()
-            .map(|&(_, (action, clade_id, center))| Miracle::Clade {
-                action,
-                clade_id,
-                center,
+            .map(|&(_, (action, clade_id, center, other))| {
+                if action == HYBRID {
+                    Miracle::Hybrid {
+                        clade_a: clade_id,
+                        clade_b: other,
+                        center,
+                    }
+                } else {
+                    Miracle::Clade {
+                        action,
+                        clade_id,
+                        center,
+                    }
+                }
             })
             .collect()
     }
 
     /// Reads what became of the miracles and follows up the season's measures.
     pub fn after(&mut self, world: &World, report: &protogaea_core::EpochReport, rules: &Ruleset) {
-        for (k, &(g, (action, clade, _))) in self.pending.iter().enumerate() {
+        let day = u64::from(rules.epochs_per_day);
+        for (k, &(g, (action, clade, _, other))) in self.pending.iter().enumerate() {
             if report.miracles.applied.contains(&k) {
                 self.groups[g].wish = None;
-                if action >= GIFT {
+                if action == HYBRID {
+                    self.tally.applied_hybrids += 1;
+                    // The new clade, if it lived through its first epoch; otherwise none.
+                    let hybrid = report
+                        .clades_founded
+                        .iter()
+                        .copied()
+                        .find(|id| {
+                            world.clades.get(id).is_some_and(|c| {
+                                c.parent_id == clade && c.second_parent_id == other
+                            })
+                        })
+                        .unwrap_or(u32::MAX);
+                    self.hybrid_checks.push((world.epoch + day, 0, hybrid));
+                    self.hybrid_checks.push((world.epoch + 3 * day, 1, hybrid));
+                } else if action >= GIFT {
                     self.tally.applied_gifts += 1;
                     let gi = usize::from(action - GIFT);
                     let lineage = world
@@ -557,6 +612,30 @@ impl Bots {
             }
         }
         self.pending.clear();
+        if world.epoch.is_multiple_of(12) {
+            for &id in &report.clades_founded {
+                let natural = world
+                    .clades
+                    .get(&id)
+                    .or_else(|| report.clades_extinct.iter().find(|c| c.id == id))
+                    .is_some_and(|c| c.second_parent_id == 0 && c.parent_id != 0);
+                if natural {
+                    self.hybrid_checks.push((world.epoch + day, 2, id));
+                    self.hybrid_checks.push((world.epoch + 3 * day, 3, id));
+                }
+            }
+            let start = rules.patrons.as_ref().map_or(4, |p| p.hybrid_count);
+            for c in world.clades.values() {
+                if c.second_parent_id == 0
+                    && c.parent_id != 0
+                    && c.founded_epoch + 12 > world.epoch
+                    && c.living >= start
+                {
+                    self.hybrid_checks.push((world.epoch + day, 4, c.id));
+                    self.hybrid_checks.push((world.epoch + 3 * day, 5, c.id));
+                }
+            }
+        }
         for c in &report.clades_extinct {
             if c.peak_living >= rules.clade_name_threshold {
                 self.tally.named_extinct += 1;
@@ -579,6 +658,27 @@ impl Bots {
             {
                 self.tally.gift_kept[gi] += 1;
             }
+        }
+        let due: Vec<(u64, usize, u32)> = self
+            .hybrid_checks
+            .iter()
+            .copied()
+            .filter(|&(at, _, _)| at <= world.epoch)
+            .collect();
+        self.hybrid_checks.retain(|&(at, _, _)| at > world.epoch);
+        for (_, slot, hybrid) in due {
+            self.tally.hybrid_checked[slot] += 1;
+            // Descendants: clades whose parent is the hybrid or one of its descendants (ids grow,
+            // so one pass in id order finds them).
+            let mut family = vec![hybrid];
+            let mut alive = false;
+            for c in world.clades.values() {
+                if c.id == hybrid || family.contains(&c.parent_id) {
+                    family.push(c.id);
+                    alive |= c.living > 0;
+                }
+            }
+            self.tally.hybrid_alive[slot] += u32::from(alive);
         }
         if let Some(l) = self.backed {
             let n = world.organisms.iter().filter(|o| o.lineage_id == l).count() as u64;

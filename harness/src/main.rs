@@ -899,6 +899,7 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
     );
     let mut gift_events = [0u32; 6];
     let mut gift_kept = [0u32; 6];
+    let (mut hybrids, mut hybrid_checked, mut hybrid_alive) = (0u32, [0u32; 6], [0u32; 6]);
     for &st in &strategies {
         let rows: Vec<&(Summary, Tally)> = jobs
             .iter()
@@ -921,6 +922,11 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
             for i in 0..6 {
                 gift_events[i] += t.gift_events[i];
                 gift_kept[i] += t.gift_kept[i];
+            }
+            hybrids += t.applied_hybrids;
+            for i in 0..6 {
+                hybrid_checked[i] += t.hybrid_checked[i];
+                hybrid_alive[i] += t.hybrid_alive[i];
             }
         }
         println!(
@@ -955,6 +961,35 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
     println!(
         "gifts still held in the lineage 3 days later (kept/given): {}",
         kept.join(", ")
+    );
+    let pct = |a: u32, n: u32| 100.0 * f64::from(a) / f64::from(n.max(1));
+    println!(
+        "hybrid clades: {hybrids} founded; alive with their descendants a day on {}/{} ({:.0}%), three days on {}/{} ({:.0}%)",
+        hybrid_alive[0],
+        hybrid_checked[0],
+        pct(hybrid_alive[0], hybrid_checked[0]),
+        hybrid_alive[1],
+        hybrid_checked[1],
+        pct(hybrid_alive[1], hybrid_checked[1]),
+    );
+    println!(
+        "clades founded by mutation (a sample), alive with their descendants: a day on {}/{} ({:.0}%), three days on {}/{} ({:.0}%)",
+        hybrid_alive[2],
+        hybrid_checked[2],
+        pct(hybrid_alive[2], hybrid_checked[2]),
+        hybrid_alive[3],
+        hybrid_checked[3],
+        pct(hybrid_alive[3], hybrid_checked[3]),
+    );
+    println!(
+        "  of those, under an hour old with {}+ members: a day on {}/{} ({:.0}%), three days on {}/{} ({:.0}%)",
+        rules.patrons.as_ref().map_or(4, |p| p.hybrid_count),
+        hybrid_alive[4],
+        hybrid_checked[4],
+        pct(hybrid_alive[4], hybrid_checked[4]),
+        hybrid_alive[5],
+        hybrid_checked[5],
+        pct(hybrid_alive[5], hybrid_checked[5]),
     );
     if rules.traits8.is_some() {
         println!("at the end (mean per seed): burrowers, swimmers, scavengers, giants; mean size and longevity");

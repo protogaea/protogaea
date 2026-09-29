@@ -353,10 +353,12 @@ fn num(v: &serde_json::Value) -> Result<u64, String> {
         .ok_or_else(|| "expected a number".to_string())
 }
 
-/// The wish of `req.action`: `{"weather": {x, y, rain}}`, `{"migrate": {clade_id, from, to}}` or
-/// `{"revive": {museum, entry_id, steps, at}}`, with points as `[x, y]`.
+/// The wish of `req.action`: `{"weather": {x, y, rain}}`, `{"migrate": {clade_id, from, to}}`,
+/// `{"revive": {museum, entry_id, steps, at}}`, and with patrons (spec v0.3, draft)
+/// `{"clade": {action, clade_id, at}}` (an action `shelter` … `sickness` or a gift's name) or
+/// `{"hybrid": {clade_a, clade_b, at}}`, with points as `[x, y]`.
 fn wish_of(req: &serde_json::Value) -> Result<protogaea_protocol::wish::Wish, String> {
-    use protogaea_protocol::wish::{Action, Source, Weather, Wish};
+    use protogaea_protocol::wish::{Action, CladeAction, Source, Weather, Wish};
     let point = |v: &serde_json::Value| -> Result<(u8, u8), String> {
         let a = v.as_array().ok_or("a point is [x, y]")?;
         Ok((num(&a[0])? as u8, num(&a[1])? as u8))
@@ -393,6 +395,21 @@ fn wish_of(req: &serde_json::Value) -> Result<protogaea_protocol::wish::Wish, St
             entry_id: num(&r["entry_id"])? as u32,
             steps,
             at: point(&r["at"])?,
+        }
+    } else if let Some(c) = a.get("clade") {
+        Action::Clade {
+            action: c["action"]
+                .as_str()
+                .and_then(CladeAction::parse)
+                .ok_or("no such action")?,
+            clade_id: num(&c["clade_id"])? as u32,
+            at: point(&c["at"])?,
+        }
+    } else if let Some(h) = a.get("hybrid") {
+        Action::Hybrid {
+            clade_a: num(&h["clade_a"])? as u32,
+            clade_b: num(&h["clade_b"])? as u32,
+            at: point(&h["at"])?,
         }
     } else {
         return Err("no action".into());

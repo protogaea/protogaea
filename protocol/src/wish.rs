@@ -12,7 +12,14 @@
 //! migrate: clade_id u32 ‖ from_x u8 ‖ from_y u8 ‖ to_x u8 ‖ to_y u8
 //! revive:  source u8 (0 museum, 1 spore bank) ‖ entry_id u32 ‖ steps u8 (0–2)
 //!          ‖ (i u8 ‖ j u8) × steps ‖ x u8 ‖ y u8
+//! shelter, forage, cure, blight, expose, sickness: clade_id u32 ‖ x u8 ‖ y u8
+//! gift:    gift u8 (0–5) ‖ clade_id u32 ‖ x u8 ‖ y u8
+//! hybrid:  clade_a u32 ‖ clade_b u32 ‖ x u8 ‖ y u8
 //! ```
+//!
+//! Action codes: weather 0, migrate 1, revive 2 (spec v0.2); shelter 3, forage 4, cure 5, gift 6,
+//! hybrid 7, blight 8, expose 9, sickness 10 (spec v0.3, draft). The gift codes follow the
+//! draft's table: swim 0, venom 1, camo 2, keen 3, hardy 4, scavenge 5.
 //!
 //! Integers are little-endian. Decoding is strict: unknown values, a lifetime beyond
 //! [`MAX_LIFETIME`], a name on anything but `revive` and trailing bytes are all rejected, so every
@@ -40,6 +47,47 @@ pub enum Source {
     SporeBank = 1,
 }
 
+/// Gifts a `gift` wish can name (spec v0.3 §4.2).
+pub const GIFT_KINDS: u8 = 6;
+
+/// A patron's action for or against one clade (spec v0.3 §4): relief, a gift or harm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CladeAction {
+    Shelter,
+    Forage,
+    Cure,
+    Gift(u8),
+    Blight,
+    Expose,
+    Sickness,
+}
+
+/// Gift names by code.
+pub const GIFT_NAMES: [&str; GIFT_KINDS as usize] =
+    ["swim", "venom", "camo", "keen", "hardy", "scavenge"];
+
+impl CladeAction {
+    /// An action by its name (`shelter` … `sickness`), a gift by its own name (`swim` …).
+    pub fn parse(name: &str) -> Option<CladeAction> {
+        Some(match name {
+            "shelter" => CladeAction::Shelter,
+            "forage" => CladeAction::Forage,
+            "cure" => CladeAction::Cure,
+            "blight" => CladeAction::Blight,
+            "expose" => CladeAction::Expose,
+            "sickness" => CladeAction::Sickness,
+            gift => CladeAction::Gift(GIFT_NAMES.iter().position(|&g| g == gift)? as u8),
+        })
+    }
+
+    pub fn is_harm(self) -> bool {
+        matches!(
+            self,
+            CladeAction::Blight | CladeAction::Expose | CladeAction::Sickness
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Weather {
@@ -58,6 +106,18 @@ pub enum Action {
         steps: Vec<(u8, u8)>,
         at: (u8, u8),
     },
+    /// Relief, a gift or harm for the clade around `at`.
+    Clade {
+        action: CladeAction,
+        clade_id: u32,
+        at: (u8, u8),
+    },
+    /// Two clades crossed around `at`.
+    Hybrid {
+        clade_a: u32,
+        clade_b: u32,
+        at: (u8, u8),
+    },
 }
 
 impl Action {
@@ -66,9 +126,30 @@ impl Action {
             Action::Weather { .. } => 0,
             Action::Migrate { .. } => 1,
             Action::Revive { .. } => 2,
+            Action::Clade { action, .. } => match action {
+                CladeAction::Shelter => 3,
+                CladeAction::Forage => 4,
+                CladeAction::Cure => 5,
+                CladeAction::Gift(_) => 6,
+                CladeAction::Blight => 8,
+                CladeAction::Expose => 9,
+                CladeAction::Sickness => 10,
+            },
+            Action::Hybrid { .. } => 7,
         }
     }
+
+    /// The action's name, as the API and the tools spell it.
+    pub fn name(&self) -> &'static str {
+        NAMES[usize::from(self.code())]
+    }
 }
+
+/// Action names by code.
+pub const NAMES: [&str; 11] = [
+    "weather", "migrate", "revive", "shelter", "forage", "cure", "gift", "hybrid", "blight",
+    "expose", "sickness",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hypothesis {
@@ -124,6 +205,26 @@ impl Wish {
                 }
                 out.extend_from_slice(&[at.0, at.1]);
             }
+            Action::Clade {
+                action,
+                clade_id,
+                at,
+            } => {
+                if let CladeAction::Gift(g) = action {
+                    out.push(*g);
+                }
+                out.extend_from_slice(&clade_id.to_le_bytes());
+                out.extend_from_slice(&[at.0, at.1]);
+            }
+            Action::Hybrid {
+                clade_a,
+                clade_b,
+                at,
+            } => {
+                out.extend_from_slice(&clade_a.to_le_bytes());
+                out.extend_from_slice(&clade_b.to_le_bytes());
+                out.extend_from_slice(&[at.0, at.1]);
+            }
         }
         out.extend_from_slice(&self.author);
         out.extend_from_slice(&self.created_epoch.to_le_bytes());
@@ -161,6 +262,18 @@ impl Wish {
             }
         } else if self.name.is_some() {
             return Err(WishError::Format("a name without revive"));
+        }
+        match &self.action {
+            Action::Clade {
+                action: CladeAction::Gift(g),
+                ..
+            } if *g >= GIFT_KINDS => return Err(WishError::Format("gift")),
+            Action::Hybrid {
+                clade_a, clade_b, ..
+            } if clade_a == clade_b => {
+                return Err(WishError::Format("a clade crossed with itself"))
+            }
+            _ => {}
         }
         if self
             .hypothesis
@@ -215,6 +328,27 @@ impl Wish {
                     at: (r.u8()?, r.u8()?),
                 }
             }
+            code @ (3..=6 | 8..=10) => {
+                let action = match code {
+                    3 => CladeAction::Shelter,
+                    4 => CladeAction::Forage,
+                    5 => CladeAction::Cure,
+                    6 => CladeAction::Gift(r.u8()?),
+                    8 => CladeAction::Blight,
+                    9 => CladeAction::Expose,
+                    _ => CladeAction::Sickness,
+                };
+                Action::Clade {
+                    action,
+                    clade_id: r.u32()?,
+                    at: (r.u8()?, r.u8()?),
+                }
+            }
+            7 => Action::Hybrid {
+                clade_a: r.u32()?,
+                clade_b: r.u32()?,
+                at: (r.u8()?, r.u8()?),
+            },
             _ => return Err(WishError::Format("action")),
         };
         let author = r.array::<32>()?;
@@ -367,7 +501,55 @@ mod tests {
             name: None,
             ..w
         };
-        assert_eq!(Wish::from_bytes(&migrate.to_bytes()), Ok(migrate));
+        assert_eq!(Wish::from_bytes(&migrate.to_bytes()), Ok(migrate.clone()));
+        // The patrons' actions (spec v0.3, draft).
+        let actions = [
+            CladeAction::Shelter,
+            CladeAction::Forage,
+            CladeAction::Cure,
+            CladeAction::Gift(5),
+            CladeAction::Blight,
+            CladeAction::Expose,
+            CladeAction::Sickness,
+        ];
+        for action in actions {
+            let x = Wish {
+                action: Action::Clade {
+                    action,
+                    clade_id: 70_000,
+                    at: (9, 8),
+                },
+                ..migrate.clone()
+            };
+            let bytes = x.to_bytes();
+            assert_eq!(bytes[49], x.action.code());
+            assert_eq!(Wish::from_bytes(&bytes), Ok(x));
+        }
+        let hybrid = Wish {
+            action: Action::Hybrid {
+                clade_a: 5,
+                clade_b: 6,
+                at: (1, 1),
+            },
+            ..migrate.clone()
+        };
+        assert_eq!(hybrid.action.name(), "hybrid");
+        assert_eq!(Wish::from_bytes(&hybrid.to_bytes()), Ok(hybrid.clone()));
+        // No gift beyond the table, no clade crossed with itself.
+        let mut gift = Wish {
+            action: Action::Clade {
+                action: CladeAction::Gift(0),
+                clade_id: 1,
+                at: (0, 0),
+            },
+            ..migrate.clone()
+        }
+        .to_bytes();
+        gift[50] = GIFT_KINDS;
+        assert_eq!(Wish::from_bytes(&gift), Err(WishError::Format("gift")));
+        let mut selfish = hybrid.to_bytes();
+        selfish[54..58].copy_from_slice(&5u32.to_le_bytes());
+        assert!(Wish::from_bytes(&selfish).is_err());
         // One encoding only: trailing bytes, bad presence bytes and bad enums are rejected.
         let mut long = bytes.clone();
         long.push(0);

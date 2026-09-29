@@ -109,11 +109,18 @@ impl Rift {
     }
 }
 
+fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
 /// An extinct named clade, kept in the state so that `revive` can be checked (spec §12).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MuseumEntry {
     pub clade_id: u32,
     pub parent_id: u32,
+    /// The second parent of a hybrid clade (spec v0.3 §5); 0 and absent otherwise.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub second_parent_id: u32,
     pub reference: Genome,
     pub founded_epoch: u64,
     pub extinct_epoch: u64,
@@ -198,6 +205,10 @@ pub struct Clade {
     pub id: u32,
     /// 0 for founder clades.
     pub parent_id: u32,
+    /// The second parent of a hybrid clade (spec v0.3 §5); 0 and absent otherwise, so clades of
+    /// worlds without hybrids read and hash as before.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub second_parent_id: u32,
     pub reference: Genome,
     pub founded_epoch: u64,
     pub living: u32,
@@ -643,6 +654,12 @@ fn organism_bytes(o: &Organism) -> Vec<u8> {
     out
 }
 
+/// The bytes of a clade's leaf, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn clade_bytes_for_test(c: &Clade) -> Vec<u8> {
+    clade_bytes(c)
+}
+
 fn clade_bytes(c: &Clade) -> Vec<u8> {
     let mut out = Vec::with_capacity(40);
     out.extend_from_slice(&c.id.to_le_bytes());
@@ -651,6 +668,9 @@ fn clade_bytes(c: &Clade) -> Vec<u8> {
     out.extend_from_slice(&c.founded_epoch.to_le_bytes());
     out.extend_from_slice(&c.living.to_le_bytes());
     out.extend_from_slice(&c.peak_living.to_le_bytes());
+    if c.second_parent_id != 0 {
+        out.extend_from_slice(&c.second_parent_id.to_le_bytes());
+    }
     out
 }
 
@@ -662,6 +682,9 @@ fn museum_bytes(m: &MuseumEntry) -> Vec<u8> {
     out.extend_from_slice(&m.founded_epoch.to_le_bytes());
     out.extend_from_slice(&m.extinct_epoch.to_le_bytes());
     out.extend_from_slice(&m.peak_living.to_le_bytes());
+    if m.second_parent_id != 0 {
+        out.extend_from_slice(&m.second_parent_id.to_le_bytes());
+    }
     out
 }
 

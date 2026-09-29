@@ -81,7 +81,7 @@ Wish statuses: `open`, `ready` (queued), `selected` (during the step), `executed
 | `POST /v0/proposals` | a wish with its first spark: `{wish, signature, spark}` in hex; answers the `proposal_id` and the spark's receipt |
 | `GET /v0/proposals?status=&limit=` | wishes with their status and accumulated work |
 | `POST /v0/sparks` | a batch of up to 64 sparks, 72 bytes each (`application/octet-stream`); a receipt or an error for each |
-| `GET /v0/ledger` | the price of a miracle for the next selection, its floor, the multipliers and the miracles per epoch |
+| `GET /v0/ledger` | the price of a miracle for the next selection, its floor, the multipliers and the miracles per epoch; with patrons (spec v0.3, draft) `?clade=ID` adds the clade's share multipliers for help, `cure` and harm (`null` where the share rule closes them) |
 | `GET /v0/miracles?from=&to=` | the miracles given to the world by epoch, as the core applies them, with their outcomes |
 | `GET /v0/headers?from=&to=`, `GET /v0/headers/{epoch}` | signed epoch headers: the chain of header hashes, `state_root`, `ledger_root`, the epoch's final tree head, the beacon, `miracles_root`, the hash and the operator's signature |
 | `GET /v0/sth?epoch=` | the latest signed tree head of an epoch's spark log (the final one once its window closed) |

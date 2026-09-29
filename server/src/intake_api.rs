@@ -19,15 +19,19 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use protogaea_core::World;
+use protogaea_core::miracle::{
+    check_wish, is_transient, share_mult, BLIGHT, CURE, SHELTER, WEATHER_IS_NATURAL,
+};
+use protogaea_core::{Ruleset, World};
 use protogaea_pow::{meets, spark_input, weight, SPARK};
+use protogaea_protocol::ledger::PRICE_MULT;
 use protogaea_protocol::spark::{parse_batch, Spark};
-use protogaea_protocol::wish::{Action, Source, Wish};
+use protogaea_protocol::wish::{Action, Source, Wish, NAMES};
 use protogaea_protocol::{hex, Hash};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::intake::{receipt_json, sth_json, Refusal, Ticket};
+use crate::intake::{receipt_json, sth_json, to_miracle, Refusal, Ticket};
 use crate::world::Shared;
 
 type Api = std::sync::Arc<Shared>;
@@ -264,13 +268,25 @@ async fn check_pow(t: Ticket, previous: Option<Ticket>, sparks: Vec<Spark>) -> O
     out
 }
 
-/// Whether a wish can apply to the latest published state (spec §17, the soft check).
-fn soft_check(world: &World, w: &Wish) -> Result<(), &'static str> {
+/// Whether a wish can apply to the latest published state (spec §17, the soft check). A patron's
+/// wish (spec v0.3, draft) goes through the world's own check, and fails only on a refusal that
+/// would not pass by itself.
+fn soft_check(world: &World, rules: &Ruleset, w: &Wish) -> Result<(), &'static str> {
     let inside = |(x, y): (u8, u8)| u16::from(x) < world.width && u16::from(y) < world.height;
     match &w.action {
+        Action::Weather { .. } if rules.patrons.is_some() => Err(WEATHER_IS_NATURAL),
         Action::Weather { x, y, .. } => inside((*x, *y))
             .then_some(())
             .ok_or("the area is outside the map"),
+        Action::Clade { at, .. } | Action::Hybrid { at, .. } => {
+            if !inside(*at) {
+                return Err("the area is outside the map");
+            }
+            match check_wish(world, rules, &to_miracle(w, world.width)) {
+                Err(why) if !is_transient(why) => Err(why),
+                _ => Ok(()),
+            }
+        }
         Action::Migrate { clade_id, from, to } => {
             if !inside(*from) || !inside(*to) {
                 return Err("the area is outside the map");
@@ -289,7 +305,11 @@ fn soft_check(world: &World, w: &Wish) -> Result<(), &'static str> {
             if !inside(*at) {
                 return Err("the start is outside the map");
             }
-            if steps.iter().any(|(i, j)| *i >= 6 || *j >= 6 || i == j) {
+            let traits = if rules.traits8.is_some() { 8 } else { 6 };
+            if steps
+                .iter()
+                .any(|(i, j)| *i >= traits || *j >= traits || i == j)
+            {
                 return Err("a mutation step names no two traits");
             }
             let known = match source {
@@ -376,7 +396,7 @@ async fn propose(
     }
     {
         let live = api.live.read().expect("the lock is never poisoned");
-        if let Err(why) = soft_check(&live.world, &w) {
+        if let Err(why) = soft_check(&live.world, &api.rules, &w) {
             return refuse(Refusal::ActionInvalid(why));
         }
     }
@@ -533,19 +553,61 @@ async fn proposals(State(api): State<Api>, Query(q): Query<ProposalQuery>) -> Re
 }
 
 /// The price of a miracle for the next selection and its floor (spec §19), in work units, as
-/// strings (they may exceed 2^53).
-async fn ledger(State(api): State<Api>) -> Response {
+/// strings (they may exceed 2^53), and each action's multiplier in percent. With patrons
+/// (spec v0.3 §6), `?clade=ID` adds that clade's share multipliers in the latest published state:
+/// for help, `cure`, harm and a hybrid it leads, `null` where the share rule closes the action.
+async fn ledger(State(api): State<Api>, Query(q): Query<LedgerQuery>) -> Response {
+    let actions = if api.rules.patrons.is_some() {
+        &NAMES[1..]
+    } else {
+        &NAMES[..3]
+    };
+    let mult: serde_json::Map<String, Value> = actions
+        .iter()
+        .map(|&a| {
+            let code = NAMES.iter().position(|&n| n == a).expect("a name");
+            (a.to_string(), json!(PRICE_MULT[code] as u64))
+        })
+        .collect();
+    let clade = match (q.clade, api.rules.patrons.is_some()) {
+        (Some(id), true) => {
+            let live = api.live.read().expect("the lock is never poisoned");
+            let w = &live.world;
+            let living = w.clades.get(&id).map_or(0, |c| c.living);
+            let share = u64::from(living) * 1000 / (w.organisms.len() as u64).max(1);
+            let m = |a| share_mult(a, share, living, &api.rules);
+            Some(json!({
+                "clade_id": id,
+                "living": living,
+                "share_permille": share,
+                "help": m(SHELTER),
+                "cure": m(CURE),
+                "harm": m(BLIGHT),
+            }))
+        }
+        _ => None,
+    };
     let intake = api.intake.lock().expect("the lock is never poisoned");
     match intake.price() {
-        Ok(p) => Json(json!({
-            "price": p.to_string(),
-            "price_min": intake.price_min.to_string(),
-            "price_mult": { "weather": 100, "migrate": 120, "revive": 200 },
-            "per_epoch": crate::intake::PER_EPOCH,
-        }))
-        .into_response(),
+        Ok(p) => {
+            let mut out = json!({
+                "price": p.to_string(),
+                "price_min": intake.price_min.to_string(),
+                "price_mult": mult,
+                "per_epoch": crate::intake::PER_EPOCH,
+            });
+            if let Some(c) = clade {
+                out["share_mult"] = c;
+            }
+            Json(out).into_response()
+        }
         Err(e) => internal(e),
     }
+}
+
+#[derive(Deserialize)]
+struct LedgerQuery {
+    clade: Option<u32>,
 }
 
 /// Signed epoch headers (spec §9): `from` to `to`, at most 500.

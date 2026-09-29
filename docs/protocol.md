@@ -52,16 +52,19 @@ version u8 (0) ‖ world_id [16] ‖ ruleset_id [32] ‖ action u8 ‖ params (p
 weather: x u8 ‖ y u8 ‖ kind u8
 migrate: clade_id u32 ‖ from_x u8 ‖ from_y u8 ‖ to_x u8 ‖ to_y u8
 revive:  source u8 ‖ entry_id u32 ‖ steps u8 (0–2) ‖ (i u8 ‖ j u8) × steps ‖ x u8 ‖ y u8
+shelter, forage, cure, blight, expose, sickness: clade_id u32 ‖ x u8 ‖ y u8
+gift:    gift u8 (0–5) ‖ clade_id u32 ‖ x u8 ‖ y u8
+hybrid:  clade_a u32 ‖ clade_b u32 ‖ x u8 ‖ y u8
 ```
 
-Decoding is strict: unknown values, a lifetime above 288 epochs, a name on anything but `revive` and trailing bytes are rejected, so a wish has exactly one encoding. The table below lists the fields.
+Decoding is strict: unknown values, a lifetime above 288 epochs, a name on anything but `revive`, a gift code above 5, a clade crossed with itself and trailing bytes are rejected, so a wish has exactly one encoding. The table below lists the fields.
 
 | Field | Type (candidate) | Notes |
 |---|---|---|
 | `version` | `u8` | `0` |
 | `world_id` | 16 bytes | |
 | `ruleset_id` | 32 bytes | Hash of the season's ruleset ([ruleset.md](ruleset.md)) |
-| `action` | `u8` | `0` = `weather`, `1` = `migrate`, `2` = `revive` |
+| `action` | `u8` | `0` = `weather`, `1` = `migrate`, `2` = `revive`; with patrons ([spec v0.3 draft](spec/spec-v0.3-draft.md)): `3` = `shelter`, `4` = `forage`, `5` = `cure`, `6` = `gift`, `7` = `hybrid`, `8` = `blight`, `9` = `expose`, `10` = `sickness` |
 | `params` | per action (§4.2) | |
 | `author_pubkey` | 32 bytes | |
 | `created_epoch` | `u64` | |
@@ -78,6 +81,11 @@ Optional fields are preceded by a presence byte (`0` or `1`) — Proposed.
 | `weather` | center `x: u8`, `y: u8`; `kind: u8` (`0` rain, `1` drought) |
 | `migrate` | `clade_id: u32`; source area center `x: u8`, `y: u8` (5 × 5 area); target `x: u8`, `y: u8` |
 | `revive` | `source: u8` (`0` museum, `1` spore bank); `entry_id: u32`; up to two mutation steps, each a pair `(i: u8, j: u8)`; start `x: u8`, `y: u8` |
+| `shelter`, `forage`, `cure`, `blight`, `expose`, `sickness` | `clade_id: u32`; area center `x: u8`, `y: u8` (the clade's members counted in 5 × 5, the effect in 7 × 7) |
+| `gift` | `gift: u8` (`0` swim, `1` venom, `2` camo, `3` keen, `4` hardy, `5` scavenge); `clade_id: u32`; center `x: u8`, `y: u8` |
+| `hybrid` | `clade_a: u32`, `clade_b: u32` (different); center `x: u8`, `y: u8` |
+
+The patrons' actions (codes 3–10) exist only in a ruleset with the `patrons` section. There `weather` is not bought: it falls by itself, and a `weather` wish is refused.
 
 ### 4.3 Identifier and signature
 
@@ -191,10 +199,10 @@ for each open wish p:
     W[p] += sum(weight(s) for s in final_tree(E) if s.proposal_id == p)
 close wishes whose lifetime ended (expired)
 
-price(p) = P_E × price_mult[action(p)] / 100
+price(p) = P_E × price_mult[action(p)] × share_mult(p) / 10000
 ready    = { p : W[p] >= price(p) } ∪ deferred
 
-sort ready by W[p] / price_mult[action(p)], descending      # compare by cross-multiplication
+sort ready by W[p] / (price_mult[action(p)] × share_mult(p)), descending   # cross-multiplication
     ties: by BLAKE3(beacon_E ‖ proposal_id)                  # order and tag: TBD
 
 selected = []
@@ -214,7 +222,9 @@ ledger_root = MerkleRoot(open wishes with W, price, queue)
 
 - **Conflicts** ([spec §5](spec/spec-v0.2.md#5-naturalist-actions)): overlapping weather areas, the same clade relocated twice, occupied target cells.
 - **In the server** ([`server/src/intake.rs`](../server/src/intake.rs)), with these **Proposed** choices: ties are broken by `BLAKE3("PROTOGAEA/TIEBREAK/V0" ‖ beacon_E ‖ proposal_id)`, smaller first; a queued (ready) wish does not expire; weather areas conflict when their centers are within 6 cells, targets when within 2; a miracle refused at application for a reason that passes by itself (an active effect, a cooldown, a crowded start, a museum entry extinct too recently) stays queued with its work, one refused for good is invalidated. The ledger root is not computed yet.
-- **Candidates:** `price_mult` = `weather` 100, `migrate` 120, `revive` 200. `P_min` ≈ 8 core-hours of the reference core, expressed in work units after benchmarks.
+- **The share multiplier** ([spec v0.3 draft §6](spec/spec-v0.3-draft.md#6-the-price-of-help-and-harm-protection-from-hegemony-and-hounding)): 100 for `weather`, `migrate` and `revive`. For a patron's action it is computed from the clade's share `s` of the living, in per mille, in the state the miracle applies to (the end of epoch E−1), so a watcher computes the same: help costs `max(75, s² / 100)` and is closed at `s` ≥ 500 except `cure`; harm costs 400 below 50‰, 200 below 100‰, 100 below 200‰ and 75 above, and is closed against a clade under `protect_min_living` (20) organisms or `protect_min_permille` (30‰); a `hybrid` is priced as help for `clade_a`. A wish the share rule closes is not a candidate that epoch and keeps waiting. Implemented in `core::miracle::share_mult`; the server's `GET /v0/ledger?clade=ID` returns a clade's multipliers.
+- **Conflicts with patrons:** the same relief or harm for one clade, two gifts for one clade, one pair crossed twice (in either order), and a hybrid's target within 2 cells of another target. The world would refuse the second; a conflict keeps it waiting instead.
+- **Candidates:** `price_mult` = `weather` 100, `migrate` 120, `revive` 200; `shelter`, `forage`, `cure` 100, `gift` 150, `hybrid` 250, `blight`, `expose`, `sickness` 120. `P_min` ≈ 8 core-hours of the reference core, expressed in work units after benchmarks.
 
 ## 8. Epoch timeline and beacon
 

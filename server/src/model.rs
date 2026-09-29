@@ -197,6 +197,11 @@ pub fn miracle_events(
                     Some(*clade_id),
                     json!({ "kind": action, "at": xy(*center), "cell": center }),
                 ),
+                Miracle::Hybrid { clade_a, clade_b, center } => (
+                    "hybrid",
+                    Some(*clade_a),
+                    json!({ "other_clade": clade_b, "at": xy(*center), "cell": center }),
+                ),
             };
             data["action"] = json!(action);
             data["applied"] = json!(refused.is_none());

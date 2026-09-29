@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 use protogaea_pow::{meets, spark_input, weight, SPARK};
 use protogaea_protocol::spark::{Spark, MAX_BATCH};
 use protogaea_protocol::sth::{Receipt, Sth};
-use protogaea_protocol::wish::{self, Action, Source, Weather, Wish, MAX_LIFETIME};
+use protogaea_protocol::wish::{
+    self, Action, CladeAction, Source, Weather, Wish, GIFT_NAMES, MAX_LIFETIME,
+};
 use protogaea_protocol::{hex, Hash};
 use serde_json::{json, Value};
 
@@ -305,7 +307,29 @@ fn run() -> Result<()> {
                         })
                         .collect::<Result<Vec<(u8, u8)>>>()?,
                 },
-                _ => return Err("wish weather X Y rain|drought | wish migrate CLADE FROM_X FROM_Y TO_X TO_Y | wish revive museum|spores ENTRY X Y [i:j ...]".into()),
+                // Patrons (spec v0.3, draft): relief or harm for a clade, or a gift by its name.
+                Some("hybrid") => Action::Hybrid {
+                    clade_a: n(2, "CLADE_A")?,
+                    clade_b: n(3, "CLADE_B")?,
+                    at: (n(4, "X")? as u8, n(5, "Y")? as u8),
+                },
+                Some("gift") => Action::Clade {
+                    action: args
+                        .get(2)
+                        .and_then(|g| CladeAction::parse(g))
+                        .filter(|a| matches!(a, CladeAction::Gift(_)))
+                        .ok_or("a gift: swim, venom, camo, keen, hardy or scavenge")?,
+                    clade_id: n(3, "CLADE")?,
+                    at: (n(4, "X")? as u8, n(5, "Y")? as u8),
+                },
+                Some(name) if CladeAction::parse(name).is_some() && !GIFT_NAMES.contains(&name) => {
+                    Action::Clade {
+                        action: CladeAction::parse(name).expect("parsed"),
+                        clade_id: n(2, "CLADE")?,
+                        at: (n(3, "X")? as u8, n(4, "Y")? as u8),
+                    }
+                }
+                _ => return Err("wish weather X Y rain|drought | wish migrate CLADE FROM_X FROM_Y TO_X TO_Y | wish revive museum|spores ENTRY X Y [i:j ...] | wish shelter|forage|cure|blight|expose|sickness CLADE X Y | wish gift GIFT CLADE X Y | wish hybrid CLADE_A CLADE_B X Y".into()),
             };
             let operator: [u8; 32] = unhex(client.get("/v0/operator")?["operator"].as_str().ok_or("no operator")?)?;
             let (w, raw) = window(&client)?;

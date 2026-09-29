@@ -348,9 +348,11 @@ impl Default for Miracles {
     }
 }
 
-/// Patrons of clades (spec v0.3, draft): help for a clade (easing, gifts), harm to a rival, and
-/// weather as a natural event. A ruleset without this section plays as v0.2.
+/// Patrons of clades (spec v0.3, draft): help for a clade (easing, gifts, hybrids), harm to a
+/// rival, and weather as a natural event. A ruleset without this section plays as v0.2. Fields
+/// missing from a saved ruleset take their defaults.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Patrons {
     /// Easing and harm cover the square of this radius (3: 7 × 7) around their center.
     pub area_radius: u8,
@@ -397,6 +399,16 @@ pub struct Patrons {
     pub weather_regions_x: u8,
     pub weather_regions_y: u8,
     pub weather_ppm: u32,
+    /// `hybrid` (spec v0.3 §5): two clades with `hybrid_min_each` members each around the center
+    /// and reference genomes `hybrid_min_distance..=hybrid_max_distance` steps apart found a new
+    /// clade of `hybrid_count` hybrids; each gift the parents hold passes with `hybrid_gift_ppm`;
+    /// a pair is crossed at most once per `hybrid_cooldown_epochs`.
+    pub hybrid_min_each: u32,
+    pub hybrid_min_distance: u32,
+    pub hybrid_max_distance: u32,
+    pub hybrid_count: u32,
+    pub hybrid_gift_ppm: u32,
+    pub hybrid_cooldown_epochs: u32,
 }
 
 impl Default for Patrons {
@@ -429,6 +441,12 @@ impl Default for Patrons {
             weather_regions_x: 4,
             weather_regions_y: 2,
             weather_ppm: 30_000,
+            hybrid_min_each: 5,
+            hybrid_min_distance: 2,
+            hybrid_max_distance: 8,
+            hybrid_count: 8,
+            hybrid_gift_ppm: 500_000,
+            hybrid_cooldown_epochs: 288,
         }
     }
 }
@@ -862,6 +880,16 @@ impl Ruleset {
             }
             if p.max_gifts == 0 || p.max_gifts > 6 {
                 return Err("patrons: max_gifts must be 1..=6".into());
+            }
+            if p.hybrid_count == 0
+                || p.hybrid_count > 9
+                || p.hybrid_min_distance > p.hybrid_max_distance
+                || p.hybrid_gift_ppm > 1_000_000
+            {
+                return Err(
+                    "patrons: hybrid_count must be 1..=9, the distances in order, the gift chance in ppm"
+                        .into(),
+                );
             }
             if p.weather_regions_x == 0
                 || p.weather_regions_y == 0

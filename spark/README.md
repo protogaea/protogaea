@@ -8,6 +8,9 @@ protogaea-spark key                                         # make a key, or sho
 protogaea-spark wish weather X Y rain|drought               # a wish with its first spark
 protogaea-spark wish migrate CLADE FROM_X FROM_Y TO_X TO_Y
 protogaea-spark wish revive museum|spores ENTRY X Y [i:j ...]   # edit steps move a point from trait i to j
+protogaea-spark wish shelter|forage|cure|blight|expose|sickness CLADE X Y   # with patrons (spec v0.3)
+protogaea-spark wish gift swim|venom|camo|keen|hardy|scavenge CLADE X Y
+protogaea-spark wish hybrid CLADE_A CLADE_B X Y
 protogaea-spark mine PROPOSAL_ID --threads 4 --minutes 10   # sparks for a wish
 ```
 
@@ -16,7 +19,7 @@ Options: `--server URL` (default `http://127.0.0.1:8081`), `--key FILE` (default
 - A wish is signed with the key and sent together with its first spark, as spec §17 requires.
 - Sparks are mined on several threads for the open window and sent in batches of up to 64 every few seconds; when the window changes, sparks for the old one are dropped.
 - **Every receipt is checked** against the operator's key: the spark must be in a tree head the operator signed. A receipt that does not check stops the client.
-- All three actions can be wished for: `weather`, `migrate` (a clade, the center of its 5 × 5 source area and a target) and `revive` (a museum clade id or a spore bank index, a start, and up to two edit steps).
+- Every action can be wished for: `weather`, `migrate` (a clade, the center of its 5 × 5 source area and a target) and `revive` (a museum clade id or a spore bank index, a start, and up to two edit steps); and in a world with patrons ([spec v0.3 draft](../docs/spec/spec-v0.3-draft.md)) relief, harm and gifts for a clade around a center where 10 of its members live, and a hybrid of two clades. There `weather` is refused: it falls by itself.
 
 ## The load test
 

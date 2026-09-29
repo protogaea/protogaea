@@ -21,14 +21,14 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use protogaea_core::miracle::{check, is_transient, Outcomes};
+use protogaea_core::miracle::{check_wish, is_transient, price_share, Outcomes};
 use protogaea_core::{Miracle, Ruleset, World};
 use protogaea_protocol::header::{ledger_leaf, ledger_root, miracle_leaf, Header};
 use protogaea_protocol::ledger::{select, Candidate};
 use protogaea_protocol::log::{consistency_proof, inclusion_proof, leaf_hash, root};
 use protogaea_protocol::spark::{challenge, next_target, Spark};
 use protogaea_protocol::sth::{Receipt, Sth};
-use protogaea_protocol::wish::{self, Action, Source, Weather, Wish, MAX_LIFETIME};
+use protogaea_protocol::wish::{self, Action, CladeAction, Source, Weather, Wish, MAX_LIFETIME};
 use protogaea_protocol::{hex, Hash};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
@@ -65,6 +65,38 @@ pub fn to_miracle(w: &Wish, width: u16) -> Miracle {
             steps: steps.clone(),
             at: cell(*at),
         },
+        Action::Clade {
+            action,
+            clade_id,
+            at,
+        } => Miracle::Clade {
+            action: clade_action(*action),
+            clade_id: *clade_id,
+            center: cell(*at),
+        },
+        Action::Hybrid {
+            clade_a,
+            clade_b,
+            at,
+        } => Miracle::Hybrid {
+            clade_a: *clade_a,
+            clade_b: *clade_b,
+            center: cell(*at),
+        },
+    }
+}
+
+/// A patron's action as the core codes it (`miracle::SHELTER` … and `GIFT + k`).
+pub fn clade_action(a: CladeAction) -> u8 {
+    use protogaea_core::miracle as m;
+    match a {
+        CladeAction::Shelter => m::SHELTER,
+        CladeAction::Forage => m::FORAGE,
+        CladeAction::Cure => m::CURE,
+        CladeAction::Gift(g) => m::GIFT + g,
+        CladeAction::Blight => m::BLIGHT,
+        CladeAction::Expose => m::EXPOSE,
+        CladeAction::Sickness => m::SICKNESS,
     }
 }
 
@@ -561,7 +593,7 @@ impl Intake {
             let Ok(w) = Wish::from_bytes(&bytes) else {
                 continue;
             };
-            if let Err(why) = check(world, rules, &to_miracle(&w, world.width)) {
+            if let Err(why) = check_wish(world, rules, &to_miracle(&w, world.width)) {
                 if !is_transient(why) {
                     self.conn
                         .execute(
@@ -578,7 +610,14 @@ impl Intake {
 
     /// The ledger (spec §19), after the window's work was added: ready wishes, ranked, up to
     /// three selected without conflicts, and the next price. Returns the selected wishes.
-    pub fn select_miracles(&mut self, beacon: &Hash) -> Result<Vec<(Hash, Wish)>, String> {
+    /// A patron's wish is priced by its clade's share in `world`, the state the miracles apply
+    /// to (spec v0.3 §6); one the share rule closes for now waits.
+    pub fn select_miracles(
+        &mut self,
+        beacon: &Hash,
+        world: &World,
+        rules: &Ruleset,
+    ) -> Result<Vec<(Hash, Wish)>, String> {
         let price = self.price()?;
         let rows: Vec<(Vec<u8>, Vec<u8>, String)> = {
             let mut stmt = self
@@ -599,10 +638,14 @@ impl Intake {
                 continue;
             };
             let id = blob32(id);
+            let Some(share) = price_share(world, rules, &to_miracle(&w, world.width)) else {
+                continue;
+            };
             candidates.push(Candidate {
                 id,
                 action: w.action.clone(),
                 work: work.parse().unwrap_or(0),
+                share: u128::from(share),
             });
             wishes.insert(id, w);
         }
@@ -1163,12 +1206,11 @@ fn header_json(b: &[u8], hash: &[u8], signature: &[u8]) -> Value {
 }
 
 fn action_name(code: i64) -> &'static str {
-    match code {
-        0 => "weather",
-        1 => "migrate",
-        2 => "revive",
-        _ => "?",
-    }
+    usize::try_from(code)
+        .ok()
+        .and_then(|c| wish::NAMES.get(c))
+        .copied()
+        .unwrap_or("?")
 }
 
 fn blob32(v: Vec<u8>) -> [u8; 32] {
@@ -1339,7 +1381,10 @@ mod tests {
         ));
 
         intake.close_window().unwrap();
-        let selected = intake.select_miracles(&[0; 32]).unwrap();
+        let run = protogaea_core::run::Run::new(1, Ruleset::default());
+        let selected = intake
+            .select_miracles(&[0; 32], &run.world, &run.rules)
+            .unwrap();
         assert!(selected.is_empty(), "far below the price");
         // The closed log is packed: no rows left, and the log and its proofs read from the blob.
         let rows: i64 = intake
@@ -1417,7 +1462,9 @@ mod tests {
         intake.open_window(11, &[4; 32]).unwrap();
         assert_ne!(intake.challenge, t.challenge);
         intake.close_window().unwrap();
-        intake.select_miracles(&[0; 32]).unwrap();
+        intake
+            .select_miracles(&[0; 32], &run.world, &run.rules)
+            .unwrap();
         assert_eq!(intake.wishes(Some("expired"), 10).unwrap().len(), 1);
         intake.seal(11, [2; 32], [9; 32], [8; 32], 0).unwrap();
         assert_eq!(

@@ -126,6 +126,12 @@ pub enum Purpose {
     WeatherChance = 38,
     WeatherSite = 39,
     WeatherKind = 40,
+    /// A hybrid (spec v0.3 §5): which parent gives each gene (`k` is the gene), each step that
+    /// brings the traits to the budget, and whether each gift passes (`k` is the gift); the
+    /// subject is the new clade.
+    HybridGene = 41,
+    HybridBudget = 42,
+    HybridGift = 43,
 }
 
 /// A stateless source of randomness bound to one seed.
@@ -280,7 +286,7 @@ mod tests {
 
     #[test]
     fn purposes_fit_a_byte() {
-        assert!((Purpose::WeatherKind as u32) < 256);
+        assert!((Purpose::HybridGift as u32) < 256);
     }
 
     #[test]

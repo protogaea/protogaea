@@ -259,7 +259,7 @@ pub fn run_loop(
         };
         let (selected, prev_header) = {
             let mut intake = shared.intake.lock().expect("the lock is never poisoned");
-            let selected = intake.select_miracles(&beacon)?;
+            let selected = intake.select_miracles(&beacon, &run.world, &run.rules)?;
             (
                 selected,
                 intake.header_hash(run.world.epoch)?.unwrap_or([0; 32]),

@@ -140,8 +140,9 @@ fn epoch_boundary(
     }
     plague(world, rules, rng, report);
     natural_weather(world, rules, rng, report);
-    // 3. Miracles: weather, migrate, revive.
-    report.miracles = crate::miracle::apply(world, rules, miracles, &mut report.clades_founded);
+    // 3. Miracles: weather, migrate, revive, patrons' actions, hybrids.
+    report.miracles =
+        crate::miracle::apply(world, rules, rng, miracles, &mut report.clades_founded);
     // 4. Natural revival.
     natural_revival(world, rules, rng, report);
 }
@@ -406,7 +407,7 @@ fn natural_weather(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut E
                 rain: rng.below(0, Purpose::WeatherKind, subject, 2) == 0,
             };
             if crate::miracle::check(world, rules, &m).is_ok() {
-                crate::miracle::apply_one(world, rules, &m, &mut Vec::new());
+                crate::miracle::apply_one(world, rules, rng, &m, &mut Vec::new());
                 report.natural_weather += 1;
             }
         }
@@ -558,6 +559,7 @@ fn natural_revival(world: &mut World, rules: &Ruleset, rng: &Rng, report: &mut E
                 Clade {
                     id: clade_id,
                     parent_id: 0,
+                    second_parent_id: 0,
                     reference: spore.genome,
                     founded_epoch: epoch,
                     living: placed,
@@ -602,6 +604,7 @@ fn close_extinct_clades(world: &mut World, rules: &Ruleset, report: &mut EpochRe
             world.museum.push(MuseumEntry {
                 clade_id: clade.id,
                 parent_id: clade.parent_id,
+                second_parent_id: clade.second_parent_id,
                 reference: clade.reference,
                 founded_epoch: clade.founded_epoch,
                 extinct_epoch: world.epoch,
@@ -1415,6 +1418,7 @@ fn births(
                 Clade {
                     id,
                     parent_id: parent.clade_id,
+                    second_parent_id: 0,
                     reference: genome,
                     founded_epoch: world.epoch,
                     living: 0,

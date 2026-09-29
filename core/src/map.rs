@@ -165,6 +165,7 @@ pub fn genesis(rules: &Ruleset, genesis_seed: &[u8; 32], world_id: [u8; 16]) -> 
                 Clade {
                     id: clade_id,
                     parent_id: 0,
+                    second_parent_id: 0,
                     reference: founder,
                     founded_epoch: 0,
                     living: placed,
