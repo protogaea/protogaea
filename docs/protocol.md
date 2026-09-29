@@ -26,7 +26,7 @@ All tags are ASCII strings without a terminator.
 | `PROTOGAEA/SPARK/V0` | PoW input prefix and the yespower `pers` string (§5.2) | Decided |
 | `PROTOGAEA/CHALLENGE/V0` | Epoch challenge (§5.1) | Decided |
 | `PROTOGAEA/EPOCH_SEED/V0` | Epoch seed (§8) | Decided |
-| `PROTOGAEA/RAND/V0` | Counter-based randomness in the core ([ruleset](ruleset.md)) | Decided |
+| `PROTOGAEA/RAND/V1` | The key of the core's counter-based randomness, Philox4x32-10 ([decision 0014](decisions/0014-philox-for-the-draws.md)) | Decided; replaced `PROTOGAEA/RAND/V0` (one BLAKE3 hash per draw) on 2026-09-29 |
 | `PROTOGAEA/SPARK_ID/V0` | `spark_id` (§5.5) | Proposed |
 | `PROTOGAEA/STH/V0` | Payload of the STH signature (§6) | Proposed |
 | `PROTOGAEA/HEADER/V0` | Payload of the epoch header signature (§9) | Proposed |

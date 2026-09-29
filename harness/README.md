@@ -161,6 +161,16 @@ All three targets of spec §29 are met: a world day in under 30 s (11–12 s), a
 
 The Merkle `state_root` that replaced the flat hash adds about 3.5 ms per epoch: seed 1 then takes 12.8 s per world day natively (p95 61.5 ms) and 18.3 s under WASM (p95 87.8 ms), still within every target, and both end at the same root. The reference core is not fixed yet (roadmap decision 6); a slower core has about 2.5× headroom on the world day.
 
+**2026-09-29: 3.2–3.6 times faster.** By then the rules had grown and a world day took 14.0 s (Season 1 rules) and 14.5 s (v0.3 draft) on one thread of the same CPU. A profile showed where it went: about 42% in the BLAKE3 hash behind every random draw, 14% in genome distances at the kin check, and much of the rest in movement weighing the strongest hunter around every cell in sight, rescanning its 3 × 3 area for every organism. Two steps:
+
+| Step | Season 1 world day | v0.3 world day | State roots |
+|---|---|---|---|
+| Before | 14.0 s | 14.5 s | — |
+| The hunters around each cell found once a tick, the attack margin checked before kinship, the genome distance on flat lanes | 7.9 s | 9.3 s | unchanged, bit for bit |
+| Philox4x32-10 instead of one BLAKE3 hash per draw ([decision 0014](../docs/decisions/0014-philox-for-the-draws.md)) | 3.9 s | 4.6 s | every world changes |
+
+An epoch now takes 13.8 ms at the median and 18.5 ms at the 95th percentile (Season 1 rules). One draw costs 11.6 ns natively and 16.1 ns under wasmtime instead of 134 and 177 ns. With the new generator all 20 candidate seeds still meet the Season 1 map criteria, and twelve 42-day seasons (seeds 1–12) pass the §28 checks as with the old one: the same ten checks at the same rates; the leader changing within 3 days held on 72% against 81%, which more seeds will settle. The twelve seasons took 280 s on 12 threads instead of 800 s. Building with `target-cpu=native` or fat LTO gained nothing worth keeping (LTO about 2%).
+
 ## Findings (stage A3: maps and diversity)
 
 Measured on 2026-09-26 over full 42-day seasons, 12 seeds per variant.

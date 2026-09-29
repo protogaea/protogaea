@@ -6,7 +6,7 @@ We record significant decisions as short Architecture Decision Records (ADRs): t
 |---|---|---|---|
 | [0001](0001-record-architecture-decisions.md) | Record decisions as ADRs | Accepted | 2026-09-25 |
 | [0002](0002-wishes-instead-of-lottery.md) | Wishes with accumulated work instead of a lottery | Accepted | 2026-09-24 |
-| [0003](0003-counter-based-randomness.md) | Counter-based randomness | Accepted | 2026-09-24 |
+| [0003](0003-counter-based-randomness.md) | Counter-based randomness | Accepted; function amended by 0014 | 2026-09-24 |
 | [0004](0004-commit-spark-log-before-beacon.md) | Commit the spark log before the beacon round | Accepted | 2026-09-24 |
 | [0005](0005-single-authoritative-server-in-v0.md) | A single authoritative server in v0 | Accepted | 2026-09-24 |
 | [0006](0006-one-deterministic-core-compiled-to-wasm.md) | One deterministic core, compiled to WASM | Accepted | 2026-09-24 |
@@ -17,6 +17,7 @@ We record significant decisions as short Architecture Decision Records (ADRs): t
 | [0011](0011-world-vocabulary.md) | World vocabulary: sparks, wishes, miracles | Accepted | 2026-09-24 |
 | [0012](0012-revive-instead-of-found-lineage.md) | `revive` instead of `found_lineage` | Accepted | 2026-09-24 |
 | [0013](0013-yespower-as-candidate-pow.md) | yespower as the candidate proof of work | Proposed | 2026-09-24 |
+| [0014](0014-philox-for-the-draws.md) | Philox4x32-10 for the random draws | Accepted | 2026-09-29 |
 
 ## Adding a record
 

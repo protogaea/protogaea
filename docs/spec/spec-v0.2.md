@@ -450,9 +450,13 @@ The numbers are tuned with the balance harness (§28). The goal is for the equil
 
 ## 14. Determinism and randomness
 
-**Counter-based randomness.** The generator has no state. Every random number is computed as:
+**Counter-based randomness.** The generator has no state. Every random number is computed by the counter-based generator Philox4x32-10 (Random123), keyed once per epoch seed:
 
-`rand(purpose, subject, k) = u64_le(BLAKE3("PROTOGAEA/RAND/V0" ‖ epoch_seed ‖ tick ‖ subject ‖ purpose ‖ k)[0..8])`
+`key = BLAKE3("PROTOGAEA/RAND/V1" ‖ epoch_seed)[0..8]` (two `u32`, little-endian)
+
+`rand(purpose, subject, k) = w0 | w1 << 32`, where `(w0, w1, _, _) = Philox4x32-10([tick, subject_lo, subject_hi, purpose | k << 8], key)`, `purpose < 256`, `k < 2^24`
+
+Until 2026-09-29 each number was `u64_le(BLAKE3("PROTOGAEA/RAND/V0" ‖ epoch_seed ‖ tick ‖ subject ‖ purpose ‖ k)[0..8])`; Philox gives the same properties about 11 times cheaper ([decision 0014](../decisions/0014-philox-for-the-draws.md)).
 
 - `subject` is the ID of an organism, a cell or an event;
 - `purpose` is a code for the use: queue, mutation, attack, placement, and so on;

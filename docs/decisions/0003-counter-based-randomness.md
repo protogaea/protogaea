@@ -1,6 +1,6 @@
 # 0003. Counter-based randomness
 
-- **Status:** Accepted
+- **Status:** Accepted; the function is amended by [0014](0014-philox-for-the-draws.md) (Philox4x32-10 instead of one BLAKE3 hash per draw)
 - **Date:** 2026-09-24
 - **Specification:** §14
 

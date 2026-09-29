@@ -1,13 +1,46 @@
-//! Counter-based randomness (spec §14).
+//! Counter-based randomness (spec §14, decision 0014).
 //!
-//! The generator has no state. Every number is computed directly as
-//! `u64_le(BLAKE3("PROTOGAEA/RAND/V0" ‖ seed ‖ tick ‖ subject ‖ purpose ‖ k)[0..8])`,
-//! where `tick: u32`, `subject: u64`, `purpose: u32` and `k: u32` are little-endian.
-//! Results therefore do not depend on the order of calls.
+//! The generator has no state. Every number is computed directly by Philox4x32-10 (Salmon et
+//! al., "Parallel random numbers: as easy as 1, 2, 3", SC11; checked against Random123's
+//! known-answer vectors):
+//!
+//! - the key, once per seed: the first 8 bytes of `BLAKE3("PROTOGAEA/RAND/V1" ‖ seed)`, as two
+//!   little-endian `u32` words;
+//! - the counter: `[tick, subject_lo, subject_hi, purpose | k << 8]`, with `subject: u64` split
+//!   into its low and high halves, `purpose < 256` and `k < 2^24`;
+//! - the value: output words 0 and 1 as `w0 | w1 << 32`.
+//!
+//! Results therefore do not depend on the order of calls. It replaced one BLAKE3 hash per draw
+//! (`PROTOGAEA/RAND/V0`), which took about 60% of a tick; Philox is about 11 times cheaper,
+//! natively and in WebAssembly, and passes BigCrush with rounds to spare.
 
-const RAND_TAG: &[u8] = b"PROTOGAEA/RAND/V0";
-const PREFIX_LEN: usize = RAND_TAG.len() + 32;
-const INPUT_LEN: usize = PREFIX_LEN + 4 + 8 + 4 + 4;
+const RAND_TAG: &[u8] = b"PROTOGAEA/RAND/V1";
+/// `k` shares the last counter word with the purpose.
+const K_LIMIT: u32 = 1 << 24;
+
+const PHILOX_M0: u32 = 0xD251_1F53;
+const PHILOX_M1: u32 = 0xCD9E_8D57;
+const PHILOX_W0: u32 = 0x9E37_79B9;
+const PHILOX_W1: u32 = 0xBB67_AE85;
+
+/// Philox4x32 with 10 rounds.
+fn philox4x32_10(ctr: [u32; 4], key: [u32; 2]) -> [u32; 4] {
+    fn mulhilo(a: u32, b: u32) -> (u32, u32) {
+        let p = u64::from(a) * u64::from(b);
+        ((p >> 32) as u32, p as u32)
+    }
+    let (mut x, mut k) = (ctr, key);
+    for round in 0..10 {
+        if round > 0 {
+            k[0] = k[0].wrapping_add(PHILOX_W0);
+            k[1] = k[1].wrapping_add(PHILOX_W1);
+        }
+        let (hi0, lo0) = mulhilo(PHILOX_M0, x[0]);
+        let (hi1, lo1) = mulhilo(PHILOX_M1, x[2]);
+        x = [hi1 ^ x[1] ^ k[0], lo1, hi0 ^ x[3] ^ k[1], lo0];
+    }
+    x
+}
 
 /// What a random number is used for. Each call site has its own purpose, so draws never
 /// collide. The values are part of consensus: never renumber them within a ruleset version.
@@ -98,29 +131,29 @@ pub enum Purpose {
 /// A stateless source of randomness bound to one seed.
 #[derive(Clone)]
 pub struct Rng {
-    prefix: [u8; PREFIX_LEN],
+    key: [u32; 2],
 }
 
 impl Rng {
     pub fn new(seed: &[u8; 32]) -> Self {
-        let mut prefix = [0u8; PREFIX_LEN];
-        prefix[..RAND_TAG.len()].copy_from_slice(RAND_TAG);
-        prefix[RAND_TAG.len()..].copy_from_slice(seed);
-        Self { prefix }
+        let digest = derive(RAND_TAG, &[seed]);
+        let word = |i: usize| u32::from_le_bytes(digest[i..i + 4].try_into().expect("4 bytes"));
+        Self {
+            key: [word(0), word(4)],
+        }
     }
 
     /// The raw 64-bit value for one `(tick, purpose, subject, k)`.
     pub fn raw(&self, tick: u32, purpose: Purpose, subject: u64, k: u32) -> u64 {
-        let mut input = [0u8; INPUT_LEN];
-        input[..PREFIX_LEN].copy_from_slice(&self.prefix);
-        input[PREFIX_LEN..PREFIX_LEN + 4].copy_from_slice(&tick.to_le_bytes());
-        input[PREFIX_LEN + 4..PREFIX_LEN + 12].copy_from_slice(&subject.to_le_bytes());
-        input[PREFIX_LEN + 12..PREFIX_LEN + 16].copy_from_slice(&(purpose as u32).to_le_bytes());
-        input[PREFIX_LEN + 16..].copy_from_slice(&k.to_le_bytes());
-        let hash = blake3::hash(&input);
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(&hash.as_bytes()[..8]);
-        u64::from_le_bytes(bytes)
+        assert!(k < K_LIMIT, "k must stay below 2^24");
+        let ctr = [
+            tick,
+            subject as u32,
+            (subject >> 32) as u32,
+            purpose as u32 | k << 8,
+        ];
+        let x = philox4x32_10(ctr, self.key);
+        u64::from(x[0]) | u64::from(x[1]) << 32
     }
 
     /// A uniform number in `[0, n)`. Values that would bias the result are rejected, and the
@@ -207,6 +240,47 @@ mod tests {
         for count in buckets {
             assert!((850..=1150).contains(&count), "bucket count {count}");
         }
+    }
+
+    /// Random123's known-answer vectors for Philox4x32-10 (tests/kat_vectors).
+    #[test]
+    fn philox_known_answers() {
+        assert_eq!(
+            philox4x32_10([0; 4], [0; 2]),
+            [0x6627_e8d5, 0xe169_c58d, 0xbc57_ac4c, 0x9b00_dbd8]
+        );
+        assert_eq!(
+            philox4x32_10([u32::MAX; 4], [u32::MAX; 2]),
+            [0x408f_276d, 0x41c8_3b0e, 0xa20b_c7c6, 0x6d54_51fd]
+        );
+        assert_eq!(
+            philox4x32_10(
+                [0x243f_6a88, 0x85a3_08d3, 0x1319_8a2e, 0x0370_7344],
+                [0xa409_3822, 0x299f_31d0]
+            ),
+            [0xd16c_fe09, 0x94fd_cceb, 0x5001_e420, 0x2412_6ea1]
+        );
+    }
+
+    /// The draw of the spec, fixed: a change here changes every world.
+    #[test]
+    fn draw_vector() {
+        let r = Rng::new(&[0; 32]);
+        assert_eq!(
+            r.raw(0, Purpose::Queue, 0, 0),
+            r.raw(0, Purpose::Queue, 0, 0)
+        );
+        assert_eq!(
+            format!("{:016x}", r.raw(7, Purpose::MoveTie, 0x1_0000_0002, 3)),
+            DRAW_VECTOR
+        );
+    }
+
+    const DRAW_VECTOR: &str = "415e167b1d774b8c";
+
+    #[test]
+    fn purposes_fit_a_byte() {
+        assert!((Purpose::WeatherKind as u32) < 256);
     }
 
     #[test]

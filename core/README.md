@@ -32,7 +32,7 @@ CI builds the crate for `wasm32-unknown-unknown` and compares state roots across
 
 | Area | Status |
 |---|---|
-| Counter-based randomness (§14) | Done. `BLAKE3("PROTOGAEA/RAND/V0" ‖ seed ‖ tick: u32 ‖ subject: u64 ‖ purpose: u32 ‖ k: u32)`, little-endian; uniform draws by rejection sampling |
+| Counter-based randomness (§14) | Done. Philox4x32-10 keyed by `BLAKE3("PROTOGAEA/RAND/V1" ‖ seed)[0..8]`, counter `[tick, subject_lo, subject_hi, purpose \| k << 8]` ([decision 0014](../docs/decisions/0014-philox-for-the-draws.md)); uniform draws by rejection sampling; checked against Random123's known-answer vectors |
 | Epoch seed (§14) | Done. The harness supplies a stand-in beacon until stage C |
 | Map (§9) | A single continent: five land biomes, coastal shallows, deep water. Founders come from the ruleset |
 | The Breaking of Pangea (§4, §10) | Done: 3–4 plates with bent boundaries, rift lines, waves of flooding from the ocean inward, one land bridge per pair of neighboring plates, organisms carried off sinking cells or drowned. The schedule lives in the state |

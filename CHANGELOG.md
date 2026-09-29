@@ -63,6 +63,7 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- The random draws use Philox4x32-10, keyed once per seed by `BLAKE3("PROTOGAEA/RAND/V1" ‖ seed)`, instead of one BLAKE3 hash per draw ([decision 0014](docs/decisions/0014-philox-for-the-draws.md), spec §14): about 11 times cheaper natively and in WebAssembly, checked against Random123's known-answer vectors. Every world, map and state root changes; a world day now takes 3.9 s (Season 1 rules) and 4.6 s (v0.3 draft) on one thread, 3.2–3.6 times faster than before both steps. All 20 candidate seeds still meet the Season 1 map criteria.
 - The core steps a world day about 1.6–1.8 times faster with the same results (the same state roots): the strongest hunter of another clade around each cell is found once a tick instead of for every cell every organism weighs, a hunter checks the attack margin before kinship, and the genome distance runs on eight flat lanes. One world day on one thread of a Ryzen 5 5500: 14.0 s → 7.9 s under the Season 1 rules, 14.5 s → 9.3 s under the v0.3 draft.
 - The world server and the viewer are licensed under AGPL-3.0-only, as planned in LICENSING.md and spec §26; the core, the harness and the documentation stay under Apache-2.0.
 - Specification §28: at least 6 clades of 20+ must hold during 95% of the time after day 3 instead of at every moment, so a brief dip while the continent breaks up does not fail a diverse season.

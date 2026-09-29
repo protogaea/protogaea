@@ -450,9 +450,13 @@
 
 ## 14. Детерминизм и случайность
 
-**Случайность из счётчика.** У генератора нет состояния. Каждое случайное число вычисляется так:
+**Случайность из счётчика.** У генератора нет состояния. Каждое случайное число вычисляет генератор со счётчиком Philox4x32-10 (Random123) с ключом, выведенным один раз из семени эпохи:
 
-`rand(purpose, subject, k) = u64_le(BLAKE3("PROTOGAEA/RAND/V0" ‖ epoch_seed ‖ tick ‖ subject ‖ purpose ‖ k)[0..8])`
+`key = BLAKE3("PROTOGAEA/RAND/V1" ‖ epoch_seed)[0..8]` (два `u32`, little-endian)
+
+`rand(purpose, subject, k) = w0 | w1 << 32`, где `(w0, w1, _, _) = Philox4x32-10([tick, subject_lo, subject_hi, purpose | k << 8], key)`, `purpose < 256`, `k < 2^24`
+
+До 2026-09-29 каждое число было `u64_le(BLAKE3("PROTOGAEA/RAND/V0" ‖ epoch_seed ‖ tick ‖ subject ‖ purpose ‖ k)[0..8])`; Philox даёт те же свойства примерно в 11 раз дешевле ([решение 0014](../../../decisions/0014-philox-for-the-draws.md)).
 
 - `subject` — ID особи, клетки или события;
 - `purpose` — код назначения: очередь, мутация, атака, размещение и т. д.;
