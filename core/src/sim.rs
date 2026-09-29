@@ -627,6 +627,10 @@ struct Scratch {
     hunter: Vec<(i32, u32)>,
     /// The weakest organism in each cell at the start of the tick: (defense with cover, clade).
     prey: Vec<(i32, u32)>,
+    /// Per cell, the two strongest entries of `hunter` in its 3 × 3 area whose clades differ:
+    /// enough to answer "the strongest hunter of any clade but mine" without rescanning the
+    /// area for every cell an organism weighs.
+    threat: Vec<[(i32, u32); 2]>,
     /// (queue key, organism id, organism index).
     queue: Vec<(u64, u64, u32)>,
     alive: Vec<bool>,
@@ -804,6 +808,7 @@ fn run_tick(
     }
 
     burrows(world, rules, s);
+    threats(world, s);
 
     // 2. Queue: a stable permutation by H(epoch_seed, tick, organism_id).
     for (i, o) in world.organisms.iter().enumerate() {
@@ -1128,7 +1133,7 @@ fn choose_target(
                     score += i64::from(my_attack - defense) * i64::from(w.hunt_per_point);
                 }
             }
-            let threat = strongest_threat(world, s, c, me.clade_id, my_defense + p.cover);
+            let threat = strongest_threat(s, c, me.clade_id, my_defense + p.cover);
             score -= threat * i64::from(w.danger_per_point) * caution / 4;
             if preferred == Some(acting) {
                 score += i64::from(w.habitat_bonus);
@@ -1167,22 +1172,51 @@ fn is_hungry_hunter(me: &Organism, rules: &Ruleset) -> bool {
         && me.energy < me.genome.energy_cap(rules) * rules.hunt_hunger_pct / 100
 }
 
-/// The largest attack margin of a non-kin hunter within one cell of `c`, or 0.
-fn strongest_threat(world: &World, s: &Scratch, c: usize, my_clade: u32, my_defense: i32) -> i64 {
-    let (x, y) = world.coords(c);
-    let mut threat = 0i64;
-    for dy in -1..=1 {
-        for dx in -1..=1 {
-            let Some(n) = world.index(x + dx, y + dy) else {
-                continue;
-            };
-            let (power, clade) = s.hunter[n];
-            if power != i32::MIN && clade != my_clade {
-                threat = threat.max(i64::from(power - my_defense));
+/// Fills `s.threat` from `s.hunter`, once per tick (the hunters are fixed at its start).
+fn threats(world: &World, s: &mut Scratch) {
+    const NONE: (i32, u32) = (i32::MIN, 0);
+    s.threat.clear();
+    s.threat.resize(world.cells.len(), [NONE; 2]);
+    for c in 0..world.cells.len() {
+        let (x, y) = world.coords(c);
+        let (mut first, mut second) = (NONE, NONE);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let Some(n) = world.index(x + dx, y + dy) else {
+                    continue;
+                };
+                let h = s.hunter[n];
+                if h.0 == i32::MIN {
+                    continue;
+                }
+                if h.0 > first.0 {
+                    if h.1 != first.1 {
+                        second = first;
+                    }
+                    first = h;
+                } else if h.1 != first.1 && h.0 > second.0 {
+                    second = h;
+                }
             }
         }
+        s.threat[c] = [first, second];
     }
-    threat
+}
+
+/// The largest attack margin of a non-kin hunter within one cell of `c`, or 0.
+fn strongest_threat(s: &Scratch, c: usize, my_clade: u32, my_defense: i32) -> i64 {
+    // The strongest hunter of another clade is the first entry unless that one is kin; then it
+    // is the second, which belongs to another clade than the first by construction.
+    let [first, second] = s.threat[c];
+    let power = if first.1 != my_clade {
+        first.0
+    } else {
+        second.0
+    };
+    if power == i32::MIN {
+        return 0;
+    }
+    i64::from(power - my_defense).max(0)
 }
 
 /// Moves towards `target` for at most `steps` cells. Each step shortens the Chebyshev
@@ -1255,12 +1289,14 @@ fn choose_prey(
                     continue;
                 }
                 let other = &world.organisms[j];
-                if other.genome.distance(&me.genome) <= rules.kin_distance {
-                    continue;
-                }
+                // The margin first: it is cheap and rules out most neighbours before the kin
+                // check (both are pure, so the order does not change the choice).
                 let margin = my_attack
                     - (other.genome.defense(rules) + cover(rules, s.biome[n]) + guard(rules, s, j));
                 if margin < 0 {
+                    continue;
+                }
+                if other.genome.distance(&me.genome) <= rules.kin_distance {
                     continue;
                 }
                 let better = match best {

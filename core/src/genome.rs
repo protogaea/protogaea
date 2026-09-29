@@ -95,14 +95,29 @@ impl Genome {
     /// The number of mutation steps between two genomes: half the sum of the absolute trait
     /// differences. Behavioral genes and hue do not count.
     pub fn distance(&self, other: &Genome) -> u32 {
-        let total: u32 = self
-            .traits
-            .iter()
-            .chain(&self.extra)
-            .zip(other.traits.iter().chain(&other.extra))
-            .map(|(&a, &b)| u32::from(a.abs_diff(b)))
-            .sum();
+        // Eight lanes in fixed arrays rather than chained iterators: hunters call this for every
+        // neighbour, and the flat form compiles to a few vector instructions.
+        let (a, b) = (self.trait_bytes(), other.trait_bytes());
+        let mut total = 0u32;
+        for k in 0..TRAIT_COUNT_V3 {
+            total += u32::from(a[k].abs_diff(b[k]));
+        }
         total / 2
+    }
+
+    /// The six traits and the two v0.3 traits, in order.
+    fn trait_bytes(&self) -> [u8; TRAIT_COUNT_V3] {
+        let t = &self.traits;
+        [
+            t[0],
+            t[1],
+            t[2],
+            t[3],
+            t[4],
+            t[5],
+            self.extra[0],
+            self.extra[1],
+        ]
     }
 
     /// Steps per tick: `(M + 2) / 3`.
