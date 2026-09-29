@@ -17,7 +17,7 @@ use protogaea_core::genome::GIFTS;
 use protogaea_core::miracle::{
     is_harm, is_transient, share_mult, BLIGHT, CURE, EXPOSE, FORAGE, GIFT, SHELTER, SICKNESS,
 };
-use protogaea_core::{Miracle, Ruleset, World};
+use protogaea_core::{DeathCause, Miracle, Ruleset, World};
 
 /// How the bots choose what to back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,6 +245,39 @@ pub struct Tally {
     pub applied_hybrids: u32,
     pub hybrid_checked: [u32; 6],
     pub hybrid_alive: [u32; 6],
+    /// Diagnostics of young clades watched for three days from their founding: [0] hybrid
+    /// clades, [1] clades founded by mutation under an hour ago with as many members as a hybrid
+    /// clade starts with. How many were watched to the end, how many of those had a founder
+    /// that bred, and families (the clade and its descendants) that reached 20 living. By
+    /// generation, [0] the founders (the members when the watch began) and [1] their children:
+    /// how many, their deaths by cause (see [`CAUSES`]), their summed age at death in epochs,
+    /// and how many had offspring.
+    pub watched: [u32; 2],
+    pub watch_bred: [u32; 2],
+    pub watch_reached_20: [u32; 2],
+    pub gen_members: [[u32; 2]; 2],
+    pub gen_deaths: [[[u32; 6]; 2]; 2],
+    pub gen_age_sum: [[u64; 2]; 2],
+    pub gen_bred: [[u32; 2]; 2],
+}
+
+/// The causes of death in `Tally::watch_deaths`.
+pub const CAUSES: [&str; 6] = [
+    "starvation",
+    "old age",
+    "a parent clade's hunter",
+    "another hunter",
+    "plague",
+    "drowned",
+];
+
+/// A young clade watched for diagnostics.
+struct Watch {
+    kind: usize,
+    parents: (u32, u32),
+    until: u64,
+    max_family: u32,
+    bred: bool,
 }
 
 pub struct Bots {
@@ -257,6 +290,12 @@ pub struct Bots {
     gift_checks: Vec<(u64, usize, u32)>,
     /// (epoch due, slot of `Tally::hybrid_checked`, clade) to check later.
     hybrid_checks: Vec<(u64, usize, u32)>,
+    /// Watched young clades by id, every clade descended from one with its root, and the
+    /// founders and their children still alive: organism id to (root, generation, birth
+    /// epoch, whether it bred).
+    watch: BTreeMap<u32, Watch>,
+    family_of: BTreeMap<u32, u32>,
+    founders: BTreeMap<u64, (u32, usize, u64, bool)>,
     backed: Option<u32>,
     backed_streak: u64,
     backed_longest: u64,
@@ -337,6 +376,9 @@ impl Bots {
             pending: Vec::new(),
             gift_checks: Vec::new(),
             hybrid_checks: Vec::new(),
+            watch: BTreeMap::new(),
+            family_of: BTreeMap::new(),
+            founders: BTreeMap::new(),
             backed,
             backed_streak: 0,
             backed_longest: 0,
@@ -558,8 +600,125 @@ impl Bots {
     }
 
     /// Reads what became of the miracles and follows up the season's measures.
+    #[allow(clippy::too_many_arguments)]
+    fn start_watch(
+        &mut self,
+        world: &World,
+        id: u32,
+        kind: usize,
+        parents: (u32, u32),
+        founded: u64,
+        start: u32,
+        day: u64,
+    ) {
+        for o in world.organisms.iter().filter(|o| o.clade_id == id) {
+            self.founders.insert(o.id, (id, 0, founded, false));
+            self.tally.gen_members[kind][0] += 1;
+        }
+        self.watch.insert(
+            id,
+            Watch {
+                kind,
+                parents,
+                until: founded + 3 * day,
+                max_family: start,
+                bred: false,
+            },
+        );
+        self.family_of.insert(id, id);
+    }
+
+    /// Deaths among the watched families by cause, their growth, and the end of each watch.
+    fn follow_watched(&mut self, world: &World, report: &protogaea_core::EpochReport) {
+        if self.watch.is_empty() {
+            return;
+        }
+        for &id in &report.clades_founded {
+            let parent = world
+                .clades
+                .get(&id)
+                .or_else(|| report.clades_extinct.iter().find(|c| c.id == id))
+                .map_or(0, |c| c.parent_id);
+            if let Some(&root) = self.family_of.get(&parent) {
+                self.family_of.entry(id).or_insert(root);
+            }
+        }
+        for &(parent, child) in &report.births_list {
+            let Some(f) = self.founders.get_mut(&parent) else {
+                continue;
+            };
+            let (root, generation) = (f.0, f.1);
+            let first = !f.3;
+            f.3 = true;
+            let Some(w) = self.watch.get_mut(&root) else {
+                continue;
+            };
+            if first {
+                self.tally.gen_bred[w.kind][generation] += 1;
+            }
+            if generation == 0 {
+                w.bred = true;
+                self.founders.insert(child, (root, 1, world.epoch, false));
+                self.tally.gen_members[w.kind][1] += 1;
+            }
+        }
+        let killers: BTreeMap<u64, u32> = report.kills.iter().copied().collect();
+        for (o, cause) in &report.deaths_list {
+            let Some((root, generation, born, _)) = self.founders.remove(&o.id) else {
+                continue;
+            };
+            let Some(w) = self.watch.get(&root) else {
+                continue;
+            };
+            let k = match cause {
+                DeathCause::Starvation => 0,
+                DeathCause::OldAge => 1,
+                DeathCause::Predation => {
+                    let hunter = killers.get(&o.id).copied().unwrap_or(0);
+                    if hunter == w.parents.0 || hunter == w.parents.1 {
+                        2
+                    } else {
+                        3
+                    }
+                }
+                DeathCause::Plague => 4,
+                DeathCause::Drowned => 5,
+            };
+            self.tally.gen_deaths[w.kind][generation][k] += 1;
+            self.tally.gen_age_sum[w.kind][generation] += world.epoch.saturating_sub(born);
+        }
+        if world.epoch.is_multiple_of(12) {
+            let mut sums: BTreeMap<u32, u32> = BTreeMap::new();
+            for c in world.clades.values() {
+                if let Some(&root) = self.family_of.get(&c.id) {
+                    *sums.entry(root).or_default() += c.living;
+                }
+            }
+            for (root, n) in sums {
+                if let Some(w) = self.watch.get_mut(&root) {
+                    w.max_family = w.max_family.max(n);
+                }
+            }
+        }
+        let ended: Vec<u32> = self
+            .watch
+            .iter()
+            .filter(|(_, w)| w.until <= world.epoch)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in ended {
+            let w = self.watch.remove(&id).expect("watched");
+            self.tally.watched[w.kind] += 1;
+            self.tally.watch_bred[w.kind] += u32::from(w.bred);
+            self.tally.watch_reached_20[w.kind] += u32::from(w.max_family >= 20);
+            self.founders.retain(|_, f| f.0 != id);
+            self.family_of.retain(|_, r| *r != id);
+        }
+    }
+
     pub fn after(&mut self, world: &World, report: &protogaea_core::EpochReport, rules: &Ruleset) {
         let day = u64::from(rules.epochs_per_day);
+        let mut new_hybrids = Vec::new();
         for (k, &(g, (action, clade, _, other))) in self.pending.iter().enumerate() {
             if report.miracles.applied.contains(&k) {
                 self.groups[g].wish = None;
@@ -576,6 +735,18 @@ impl Bots {
                             })
                         })
                         .unwrap_or(u32::MAX);
+                    // Watched even when it died out in its first epoch.
+                    let founded = report.clades_founded.iter().find_map(|id| {
+                        world
+                            .clades
+                            .get(id)
+                            .or_else(|| report.clades_extinct.iter().find(|c| c.id == *id))
+                            .filter(|c| c.parent_id == clade && c.second_parent_id == other)
+                            .map(|c| (c.id, c.peak_living))
+                    });
+                    if let Some((id, start)) = founded {
+                        new_hybrids.push((id, (clade, other), start));
+                    }
                     self.hybrid_checks.push((world.epoch + day, 0, hybrid));
                     self.hybrid_checks.push((world.epoch + 3 * day, 1, hybrid));
                 } else if action >= GIFT {
@@ -603,6 +774,9 @@ impl Bots {
                 }
             }
         }
+        for (id, parents, start) in new_hybrids {
+            self.start_watch(world, id, 0, parents, world.epoch, start, day);
+        }
         // A wish that waits a world day is dropped; its work burns (the wish expires).
         for g in &mut self.groups {
             if g.wish
@@ -612,6 +786,7 @@ impl Bots {
             }
         }
         self.pending.clear();
+        let mut young = Vec::new();
         if world.epoch.is_multiple_of(12) {
             for &id in &report.clades_founded {
                 let natural = world
@@ -633,9 +808,16 @@ impl Bots {
                 {
                     self.hybrid_checks.push((world.epoch + day, 4, c.id));
                     self.hybrid_checks.push((world.epoch + 3 * day, 5, c.id));
+                    young.push((c.id, c.parent_id, c.founded_epoch, c.living));
                 }
             }
         }
+        for (id, parent, founded, living) in young {
+            if !self.watch.contains_key(&id) {
+                self.start_watch(world, id, 1, (parent, parent), founded, living, day);
+            }
+        }
+        self.follow_watched(world, report);
         for c in &report.clades_extinct {
             if c.peak_living >= rules.clade_name_threshold {
                 self.tally.named_extinct += 1;

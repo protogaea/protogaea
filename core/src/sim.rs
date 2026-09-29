@@ -63,6 +63,8 @@ pub struct EpochReport {
     pub miracles: crate::miracle::Outcomes,
     /// Rain or drought that fell by itself (spec v0.3, draft).
     pub natural_weather: u32,
+    /// Kills by hunters: the prey's id and the hunter's clade (for the harness's diagnostics).
+    pub kills: Vec<(u64, u32)>,
 }
 
 /// `BLAKE3("PROTOGAEA/EPOCH_SEED/V0" ‖ world_id ‖ E ‖ beacon_E ‖ header_hash_{E−1})` (spec §14).
@@ -1042,6 +1044,7 @@ fn act(
                 + rng.below(tick, Purpose::DefenseRoll, me.id, span) as i32;
             if attack > defense {
                 kill(world, rules, s, report, j, DeathCause::Predation);
+                report.kills.push((prey.id, me.clade_id));
                 let gain =
                     prey.energy.max(0) * rules.predation_efficiency_pct / 100 + rules.body_value;
                 let energy = &mut world.organisms[i].energy;

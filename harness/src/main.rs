@@ -900,6 +900,7 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
     let mut gift_events = [0u32; 6];
     let mut gift_kept = [0u32; 6];
     let (mut hybrids, mut hybrid_checked, mut hybrid_alive) = (0u32, [0u32; 6], [0u32; 6]);
+    let mut watch = patrons::Tally::default();
     for &st in &strategies {
         let rows: Vec<&(Summary, Tally)> = jobs
             .iter()
@@ -924,6 +925,19 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
                 gift_kept[i] += t.gift_kept[i];
             }
             hybrids += t.applied_hybrids;
+            for k in 0..2 {
+                watch.watched[k] += t.watched[k];
+                watch.watch_bred[k] += t.watch_bred[k];
+                watch.watch_reached_20[k] += t.watch_reached_20[k];
+                for g in 0..2 {
+                    watch.gen_members[k][g] += t.gen_members[k][g];
+                    watch.gen_age_sum[k][g] += t.gen_age_sum[k][g];
+                    watch.gen_bred[k][g] += t.gen_bred[k][g];
+                    for c in 0..6 {
+                        watch.gen_deaths[k][g][c] += t.gen_deaths[k][g][c];
+                    }
+                }
+            }
             for i in 0..6 {
                 hybrid_checked[i] += t.hybrid_checked[i];
                 hybrid_alive[i] += t.hybrid_alive[i];
@@ -991,6 +1005,32 @@ fn cmd_patrons(args: &[String]) -> Result<(), String> {
         hybrid_checked[5],
         pct(hybrid_alive[5], hybrid_checked[5]),
     );
+    for (k, name) in ["hybrid clades", "young clades by mutation"]
+        .iter()
+        .enumerate()
+    {
+        println!(
+            "  {name}, watched 3 days: {}; a founder bred in {:.0}%, the family reached 20 living in {:.1}%",
+            watch.watched[k],
+            pct(watch.watch_bred[k], watch.watched[k]),
+            pct(watch.watch_reached_20[k], watch.watched[k]),
+        );
+        for (g, who) in ["founders", "their children"].iter().enumerate() {
+            let deaths: u32 = watch.gen_deaths[k][g].iter().sum();
+            let causes: Vec<String> = patrons::CAUSES
+                .iter()
+                .zip(watch.gen_deaths[k][g])
+                .map(|(c, n)| format!("{c} {:.0}%", pct(n, deaths)))
+                .collect();
+            println!(
+                "    {who}: {}, bred {:.0}%; {deaths} died after {:.1} h on average: {}",
+                watch.gen_members[k][g],
+                pct(watch.gen_bred[k][g], watch.gen_members[k][g]),
+                watch.gen_age_sum[k][g] as f64 / f64::from(deaths.max(1)) / 12.0,
+                causes.join(", "),
+            );
+        }
+    }
     if rules.traits8.is_some() {
         println!("at the end (mean per seed): burrowers, swimmers, scavengers, giants; mean size and longevity");
         for &st in &strategies {

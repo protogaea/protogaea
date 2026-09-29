@@ -409,6 +409,9 @@ pub struct Patrons {
     pub hybrid_count: u32,
     pub hybrid_gift_ppm: u32,
     pub hybrid_cooldown_epochs: u32,
+    /// Hybrid vigor: for this many ticks after a crossing, the hybrid clade has `forage` in the
+    /// area around the center (0: none).
+    pub hybrid_vigor_ticks: u32,
 }
 
 impl Default for Patrons {
@@ -447,6 +450,7 @@ impl Default for Patrons {
             hybrid_count: 8,
             hybrid_gift_ppm: 500_000,
             hybrid_cooldown_epochs: 288,
+            hybrid_vigor_ticks: 864,
         }
     }
 }

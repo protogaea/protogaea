@@ -865,6 +865,15 @@ pub(crate) fn apply_one(
                     },
                 );
                 clades_founded.push(clade_id);
+                if p.hybrid_vigor_ticks > 0 {
+                    world.clade_effects.push(CladeEffect {
+                        kind: FORAGE,
+                        clade_id,
+                        center: center as u16,
+                        radius: p.area_radius,
+                        remaining_ticks: p.hybrid_vigor_ticks,
+                    });
+                }
             }
             world.cooldowns.push(Cooldown {
                 kind: COOLDOWN_HYBRID,
@@ -1335,6 +1344,10 @@ mod patron_tests {
         assert_eq!(h.living, p.hybrid_count);
         assert_eq!(w.organisms.len(), organisms + p.hybrid_count as usize);
         assert!(h.reference.is_valid(rules.trait_budget));
+        // Hybrid vigor: forage for the new clade around the crossing.
+        assert!(w.clade_effects.iter().any(|e| e.kind == FORAGE
+            && e.clade_id == h.id
+            && e.remaining_ticks == p.hybrid_vigor_ticks));
         // A hybrid clade has its second parent in the state; others hash as before.
         assert_eq!(clade_bytes_len(&h), clade_bytes_len(&w.clades[&a]) + 4);
 
