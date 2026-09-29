@@ -1,0 +1,52 @@
+# Patron bots for a test world (spec v0.3, draft): they back clades through the real protocol,
+# with a small, fixed amount of mining each epoch. For a world whose price floor is set low.
+#
+# Install, next to the world server:
+#   install -D -m 0644 server/bot/patron_bots.py /opt/protogaea/patron_bots.py
+#   install -m 0755 target/release/protogaea-spark /opt/protogaea/protogaea-spark
+#   install -D -m 0600 /dev/null /etc/protogaea/patrons.env
+#     # in it: PROTOGAEA_API=..., PROTOGAEA_PASSWORD=... (if the server has one),
+#     # and optionally PATRON_BOTS=random,weak,leader,harass and PATRON_SECONDS=20
+#   cp protogaea-patrons.service /etc/systemd/system/ && systemctl daemon-reload
+#   systemctl enable --now protogaea-patrons
+#
+# The bots' keys live in /var/lib/protogaea-patrons.
+
+[Unit]
+Description=Protogaea patron bots (test world)
+After=network-online.target protogaea-server.service
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+EnvironmentFile=/etc/protogaea/patrons.env
+ExecStart=/usr/bin/python3 /opt/protogaea/patron_bots.py
+StateDirectory=protogaea-patrons
+StateDirectoryMode=0750
+Restart=always
+RestartSec=30
+
+# Resource limits: mining runs on one thread at the lowest priority.
+Nice=19
+CPUQuota=50%
+MemoryMax=256M
+TasksMax=16
+
+# Sandboxing.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

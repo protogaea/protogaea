@@ -30,3 +30,9 @@ python3 protogaea_bot.py preview    # today's digest in both languages, without 
 | `TELEGRAM_PROXY` | an HTTP proxy for `api.telegram.org`, where Telegram is blocked |
 
 A systemd unit is in [`deploy/protogaea-bot.service`](../../deploy/protogaea-bot.service).
+
+## Patron bots for a test world
+
+[`patron_bots.py`](patron_bots.py) plays a test world under the [v0.3 draft](../../docs/spec/spec-v0.3-draft.md) rules while it has no players. Each bot backs clades by a strategy, as the harness's patron bots do: `random` (any help for a random clade), `weak` (the smallest clade that can be helped), `leader` (the largest) and `harass` (harm to the smallest clade that can be harmed). Help is `shelter`, `forage`, `cure`, a gift, or a hybrid with the largest compatible neighbour; a bot asks `/v0/ledger?clade=ID` whether the share rule allows it first.
+
+The bots go through the real protocol: a wish signed with the spark client (`protogaea-spark`) and sent with its first spark, then `PATRON_SECONDS` of mining a bot and epoch on one thread, so a watcher can check all of it. A player's price floor (about 8 core-hours) would take a bot days, so the test world runs with a low `--price-min` (6000 work units: a few wishes an epoch from four bots). Settings: `PROTOGAEA_API`, `PROTOGAEA_USER` and `PROTOGAEA_PASSWORD`, `PROTOGAEA_SPARK` (the client), `STATE_DIRECTORY` (the bots' keys), `PATRON_BOTS` (the strategies) and `PATRON_SECONDS` (20). A systemd unit is in [`deploy/protogaea-patrons.service`](../../deploy/protogaea-patrons.service).

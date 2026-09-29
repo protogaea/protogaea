@@ -116,7 +116,7 @@ Measured on the test server: **2.2–2.4 bytes a spark** at the real target (256
 
 ## The Telegram bot
 
-[`bot/`](bot/README.md): the morning digest and the news of followed clades, from this API.
+[`bot/`](bot/README.md): the morning digest and the news of followed clades, from this API. The same directory has [patron bots](bot/README.md#patron-bots-for-a-test-world), which play a test world on the v0.3 draft rules through the spark protocol.
 
 ## License
 
